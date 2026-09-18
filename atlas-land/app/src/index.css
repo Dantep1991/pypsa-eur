@@ -1,0 +1,473 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Cursor-style shimmer animation for log preview */
+@keyframes shimmer {
+  0% {
+    background-position: -1000px 0;
+  }
+
+  100% {
+    background-position: 1000px 0;
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 3s ease-in-out infinite;
+  background-size: 2000px 100%;
+  background-image: linear-gradient(90deg,
+      transparent,
+      rgba(219, 187, 28, 0.1),
+      /* tj-gold */
+      rgba(234, 202, 59, 0.1),
+      /* tj-gold-hover */
+      rgba(219, 187, 28, 0.1),
+      /* tj-gold */
+      transparent);
+}
+
+/* Leaflet CSS */
+@import 'leaflet/dist/leaflet.css';
+
+/* Nohm token contract. Atlas intentionally shares the platform vocabulary and
+   values so an embedded workspace inherits a familiar theme instead of a
+   lookalike palette. Map-carrier colours remain data encodings elsewhere. */
+:root {
+  --bg-canvas: #121211;
+  --bg-base: #1a1918;
+  --bg-surface: #222120;
+  --bg-elevated: #2b2a28;
+  --bg-overlay: #343230;
+  --bg-hover: rgba(255, 255, 255, 0.04);
+  --chrome-bg: var(--bg-base);
+  --chrome-border: var(--border-subtle);
+  --panel-surface: rgba(30, 30, 30, 0.9);
+  --panel-surface-soft: rgba(255, 255, 255, 0.03);
+  --panel-surface-hover: rgba(255, 255, 255, 0.06);
+  --control-surface: rgba(255, 255, 255, 0.04);
+  --control-surface-strong: #1e1e1e;
+  --control-surface-hover: rgba(255, 255, 255, 0.08);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.85);
+  --text-muted: rgba(245, 244, 241, 0.65);
+  --accent-primary: #dabd1d;
+  --accent-primary-hover: #b89e18;
+  --accent-primary-transparent: rgba(218, 189, 29, 0.15);
+  --accent-primary-faint: rgba(218, 189, 29, 0.25);
+  --accent-primary-text: #dabd1d;
+  --accent-primary-ui: #dabd1d;
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --elev-2: 0 4px 14px rgba(0, 0, 0, 0.28);
+  --elev-3: 0 12px 36px rgba(0, 0, 0, 0.38);
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-heading: 'Outfit', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --bg-canvas: #f1f1ee;
+  --bg-base: #f8f8f5;
+  --bg-surface: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-overlay: #ffffff;
+  --bg-hover: rgba(26, 25, 24, 0.06);
+  --panel-surface: rgba(255, 255, 255, 0.84);
+  --panel-surface-soft: rgba(26, 25, 24, 0.035);
+  --panel-surface-hover: rgba(26, 25, 24, 0.07);
+  --control-surface: rgba(255, 255, 255, 0.72);
+  --control-surface-strong: rgba(255, 255, 255, 0.88);
+  --control-surface-hover: rgba(26, 25, 24, 0.08);
+  --border-subtle: rgba(26, 25, 24, 0.13);
+  --border-strong: rgba(26, 25, 24, 0.24);
+  --text-primary: #242424;
+  --text-secondary: rgba(36, 36, 36, 0.82);
+  --text-muted: rgba(28, 27, 25, 0.62);
+  --accent-primary-transparent: rgba(218, 189, 29, 0.18);
+  --accent-primary-faint: rgba(218, 189, 29, 0.28);
+  --accent-primary-text: #836000;
+  --accent-primary-ui: #836000;
+  --elev-1: 0 1px 2px rgba(26, 25, 24, 0.08);
+  --elev-2: 0 4px 14px rgba(26, 25, 24, 0.12);
+  --elev-3: 0 12px 36px rgba(26, 25, 24, 0.18);
+  color-scheme: light;
+}
+
+.atlas-shell {
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+
+.atlas-topbar,
+.atlas-domain-panel {
+  border: 1px solid var(--border-subtle);
+  background: var(--panel-surface);
+  box-shadow: var(--elev-3);
+  color: var(--text-primary);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.atlas-topbar .text-white,
+.atlas-domain-panel .text-white { color: var(--text-primary) !important; }
+.atlas-topbar .text-tj-slate,
+.atlas-domain-panel .text-tj-slate { color: var(--text-muted) !important; }
+.atlas-topbar .text-tj-gold,
+.atlas-domain-panel .text-tj-gold { color: var(--accent-primary-text) !important; }
+
+.atlas-topbar .bg-white\/\[0\.035\],
+.atlas-domain-panel .bg-black\/20,
+.atlas-domain-panel .bg-black\/10,
+.atlas-domain-panel .bg-white\/\[0\.025\] { background: var(--control-surface) !important; }
+.atlas-topbar .border-white\/10,
+.atlas-domain-panel .border-white\/10,
+.atlas-domain-panel .border-white\/15 { border-color: var(--border-subtle) !important; }
+.atlas-topbar select,
+.atlas-domain-panel input,
+.atlas-domain-panel select {
+  border-color: var(--border-subtle) !important;
+  background: var(--control-surface-strong) !important;
+  color: var(--text-primary) !important;
+}
+.atlas-topbar .bg-tj-gold,
+.atlas-domain-panel .bg-tj-gold { background: var(--accent-primary) !important; }
+.atlas-topbar .text-tj-navy-dark,
+.atlas-domain-panel .text-tj-navy-dark { color: #1f1f1f !important; }
+
+.atlas-theme-toggle {
+  border: 1px solid var(--border-subtle);
+  background: var(--control-surface);
+  color: var(--text-secondary);
+}
+.atlas-theme-toggle:hover { background: var(--control-surface-hover); color: var(--text-primary); }
+
+.atlas-workspace-rail {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--panel-surface);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+.atlas-workspace-rail__label,
+.atlas-domain-section__eyebrow {
+  display: block;
+  margin: 0 0 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.atlas-workspace-rail__areas { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.35rem; }
+.atlas-workspace-rail__area {
+  min-width: 0;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+.atlas-workspace-rail__area:hover { border-color: var(--border-subtle); background: var(--bg-hover); color: var(--text-primary); }
+.atlas-workspace-rail__area.is-active { border-color: var(--accent-primary-transparent); background: var(--accent-primary-transparent); color: var(--text-primary); }
+.atlas-workspace-rail__area span { display: block; font: 600 0.75rem/1.25 var(--font-heading); }
+.atlas-workspace-rail__area small { display: block; overflow: hidden; color: var(--text-muted); font-size: 0.625rem; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+
+.atlas-domain-section { border-bottom: 1px solid var(--border-subtle); }
+.atlas-domain-section:last-child { border-bottom: 0; }
+.atlas-domain-section__trigger {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.8rem 0.85rem;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+}
+.atlas-domain-section__trigger:hover { background: var(--bg-hover); }
+.atlas-domain-section__icon {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--control-surface);
+  color: var(--text-muted);
+}
+.atlas-domain-section__icon.is-active { border-color: var(--accent-primary-transparent); background: var(--accent-primary-transparent); color: var(--accent-primary-text); }
+.atlas-domain-section__title { display: block; color: var(--text-primary); font: 600 0.8125rem/1.3 var(--font-heading); }
+.atlas-domain-section__summary { display: block; overflow: hidden; color: var(--text-muted); font-size: 0.625rem; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.atlas-domain-section__chevron { color: var(--text-muted); }
+
+@media (min-width: 1024px) {
+  .atlas-workspace-rail__areas { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* Dark glass popup theme */
+.leaflet-popup-content-wrapper {
+  background: rgba(18, 28, 34, 0.85) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
+  color: #c9d1d9 !important;
+}
+
+.leaflet-popup-tip {
+  background: rgba(18, 28, 34, 0.85) !important;
+}
+
+.leaflet-popup-close-button {
+  color: #c9d1d9 !important;
+}
+
+.leaflet-popup-close-button:hover {
+  color: #dbbb1c !important;
+}
+
+.atlas-asset-popup .leaflet-popup-content {
+  max-width: calc(100vw - 72px);
+  max-height: min(420px, calc(100vh - 280px));
+  max-height: min(420px, calc(100dvh - 280px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.leaflet-tooltip.line-capacity-tooltip {
+  background: rgba(7, 20, 33, 0.96) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: 9px !important;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.52) !important;
+  color: #e2e8f0 !important;
+  padding: 8px 10px !important;
+}
+
+.leaflet-tooltip-top.line-capacity-tooltip::before {
+  border-top-color: rgba(7, 20, 33, 0.96) !important;
+}
+
+/* Grid-access tooltips contain light Atlas typography, so they need an
+   explicit dark surface rather than Leaflet's default white tooltip. */
+.leaflet-tooltip.atlas-grid-access-tooltip {
+  background: rgba(7, 20, 33, 0.98) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(125, 211, 252, 0.28) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.58) !important;
+  color: #e2e8f0 !important;
+  padding: 10px 12px !important;
+}
+
+.leaflet-tooltip-top.atlas-grid-access-tooltip::before {
+  border-top-color: rgba(7, 20, 33, 0.98) !important;
+}
+
+.leaflet-tooltip-bottom.atlas-grid-access-tooltip::before {
+  border-bottom-color: rgba(7, 20, 33, 0.98) !important;
+}
+
+.leaflet-tooltip-left.atlas-grid-access-tooltip::before {
+  border-left-color: rgba(7, 20, 33, 0.98) !important;
+}
+
+.leaflet-tooltip-right.atlas-grid-access-tooltip::before {
+  border-right-color: rgba(7, 20, 33, 0.98) !important;
+}
+
+/* Suppress browser focus ring on clicked map vectors/markers */
+.leaflet-container .leaflet-interactive:focus,
+.leaflet-container .leaflet-marker-icon:focus,
+.leaflet-container .leaflet-marker-shadow:focus {
+  outline: none !important;
+}
+
+/* Animated packet styles */
+.animated-packet {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  50% {
+    transform: scale(1.2);
+    opacity: 0.8;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-tj-slate/20;
+  }
+
+  body {
+    @apply bg-tj-navy-dark text-tj-gray font-sans;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    color-scheme: dark;
+  }
+}
+
+@layer components {
+  .glass-effect {
+    @apply bg-tj-navy-light/80 backdrop-blur-md border border-white/5;
+  }
+
+  .card-hover {
+    @apply transition-all duration-300 hover:shadow-[0_8px_30px_rgb(0, 0, 0, 0.5)] hover:scale-[1.02];
+  }
+
+  .gradient-bg {
+    background: linear-gradient(135deg, #17262f 0%, #121c22 100%);
+  }
+
+  .text-gradient {
+    background: linear-gradient(135deg, #dbbb1c 0%, #eaca3b 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Hide the scrollbar on a container while keeping scroll behaviour. */
+  .scrollbar-hidden {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-hidden::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+}
+@keyframes goldGlow {
+  0% {
+    stroke-opacity: 0.1 !important;
+    fill-opacity: 0.01 !important;
+    filter: drop-shadow(0 0 2px rgba(250, 204, 21, 0.1));
+  }
+  50% {
+    stroke-opacity: 0.5 !important;
+    fill-opacity: 0.05 !important;
+    filter: drop-shadow(0 0 8px rgba(250, 204, 21, 0.5));
+  }
+  100% {
+    stroke-opacity: 0.1 !important;
+    fill-opacity: 0.01 !important;
+    filter: drop-shadow(0 0 2px rgba(250, 204, 21, 0.1));
+  }
+}
+
+.europe-outline-anim path {
+  animation: goldGlow 2.5s ease-in-out infinite;
+  stroke: #facc15 !important; /* Yellow override */
+  fill: #facc15 !important;
+  stroke-width: 1.5px !important;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Keep source credits readable without competing with the map controls. */
+.leaflet-control-attribution {
+  background: rgba(7, 20, 33, 0.95) !important;
+  color: #cbd5e1 !important;
+  font-size: 9px !important;
+}
+
+.leaflet-control-attribution a { color: #7dd3fc; }
+
+/* Native modal focus/inert behaviour, with a bounded, independently scrolling
+   body. Keep display:none for a closed dialog rather than overriding the UA. */
+.atlas-modal {
+  width: min(72rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  max-height: 90vh;
+  max-height: calc(100dvh - 2rem);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 1rem;
+  background: #071421;
+  color: #e2e8f0;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+.atlas-modal[open] { display: flex; flex-direction: column; }
+.atlas-modal::backdrop { background: rgba(0, 0, 0, 0.65); }
+
+/* Utility controls stay above EMIL; scrolling panels leave a bottom band for
+   the minimized live-voice status and Stop button, even on short screens. */
+.atlas-assistant-panel {
+  max-height: calc(100vh - 196px);
+  max-height: calc(100dvh - 196px);
+}
+.atlas-assistant-settings {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-height: 0;
+  max-height: 50%;
+}
+.atlas-assistant-settings-body { flex: 1 1 auto; }
+.atlas-assistant-settings-body[hidden] { display: none; }
+.atlas-assistant-settings[data-cover-conversation="true"] {
+  flex: 1 1 0%;
+  max-height: none;
+}
+@media (max-height: 500px) {
+  .atlas-assistant-header { padding-top: 6px; padding-bottom: 6px; }
+  .atlas-assistant-composer { padding: 6px 8px; }
+  .atlas-assistant-panel [role="log"] { padding-top: 8px; padding-bottom: 8px; }
+}
+.atlas-land-controls {
+  max-height: calc(100vh - 176px);
+  max-height: calc(100dvh - 176px);
+}
+.atlas-access-controls {
+  max-height: calc(100vh - 218px);
+  max-height: calc(100dvh - 218px);
+}
+
+:is(button, input, select, textarea, a):focus-visible {
+  outline: 2px solid var(--accent-primary-ui);
+  outline-offset: 2px;
+}
+
+.leaflet-container .leaflet-marker-icon:focus-visible,
+.leaflet-container .leaflet-interactive:focus-visible {
+  outline: 2px solid var(--accent-primary-ui) !important;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

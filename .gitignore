@@ -100,3 +100,11 @@ doc/img/intro-workflow.svg
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+
+# Local Nohm Atlas service cache and launch logs
+.atlas-runtime/
+atlas-*-live.*.log
+atlas-*-detached.*.log
+atlas-land/*.log
+atlas-land/app/build/
+atlas-land/app/node_modules/
