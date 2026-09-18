@@ -1,0 +1,38 @@
+{
+  "source": "data/natura/archive/2025-08-15/natura.tiff",
+  "source_width": 49578,
+  "source_height": 46249,
+  "source_crs": "EPSG:3035",
+  "source_pixel_size_m": 100,
+  "classification": "binary Natura 2000 mask",
+  "overviews": [
+    {
+      "factor": 4,
+      "width": 12395,
+      "height": 11563,
+      "path": "data/processed/natura-2025-08-15-x4.tiff",
+      "seconds": 2.682
+    },
+    {
+      "factor": 16,
+      "width": 3099,
+      "height": 2891,
+      "path": "data/processed/natura-2025-08-15-x16.tiff",
+      "seconds": 0.125
+    },
+    {
+      "factor": 64,
+      "width": 775,
+      "height": 723,
+      "path": "data/processed/natura-2025-08-15-x64.tiff",
+      "seconds": 0.02
+    },
+    {
+      "factor": 256,
+      "width": 194,
+      "height": 181,
+      "path": "data/processed/natura-2025-08-15-x256.tiff",
+      "seconds": 0.005
+    }
+  ]
+}

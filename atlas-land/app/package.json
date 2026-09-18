@@ -1,0 +1,65 @@
+{
+  "name": "nohm-flow-atlas",
+  "version": "1.0.0",
+  "description": "Nohm Flow — the Atlas workspace for European energy and infrastructure network modelling.",
+  "homepage": "/atlas",
+  "private": true,
+  "proxy": "http://127.0.0.1:5001",
+  "dependencies": {
+    "leaflet": "^1.9.4",
+    "lucide-react": "0.468.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-leaflet": "^4.2.1",
+    "recharts": "^2.5.0"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "postbuild": "node scripts/write-build-contract.cjs",
+    "preview": "node scripts/preview.cjs",
+    "test:preview": "node --test scripts/preview.test.cjs scripts/atlas-api-paths.test.cjs",
+    "test:browser-budget": "node scripts/browser-budget.cjs",
+    "test:browser-network-budget": "node scripts/browser-network-budget.cjs",
+    "test:voice-roundtrip": "node scripts/voice-roundtrip.cjs",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ],
+    "rules": {
+      "no-unused-vars": "off",
+      "no-template-curly-in-string": "off",
+      "react-hooks/exhaustive-deps": "off",
+      "no-useless-escape": "off"
+    }
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^5.16.4",
+    "@testing-library/react": "^13.3.0",
+    "@testing-library/user-event": "^13.5.0",
+    "@types/leaflet": "^1.9.20",
+    "@types/react": "^18.2.15",
+    "@types/react-dom": "^18.2.7",
+    "autoprefixer": "^10.4.14",
+    "baseline-browser-mapping": "^2.10.0",
+    "postcss": "^8.4.24",
+    "react-scripts": "5.0.1",
+    "tailwindcss": "^3.3.0"
+  }
+}

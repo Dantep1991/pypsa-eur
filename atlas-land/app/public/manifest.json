@@ -1,0 +1,15 @@
+{
+  "short_name": "Nohm Flow",
+  "name": "Nohm Flow · Atlas",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#071421",
+  "background_color": "#071421"
+}
