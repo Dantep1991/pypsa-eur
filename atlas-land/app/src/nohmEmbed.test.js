@@ -1,6 +1,8 @@
 import {
   announceNohmEmbedReady,
   NOHM_ATLAS_DOMAIN_MESSAGE,
+  NOHM_ATLAS_THEME_EVENT,
+  NOHM_ATLAS_THEME_MESSAGE,
   NOHM_ATLAS_READY_MESSAGE,
   NOHM_ATLAS_PING_MESSAGE,
   scheduleNohmEmbedReady,
@@ -73,6 +75,67 @@ test('the embed bridge accepts only validated Atlas Domain commands from the Noh
   send({ data: { type: NOHM_ATLAS_DOMAIN_MESSAGE, protocolVersion: 1, source: 'nohm-shell', domain: 'invalid' } });
   send({ origin: 'https://other.example.test' });
   expect(onDomainChange).toHaveBeenCalledTimes(1);
+});
+
+test('the embed bridge accepts only supported themes from the Nohm shell', () => {
+  const callbacks = new Map();
+  const parent = { postMessage: jest.fn() };
+  const onThemeChange = jest.fn();
+  const target = {
+    parent,
+    location: { origin: 'https://nohm.example.test' },
+    document: { documentElement: { setAttribute: jest.fn() } },
+    requestAnimationFrame: jest.fn(),
+    addEventListener: (name, callback) => callbacks.set(name, callback),
+    removeEventListener: jest.fn(),
+  };
+  startNohmEmbedBridge(target, { onThemeChange });
+  const send = (theme, overrides = {}) => callbacks.get('message')({
+    source: parent,
+    origin: target.location.origin,
+    data: {
+      type: NOHM_ATLAS_THEME_MESSAGE,
+      protocolVersion: 1,
+      source: 'nohm-shell',
+      theme,
+    },
+    ...overrides,
+  });
+  send('horizon');
+  expect(onThemeChange).toHaveBeenCalledWith('horizon');
+  send('system');
+  send('light', { origin: 'https://other.example.test' });
+  expect(onThemeChange).toHaveBeenCalledTimes(1);
+});
+
+test('the default theme bridge publishes a window event for the Atlas application', () => {
+  const callbacks = new Map();
+  const parent = { postMessage: jest.fn() };
+  const target = {
+    parent,
+    location: { origin: 'https://nohm.example.test' },
+    document: { documentElement: { setAttribute: jest.fn() } },
+    requestAnimationFrame: jest.fn(),
+    addEventListener: (name, callback) => callbacks.set(name, callback),
+    removeEventListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+    CustomEvent: function CustomEvent(type, options) { return { type, ...options }; },
+  };
+  startNohmEmbedBridge(target);
+  callbacks.get('message')({
+    source: parent,
+    origin: target.location.origin,
+    data: {
+      type: NOHM_ATLAS_THEME_MESSAGE,
+      protocolVersion: 1,
+      source: 'nohm-shell',
+      theme: 'light',
+    },
+  });
+  expect(target.dispatchEvent).toHaveBeenCalledWith({
+    type: NOHM_ATLAS_THEME_EVENT,
+    detail: { theme: 'light' },
+  });
 });
 
 test('embedded Atlas announces a versioned readiness contract to its same origin parent', () => {

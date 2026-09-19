@@ -222,9 +222,9 @@ test('voice and shell rerenders do not reconcile an unchanged map feature tree',
   expect(mockMapContentRenders).toBeGreaterThan(settledRenders);
 });
 
-test('basemap transitions have a dark backing and no overlapping tile fades or intermediate zoom requests', () => {
+test('basemap transitions use the themed backing and no overlapping tile fades or intermediate zoom requests', () => {
   render(<EnhancedLeafletMapWithVoice {...defaults} />);
-  expect(mockMapContainerProps.style.backgroundColor).toBe('#202124');
+  expect(mockMapContainerProps.style.backgroundColor).toBe('var(--atlas-map-canvas)');
   expect(mockMapContainerProps.fadeAnimation).toBe(false);
   expect(mockMapContainerProps.center).toEqual([52, 8]);
   expect(mockMapContainerProps.zoom).toBe(5);
@@ -237,6 +237,13 @@ test('basemap transitions have a dark backing and no overlapping tile fades or i
     expect(props.keepBuffer).toBe(2);
     expect(props.detectRetina).toBe(false);
   }
+});
+
+test('light and Horizon workspaces use the matching light Esri basemap', () => {
+  render(<EnhancedLeafletMapWithVoice {...defaults} atlasTheme="horizon" />);
+  const basemaps = mockTileProps.filter(props => props.url.includes('World_Light_Gray'));
+  expect(new Set(basemaps.map(props => props.url))).toHaveProperty('size', 2);
+  expect(mockTileProps.some(props => props.url.includes('World_Dark_Gray'))).toBe(false);
 });
 
 test('Europe boundaries stay off the empty startup path and load on first real geometry demand', async () => {

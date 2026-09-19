@@ -799,6 +799,7 @@ const RegionContextBridge = ({ onContextMenu }) => {
 };
 
 const EnhancedLeafletMapContent = ({
+  atlasTheme = 'dark',
   facilities = [],
   selectedNode,
   onNodeSelect,
@@ -1903,7 +1904,7 @@ const EnhancedLeafletMapContent = ({
         preferCanvas={true}
         renderer={atlasRenderers.base}
         worldCopyJump={true}
-        style={{ height: '100%', width: '100%', minHeight: '400px', backgroundColor: '#202124' }}
+        style={{ height: '100%', width: '100%', minHeight: '400px', backgroundColor: 'var(--atlas-map-canvas)' }}
         className="z-0"
       >
         <MapInstanceBridge onReady={setMapInstance} />
@@ -1917,8 +1918,11 @@ const EnhancedLeafletMapContent = ({
         <Pane name="grid-access-sites" style={{ zIndex: 675 }} />
         <Pane name="region-overlay-pane" style={{ zIndex: 330 }} />
         <TileLayer
+          key={`atlas-base-${atlasTheme}`}
           attribution='Tiles &copy; <a href="https://www.esri.com/">Esri</a>'
-          url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+          url={atlasTheme === 'dark'
+            ? 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
+            : 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}'}
           maxZoom={16}
           updateWhenIdle={true}
           updateWhenZooming={false}
@@ -1951,8 +1955,11 @@ const EnhancedLeafletMapContent = ({
           </>
         )}
         <TileLayer
+          key={`atlas-labels-${atlasTheme}`}
           attribution='Labels &copy; Esri, HERE, Garmin, OpenStreetMap contributors'
-          url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}"
+          url={atlasTheme === 'dark'
+            ? 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}'
+            : 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}'}
           maxZoom={16}
           pane="overlayPane"
           updateWhenIdle={true}

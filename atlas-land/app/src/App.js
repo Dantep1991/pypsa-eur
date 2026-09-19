@@ -50,7 +50,8 @@ import {
   atlasWorkspaceAreaForDomain,
   atlasWorkspaceAreaIsVisible,
 } from './atlasWorkspaceNavigation';
-import { NOHM_ATLAS_DOMAIN_EVENT } from './nohmEmbed';
+import { NOHM_ATLAS_DOMAIN_EVENT, NOHM_ATLAS_THEME_EVENT } from './nohmEmbed';
+import { applyAtlasTheme, nextAtlasTheme, normalizeAtlasTheme } from './atlasTheme';
 import { createCarrierNetworkRequests } from './carrierNetworkRequests';
 import { stageMapBatch, assembleMapBatch, groupPypsaFacilities, mapSharedFacilityGroups } from './pypsaMapBatch';
 import { stitchElectricityCrossBorderConnections } from './crossBorderNetwork';
@@ -531,13 +532,20 @@ function AppInner() {
   const { compact: compactAtlasLayout, domainsCollapsed: mapControlsCollapsed, setDomainsCollapsed: setMapControlsCollapsed } = useAtlasWorkspaceLayout();
   const [atlasTheme, setAtlasTheme] = useState(() => {
     try {
+      if (ATLAS_IS_EMBEDDED) {
+        const hostRoot = window.parent.document.documentElement;
+        if (hostRoot.dataset.themeVariant === 'horizon') return 'horizon';
+        return normalizeAtlasTheme(hostRoot.dataset.theme);
+      }
       const stored = window.localStorage?.getItem('atlas_theme');
-      return stored === 'light' ? 'light' : 'dark';
+      return normalizeAtlasTheme(stored);
     } catch (_) { return 'dark'; }
   });
   useEffect(() => {
-    document.documentElement.dataset.theme = atlasTheme;
-    try { window.localStorage?.setItem('atlas_theme', atlasTheme); } catch (_) { /* storage unavailable */ }
+    applyAtlasTheme(atlasTheme);
+    if (!ATLAS_IS_EMBEDDED) {
+      try { window.localStorage?.setItem('atlas_theme', atlasTheme); } catch (_) { /* storage unavailable */ }
+    }
   }, [atlasTheme]);
   const [atlasAssetPopupOpen, setAtlasAssetPopupOpen] = useState(false);
   const [atlasPopupDismissRequest, setAtlasPopupDismissRequest] = useState(0);
@@ -2096,6 +2104,13 @@ function AppInner() {
     window.addEventListener(NOHM_ATLAS_DOMAIN_EVENT, handleNohmAtlasDomain);
     return () => window.removeEventListener(NOHM_ATLAS_DOMAIN_EVENT, handleNohmAtlasDomain);
   }, [openAtlasWorkspaceArea, setMapControlsCollapsed]);
+  useEffect(() => {
+    const handleNohmAtlasTheme = (event) => {
+      setAtlasTheme(normalizeAtlasTheme(event?.detail?.theme));
+    };
+    window.addEventListener(NOHM_ATLAS_THEME_EVENT, handleNohmAtlasTheme);
+    return () => window.removeEventListener(NOHM_ATLAS_THEME_EVENT, handleNohmAtlasTheme);
+  }, []);
   const [mapAgentInput, setMapAgentInput] = useState('');
   const [mapAgentBusy, setMapAgentBusy] = useState(false);
   const [mapAgentMessages, setMapAgentMessages] = useState([
@@ -14257,7 +14272,7 @@ function AppInner() {
 
                         <div className="hidden md:flex items-center gap-2 min-w-0">
                           {workspaceStatusCards.map((card) => (
-                            <div key={card.label} className="rounded-lg border border-white/10 bg-white/[0.035] px-2.5 py-1.5">
+                            <div key={card.label} className="atlas-status-card rounded-lg border border-white/10 bg-white/[0.035] px-2.5 py-1.5">
                               <p className="text-[9px] uppercase tracking-wider text-tj-slate">{card.label}</p>
                               <p className="text-[11px] text-white max-w-[190px] truncate">{card.value}</p>
                             </div>
@@ -14265,22 +14280,24 @@ function AppInner() {
                         </div>
 
                         <div className="shrink-0 flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setAtlasTheme((previous) => previous === 'dark' ? 'light' : 'dark')}
-                          className="atlas-theme-toggle h-9 w-9 rounded-lg flex items-center justify-center"
-                          aria-label={`Switch to ${atlasTheme === 'dark' ? 'light' : 'dark'} theme`}
-                          title={`Switch to ${atlasTheme === 'dark' ? 'light' : 'dark'} theme`}
-                        >
-                          {atlasTheme === 'dark' ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-                        </button>
+                        {!ATLAS_IS_EMBEDDED && (
+                          <button
+                            type="button"
+                            onClick={() => setAtlasTheme((previous) => nextAtlasTheme(previous))}
+                            className="atlas-theme-toggle h-9 w-9 rounded-lg flex items-center justify-center"
+                            aria-label={`Change Atlas theme. Current theme: ${atlasTheme}`}
+                            title={`Theme: ${atlasTheme}. Switch to ${nextAtlasTheme(atlasTheme)}`}
+                          >
+                            {atlasTheme === 'dark' ? <Sun className="h-3.5 w-3.5" /> : atlasTheme === 'light' ? <Sparkles className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+                          </button>
+                        )}
                         <label>
                           <span className="sr-only">Network carrier</span>
                           {atlasOverlayMode && <span className="block text-[9px] text-tj-slate">Workspace on exit</span>}
                           <select
                             value={atlasNetworkCarrier}
                             onChange={(event) => setAtlasNetworkCarrier(event.target.value)}
-                            className="max-w-[150px] rounded-lg border border-tj-gold/30 bg-[#081523] px-2.5 py-2 text-[11px] font-semibold text-white focus:outline-none focus:border-tj-gold/60"
+                            className="atlas-select max-w-[150px] rounded-lg border border-tj-gold/30 bg-[#081523] px-2.5 py-2 text-[11px] font-semibold text-white focus:outline-none focus:border-tj-gold/60"
                             aria-label="Network carrier"
                             title={atlasOverlayMode ? 'Workspace to open when overlay is turned off. Choose visible carriers in the overlay legend.' : 'Choose network workspace'}
                           >
@@ -14322,7 +14339,7 @@ function AppInner() {
                     </header>
 
                     {atlasOverlayMode && atlasOverlayPanelOpen && !atlasAssetPopupOpen && (
-                      <div className="absolute top-[76px] right-[140px] z-[526] w-[252px] rounded-xl border border-white/10 bg-[#071421]/94 p-2 shadow-2xl backdrop-blur-xl">
+                      <div className="atlas-floating-panel absolute top-[76px] right-[140px] z-[526] w-[252px] rounded-xl border border-white/10 bg-[#071421]/94 p-2 shadow-2xl backdrop-blur-xl">
                         <div className="flex items-center justify-between px-1 pb-1.5">
                           <div>
                             <p className="text-[9px] uppercase tracking-[0.14em] text-tj-gold">Network overlay</p>
@@ -14479,7 +14496,7 @@ function AppInner() {
                       className={`absolute top-[76px] left-3 z-[510] w-[320px] max-w-[calc(100vw-1.5rem)] transition-all duration-200 ${mapControlsCollapsed ? '-translate-x-[110%] opacity-0 pointer-events-none' : 'translate-x-0 opacity-100'}`}
                     >
                       <div className="atlas-domain-panel rounded-xl overflow-hidden max-h-[calc(100vh-7.25rem)] flex flex-col">
-                        <div className="shrink-0 px-3 py-2.5 border-b border-white/10 flex items-center justify-between">
+                        <div className="atlas-domain-panel__header shrink-0 px-3 py-2.5 border-b border-white/10 flex items-center justify-between">
                           <div>
                             <p className="text-[10px] uppercase tracking-[0.16em] text-tj-slate">Workspace</p>
                             <p className="text-sm font-semibold text-white">
@@ -14521,7 +14538,7 @@ function AppInner() {
                               onClick={runPypsaBuildFromSettings}
                               disabled={solveNetworkStaging || pypsaLoading || pypsaResolutionSwitching}
                               title="Build the selected country network"
-                              className="w-full text-xs font-semibold px-4 py-2.5 rounded-lg border border-tj-gold/40 bg-tj-gold text-tj-navy-dark transition hover:brightness-105 disabled:opacity-40 disabled:cursor-not-allowed"
+                              className="atlas-primary-action w-full text-xs font-semibold px-4 py-2.5 rounded-lg border border-tj-gold/40 bg-tj-gold text-tj-navy-dark transition hover:brightness-105 disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                               {solveNetworkStaging || pypsaLoading || pypsaResolutionSwitching
                                 ? 'Working…'
@@ -14907,7 +14924,7 @@ function AppInner() {
                         </div>
 
                         {(!ATLAS_IS_EMBEDDED || ['geography', 'operations'].includes(activeWorkspaceArea)) && (
-                        <div className="shrink-0 px-3 py-3 border-t border-white/10 bg-[#071421]/98">
+                        <div className="atlas-domain-panel__footer shrink-0 px-3 py-3 border-t border-white/10 bg-[#071421]/98">
                           <button
                             type="button"
                             onClick={() => setShowPypsaSettingsDialog(true)}
@@ -15185,6 +15202,7 @@ function AppInner() {
                 )}
                 <MapWorkspaceBoundary resetKey={mapRecoveryKey}>
                 <EnhancedLeafletMapWithVoice
+                  atlasTheme={atlasTheme}
                   controlsHidden={compactAtlasLayout && (!mapControlsCollapsed || atlasAssetPopupOpen)}
                   panelsHidden={atlasAssetPopupOpen}
                   popupDismissRequest={atlasPopupDismissRequest}
