@@ -1,3 +1,10 @@
 /node_modules/
+/node_modules.partial-*/
 /build/
 /build-preview/
+/build-sandbox/
+
+# CRA requires this source template in every clean checkout. The repository's
+# top-level *.html rule is for generated reports, so opt this application file
+# back into version control.
+!public/index.html
