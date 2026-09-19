@@ -15965,21 +15965,21 @@ function AppInner() {
             footer={(
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <button type="button" onClick={resetPypsaSettingsDefaults}
-                  className="min-h-[36px] rounded-lg border border-white/20 px-3 text-xs text-slate-200 hover:bg-white/10 hover:text-white">
+                  className="atlas-modal__secondary-action min-h-[36px] rounded-lg border px-3 text-xs">
                   Reset Defaults
                 </button>
                 <button type="button" onClick={exportPypsaSettingsJson}
-                  className="min-h-[36px] rounded-lg border border-white/20 px-3 text-xs text-slate-200 hover:bg-white/10 hover:text-white">
+                  className="atlas-modal__secondary-action min-h-[36px] rounded-lg border px-3 text-xs">
                   Export JSON
                 </button>
                 <button type="button" onClick={runPypsaBuildFromSettings} disabled={solveNetworkStaging || pypsaLoading}
-                  className="min-h-[36px] rounded-lg border border-tj-gold/40 px-3 text-xs text-tj-gold hover:bg-tj-gold/10 disabled:cursor-not-allowed disabled:opacity-40">
+                  className="atlas-modal__primary-action min-h-[36px] rounded-lg border px-3 text-xs disabled:cursor-not-allowed disabled:opacity-40">
                   {solveNetworkStaging ? 'Building...' : 'Build Network'}
                 </button>
               </div>
             )}>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 lg:col-span-2">
+                  <div className="atlas-settings-card rounded-xl border p-3 lg:col-span-2">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-wider text-tj-gold">Map performance</div>
@@ -15987,7 +15987,7 @@ function AppInner() {
                           Adaptive protects interaction speed on dense maps and constrained devices. Quality and Speed are explicit overrides.
                         </p>
                       </div>
-                      <div className="grid min-w-[248px] grid-cols-3 gap-1 rounded-lg border border-white/10 bg-black/10 p-1" role="radiogroup" aria-label="Map performance">
+                      <div className="atlas-settings-segments grid min-w-[248px] grid-cols-3 gap-1 rounded-lg border p-1" role="radiogroup" aria-label="Map performance">
                         {[
                           [MAP_PERFORMANCE_PREFERENCES.AUTO, 'Adaptive'],
                           [MAP_PERFORMANCE_PREFERENCES.QUALITY, 'Quality'],
@@ -16019,7 +16019,7 @@ function AppInner() {
                     </p>
                   </div>
                   {pypsaSettingsSections.map((section) => (
-                    <div key={section.title} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                    <div key={section.title} className="atlas-settings-card rounded-xl border p-3">
                       <div className="text-xs font-semibold uppercase tracking-wider text-tj-gold mb-2">{section.title}</div>
                       <div className="space-y-2">
                         {section.fields.map((field) => {

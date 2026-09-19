@@ -232,6 +232,42 @@
 .atlas-shell .text-white,
 .atlas-shell .text-tj-gray { color: var(--text-primary) !important; }
 .atlas-shell .text-tj-slate { color: var(--text-muted) !important; }
+.atlas-shell .text-slate-100,
+.atlas-shell .text-slate-200,
+.atlas-shell .text-slate-300,
+.atlas-shell .text-gray-200,
+.atlas-shell .text-gray-300 { color: var(--text-secondary) !important; }
+.atlas-shell .text-gray-400,
+.atlas-shell .text-gray-500,
+.atlas-shell .text-slate-400,
+.atlas-shell .text-slate-500 { color: var(--text-muted) !important; }
+.atlas-shell .text-white\/75,
+.atlas-shell .text-white\/80,
+.atlas-shell .text-white\/85 { color: var(--text-secondary) !important; }
+.atlas-shell .text-white\/90 { color: var(--text-primary) !important; }
+.atlas-shell .text-tj-slate\/50,
+.atlas-shell .text-tj-slate\/60,
+.atlas-shell .text-tj-slate\/80 { color: var(--text-muted) !important; }
+.atlas-shell .text-tj-gold\/75,
+.atlas-shell .text-tj-gold\/80 { color: var(--accent-primary-text) !important; }
+.atlas-shell .text-red-200,
+.atlas-shell .text-red-300,
+.atlas-shell .text-red-400,
+.atlas-shell .text-red-500,
+.atlas-shell .text-red-600,
+.atlas-shell .text-red-700,
+.atlas-shell .text-red-800,
+.atlas-shell .text-red-900 { color: var(--accent-error) !important; }
+.atlas-shell .text-amber-100,
+.atlas-shell .text-amber-200,
+.atlas-shell .text-amber-300,
+.atlas-shell .text-amber-800,
+.atlas-shell .text-amber-100\/80,
+.atlas-shell .text-amber-300\/75,
+.atlas-shell .text-amber-300\/80 { color: var(--accent-warning) !important; }
+.atlas-shell .text-emerald-100,
+.atlas-shell .text-emerald-200,
+.atlas-shell .text-emerald-300 { color: var(--accent-success) !important; }
 .atlas-shell .text-tj-gold { color: var(--accent-primary-text) !important; }
 .atlas-shell .text-tj-navy-dark { color: var(--text-on-accent) !important; }
 .atlas-shell .bg-tj-gold { background-color: var(--accent-primary) !important; }
@@ -244,11 +280,46 @@
 .atlas-shell .bg-black\/20,
 .atlas-shell .bg-black\/25,
 .atlas-shell .bg-black\/30,
+.atlas-shell .bg-white\/\[0\.02\],
 .atlas-shell .bg-white\/\[0\.025\],
+.atlas-shell .bg-white\/\[0\.03\],
 .atlas-shell .bg-white\/\[0\.035\],
+.atlas-shell .bg-white\/\[0\.07\],
+.atlas-shell .bg-white\/\[0\.08\],
 .atlas-shell .bg-white\/\[0\.05\] { background-color: var(--panel-surface-soft) !important; }
 .atlas-shell .bg-white\/5,
-.atlas-shell .bg-white\/10 { background-color: var(--control-surface-hover) !important; }
+.atlas-shell .bg-white\/8,
+.atlas-shell .bg-white\/10,
+.atlas-shell .bg-white\/15,
+.atlas-shell .bg-white\/20,
+.atlas-shell .bg-white\/25 { background-color: var(--control-surface-hover) !important; }
+.atlas-shell .bg-tj-navy-dark,
+.atlas-shell .bg-tj-navy-dark\/30,
+.atlas-shell .bg-tj-navy-dark\/40,
+.atlas-shell .bg-tj-navy-dark\/50,
+.atlas-shell .bg-tj-navy-dark\/60,
+.atlas-shell .bg-tj-navy-dark\/88,
+.atlas-shell .bg-tj-navy-dark\/90,
+.atlas-shell .bg-tj-navy-dark\/92,
+.atlas-shell .bg-tj-navy-dark\/95 { background-color: var(--panel-surface) !important; }
+.atlas-shell .bg-tj-navy-light\/30,
+.atlas-shell .bg-tj-navy-light\/45,
+.atlas-shell .bg-tj-navy-light\/50,
+.atlas-shell .bg-tj-navy-light\/55,
+.atlas-shell .bg-tj-navy-light\/60,
+.atlas-shell .bg-tj-navy-light\/70,
+.atlas-shell .bg-tj-navy-light\/80,
+.atlas-shell .bg-tj-navy-light\/92 { background-color: var(--control-surface-strong) !important; }
+.atlas-shell .bg-tj-gold\/7,
+.atlas-shell .bg-tj-gold\/10,
+.atlas-shell .bg-tj-gold\/12,
+.atlas-shell .bg-tj-gold\/14,
+.atlas-shell .bg-tj-gold\/15,
+.atlas-shell .bg-tj-gold\/16,
+.atlas-shell .bg-tj-gold\/20,
+.atlas-shell .bg-tj-gold\/25,
+.atlas-shell .bg-tj-gold\/\[0\.05\],
+.atlas-shell .bg-tj-gold\/\[0\.06\] { background-color: var(--accent-primary-transparent) !important; }
 .atlas-shell [class*="bg-[#071421]"],
 .atlas-shell [class*="bg-[#0b1a29]"],
 .atlas-shell [class*="bg-[#0b1d2d]"] { background-color: var(--panel-surface) !important; }
@@ -594,6 +665,37 @@
 }
 .atlas-modal[open] { display: flex; flex-direction: column; }
 .atlas-modal::backdrop { background: var(--atlas-backdrop); }
+.atlas-modal__header,
+.atlas-modal__footer { border-color: var(--border-subtle) !important; }
+.atlas-modal__header { background: var(--bg-surface); }
+.atlas-modal__body { background: var(--bg-base); }
+.atlas-modal__footer { background: var(--bg-surface); }
+.atlas-modal__title { color: var(--text-primary) !important; }
+.atlas-modal__description { color: var(--text-secondary) !important; }
+.atlas-modal__secondary-action {
+  border-color: var(--border-strong) !important;
+  background: var(--control-surface) !important;
+  color: var(--text-secondary) !important;
+}
+.atlas-modal__secondary-action:hover {
+  background: var(--control-surface-hover) !important;
+  color: var(--text-primary) !important;
+}
+.atlas-modal__primary-action {
+  border-color: var(--accent-primary) !important;
+  background: var(--accent-primary) !important;
+  color: var(--text-on-accent) !important;
+}
+.atlas-modal__primary-action:hover { background: var(--accent-primary-hover) !important; }
+.atlas-settings-card {
+  border-color: var(--border-subtle) !important;
+  background: var(--bg-elevated) !important;
+  color: var(--text-primary);
+}
+.atlas-settings-segments {
+  border-color: var(--border-subtle) !important;
+  background: var(--control-surface) !important;
+}
 
 /* Utility controls stay above EMIL; scrolling panels leave a bottom band for
    the minimized live-voice status and Stop button, even on short screens. */

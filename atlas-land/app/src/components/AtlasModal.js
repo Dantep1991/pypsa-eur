@@ -25,18 +25,18 @@ export default function AtlasModal({ title, description, onClose, children, foot
     <dialog ref={dialogRef} className="atlas-modal" aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
       onCancel={(event) => { event.preventDefault(); onClose(); }}>
-      <header className="shrink-0 flex items-start justify-between gap-3 border-b border-white/10 px-4 py-3 sm:px-5">
+      <header className="atlas-modal__header shrink-0 flex items-start justify-between gap-3 border-b px-4 py-3 sm:px-5">
         <div className="min-w-0">
-          <h2 id={titleId} className="text-sm font-semibold text-white">{title}</h2>
-          {description && <p id={descriptionId} className="mt-1 text-xs leading-5 text-slate-300">{description}</p>}
+          <h2 id={titleId} className="atlas-modal__title text-sm font-semibold">{title}</h2>
+          {description && <p id={descriptionId} className="atlas-modal__description mt-1 text-xs leading-5">{description}</p>}
         </div>
         <button ref={closeButtonRef} type="button" onClick={onClose} aria-label={`Close ${title.toLowerCase()}`}
-          className="min-h-[36px] shrink-0 rounded-lg border border-white/20 px-3 text-xs text-slate-200 hover:bg-white/10 hover:text-white">
+          className="atlas-modal__secondary-action min-h-[36px] shrink-0 rounded-lg border px-3 text-xs">
           Close
         </button>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">{children}</div>
-      {footer && <footer className="shrink-0 border-t border-white/10 px-4 py-3 sm:px-5">{footer}</footer>}
+      <div className="atlas-modal__body min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">{children}</div>
+      {footer && <footer className="atlas-modal__footer shrink-0 border-t px-4 py-3 sm:px-5">{footer}</footer>}
     </dialog>
   );
 }
