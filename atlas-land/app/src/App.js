@@ -20,6 +20,7 @@ import ModelResultsControls from './components/ModelResultsControls';
 import ModelResultLegend from './components/ModelResultLegend';
 import ModelDistillationControls from './components/ModelDistillationControls';
 import ModelDistillationLegend from './components/ModelDistillationLegend';
+import ModelMixedResolutionControls from './components/ModelMixedResolutionControls';
 import ModelPortalControls from './components/ModelPortalControls';
 import ModelRunStatus from './components/ModelRunStatus';
 import { EMIL_VOICE_MODES } from './voice/emilVoiceState';
@@ -86,6 +87,7 @@ import {
   decorateDistillationRecord,
   fetchDistillationPreview,
 } from './modelWorkspace/distillationPreview';
+import { buildModelMixedResolutionPreview } from './modelWorkspace/mixedResolutionPreview';
 import {
   ATLAS_NETWORK_CARRIER_META,
   ATLAS_NETWORK_CARRIER_ORDER,
@@ -575,7 +577,9 @@ function AppInner() {
     () => modelGeographyPolicy(nohmWorkspaceContext, modelSceneStatus.meta),
     [modelSceneStatus.meta, nohmWorkspaceContext],
   );
+  const boundModelSceneRef = useRef(null);
   const modelSceneLoadedSignatureRef = useRef('');
+  const [modelMixedResolutionStatus, setModelMixedResolutionStatus] = useState({ state: 'idle', preview: null, error: '' });
   const [modelResultCatalogStatus, setModelResultCatalogStatus] = useState({ state: 'idle', catalog: null, error: '' });
   const [modelResultSelection, setModelResultSelection] = useState(null);
   const [modelResultStatus, setModelResultStatus] = useState({ state: 'idle', scene: null, error: '' });
@@ -2271,7 +2275,8 @@ function AppInner() {
     return () => window.removeEventListener(NOHM_ATLAS_RUN_STATE_EVENT, handleNohmAtlasRunState);
   }, [nohmWorkspaceContext?.projectId, nohmWorkspaceContext?.version]);
 
-  const applyBoundModelScene = useCallback((modelScene, layers) => {
+  const publishBoundModelRecords = useCallback((modelScene, { focus = false } = {}) => {
+    const layers = Array.isArray(modelScene?.meta?.layers) ? modelScene.meta.layers : ['grid'];
     const facilities = groupPypsaFacilities(modelScene.facilities);
     pypsaFacilitiesDataRef.current = facilities;
     pypsaConnectionsRef.current = modelScene.connections;
@@ -2305,7 +2310,13 @@ function AppInner() {
     setAtlasOverlayMode(false);
     setHiddenCarriers(new Set());
     setGeographyLoadError('');
-    if (modelScene.focus) setEmilFocusLocation(modelScene.focus);
+    if (focus && modelScene.focus) setEmilFocusLocation(modelScene.focus);
+  }, []);
+
+  const applyBoundModelScene = useCallback((modelScene, layers) => {
+    boundModelSceneRef.current = modelScene;
+    setModelMixedResolutionStatus({ state: 'idle', preview: null, error: '' });
+    publishBoundModelRecords(modelScene, { focus: true });
     setNohmWorkspaceContext((previous) => (
       previous?.projectId === modelScene.meta.projectId
         ? { ...previous, version: modelScene.meta.version }
@@ -2326,7 +2337,13 @@ function AppInner() {
     ].join('|');
     setModelSceneStatus({ state: 'ready', meta: modelScene.meta, error: '' });
     return modelScene;
-  }, []);
+  }, [publishBoundModelRecords]);
+
+  const clearModelMixedResolutionPreview = useCallback(() => {
+    const sourceScene = boundModelSceneRef.current;
+    if (sourceScene) publishBoundModelRecords(sourceScene, { focus: false });
+    setModelMixedResolutionStatus({ state: 'idle', preview: null, error: '' });
+  }, [publishBoundModelRecords]);
 
   const modelSceneRequestLayers = useMemo(() => [
     'grid',
@@ -2371,6 +2388,8 @@ function AppInner() {
   useEffect(() => {
     if (nohmWorkspaceContext?.mode !== 'model' || !nohmWorkspaceContext?.projectId) {
       modelSceneLoadedSignatureRef.current = '';
+      boundModelSceneRef.current = null;
+      setModelMixedResolutionStatus({ state: 'idle', preview: null, error: '' });
       setModelSceneStatus({ state: 'idle', meta: null, error: '' });
       return undefined;
     }
@@ -2421,6 +2440,7 @@ function AppInner() {
 
   const showSelectedModelResult = useCallback(async () => {
     if (!modelResultSelection || !modelSceneStatus.meta?.version || nohmWorkspaceContext?.mode !== 'model') return;
+    clearModelMixedResolutionPreview();
     distillationPreviewRequestRef.current?.abort();
     setDistillationPreviewStatus({ state: 'idle', preview: null, error: '' });
     modelResultRequestRef.current?.abort();
@@ -2439,7 +2459,7 @@ function AppInner() {
       if (controller.signal.aborted || error?.name === 'AbortError') return;
       setModelResultStatus((previous) => ({ ...previous, state: 'error', error: error?.message || 'The selected model result could not be shown.' }));
     }
-  }, [modelResultSelection, modelSceneStatus.meta?.version, nohmWorkspaceContext]);
+  }, [clearModelMixedResolutionPreview, modelResultSelection, modelSceneStatus.meta?.version, nohmWorkspaceContext]);
 
   const clearModelResult = useCallback(() => {
     modelResultRequestRef.current?.abort();
@@ -2464,6 +2484,7 @@ function AppInner() {
   const runDistillationPreview = useCallback(async () => {
     const meta = modelSceneStatus.meta;
     if (!distillationCountries.length || !meta?.version || nohmWorkspaceContext?.mode !== 'model') return;
+    clearModelMixedResolutionPreview();
     distillationPreviewRequestRef.current?.abort();
     const controller = new AbortController();
     distillationPreviewRequestRef.current = controller;
@@ -2484,7 +2505,30 @@ function AppInner() {
       if (controller.signal.aborted || error?.name === 'AbortError') return;
       setDistillationPreviewStatus(previous => ({ ...previous, state: 'error', error: error?.message || 'The geographical subset could not be previewed.' }));
     }
-  }, [clearModelResult, distillationCountries, modelSceneStatus.meta, nohmWorkspaceContext]);
+  }, [clearModelMixedResolutionPreview, clearModelResult, distillationCountries, modelSceneStatus.meta, nohmWorkspaceContext]);
+
+  const applyModelMixedResolutionPreview = useCallback((focusCountry) => {
+    const sourceScene = boundModelSceneRef.current;
+    if (!sourceScene) {
+      setModelMixedResolutionStatus({ state: 'error', preview: null, error: 'Load the project model before applying a mixed-resolution view.' });
+      return;
+    }
+    setModelMixedResolutionStatus(previous => ({ ...previous, state: 'loading', error: '' }));
+    try {
+      clearModelResult();
+      clearDistillationPreview();
+      const preview = buildModelMixedResolutionPreview(sourceScene, {
+        focusCountry,
+        adjacentTier: 'native',
+        outerTier: 'country',
+      });
+      publishBoundModelRecords(preview, { focus: false });
+      setModelMixedResolutionStatus({ state: 'ready', preview, error: '' });
+    } catch (error) {
+      publishBoundModelRecords(sourceScene, { focus: false });
+      setModelMixedResolutionStatus({ state: 'error', preview: null, error: error?.message || 'The mixed-resolution view could not be created.' });
+    }
+  }, [clearDistillationPreview, clearModelResult, publishBoundModelRecords]);
 
   useEffect(() => {
     setDistillationCountries([]);
@@ -15233,6 +15277,7 @@ function AppInner() {
                         >
                           <div className="space-y-2.5">
                             {boundModelGeography ? (
+                              <>
                               <div aria-label="Loaded model geography" className="rounded-xl border border-cyan-300/20 bg-cyan-300/[0.06] p-3">
                                 <span className="block text-[10px] uppercase tracking-wider text-cyan-100/70">Loaded model</span>
                                 <strong className="mt-1 block text-sm text-white">{boundModelGeography.projectName}</strong>
@@ -15254,6 +15299,17 @@ function AppInner() {
                                   Expanding a country to a finer topology requires the future governed split workflow; Atlas will not substitute an unrelated full-granularity cache.
                                 </p>
                               </div>
+                              {modelSceneStatus.state === 'ready' && boundModelGeography.sourceCountries.length > 1 && (
+                                <ModelMixedResolutionControls
+                                  countries={boundModelGeography.sourceCountries}
+                                  nativeLabel={boundModelGeography.nativeGeography}
+                                  status={modelMixedResolutionStatus}
+                                  onApply={applyModelMixedResolutionPreview}
+                                  onClear={clearModelMixedResolutionPreview}
+                                  countryName={countryCodeToName}
+                                />
+                              )}
+                              </>
                             ) : (
                             <>
                             <div className="block">

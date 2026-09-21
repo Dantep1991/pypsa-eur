@@ -353,7 +353,10 @@ Open `http://127.0.0.1:3001/atlas/` (use that exact origin). Do not rewrite the
 browser Origin to get around a denied API request. Defaults can be overridden
 with `NOHM_ATLAS_PREVIEW_PORT`, `NOHM_ATLAS_PREVIEW_MOUNT`,
 `NOHM_ATLAS_PREVIEW_API_PREFIX`, `NOHM_ATLAS_PREVIEW_BUILD`, and
-`NOHM_ATLAS_PREVIEW_BACKEND` (HTTP loopback only). A local Nohm iframe proxy may
+`NOHM_ATLAS_PREVIEW_BACKEND` (HTTP loopback only). A split local preview can set
+`NOHM_ATLAS_PREVIEW_MODEL_BACKEND` to Emil's loopback API; only
+`/api/atlas/projects/...` requests use that target, while infrastructure, land,
+voice and carrier requests stay on `NOHM_ATLAS_PREVIEW_BACKEND`. A local Nohm iframe proxy may
 be admitted with `NOHM_ATLAS_PREVIEW_ALLOWED_ORIGINS` as a comma-separated list
 of exact HTTP loopback origins; wildcard, remote, credentialed and path-bearing
 values are rejected. Match the build variables and
