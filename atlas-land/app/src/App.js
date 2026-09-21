@@ -75,6 +75,7 @@ import { stitchElectricityCrossBorderConnections } from './crossBorderNetwork';
 import electricityCrossBorderTopology from './data/electricity-cross-border.json';
 import { clearPypsaCatalogueCache, readPypsaCatalogueCache, writePypsaCatalogueCache } from './pypsaCatalogueCache';
 import { fetchModelScene, isModelSceneDomain, resolveModelSceneDomains } from './modelWorkspace/modelScene';
+import { assertModelGeographyOperation, modelGeographyPolicy } from './modelWorkspace/modelGeographyPolicy';
 import {
   decorateModelResultRecord,
   defaultModelResultSelection,
@@ -570,6 +571,10 @@ function AppInner() {
     () => window.__NOHM_ATLAS_WORKSPACE_CONTEXT__ || null
   );
   const [modelSceneStatus, setModelSceneStatus] = useState({ state: 'idle', meta: null, error: '' });
+  const boundModelGeography = useMemo(
+    () => modelGeographyPolicy(nohmWorkspaceContext, modelSceneStatus.meta),
+    [modelSceneStatus.meta, nohmWorkspaceContext],
+  );
   const modelSceneLoadedSignatureRef = useRef('');
   const [modelResultCatalogStatus, setModelResultCatalogStatus] = useState({ state: 'idle', catalog: null, error: '' });
   const [modelResultSelection, setModelResultSelection] = useState(null);
@@ -894,6 +899,15 @@ function AppInner() {
   const [selectingAllCountries, setSelectingAllCountries] = useState(false);
   const [geographyDrilldown, setGeographyDrilldown] = useState('');
   const [geographyLoadError, setGeographyLoadError] = useState('');
+  const boundModelGeographyError = useCallback((operation) => {
+    try {
+      assertModelGeographyOperation(boundModelGeography, operation);
+      return null;
+    } catch (error) {
+      setGeographyLoadError(error.message);
+      return error;
+    }
+  }, [boundModelGeography]);
   const [pypsaGranularity, setPypsaGranularity] = useState('pypsa');
   const [planningHorizonYear, setPlanningHorizonYear] = useState(() => {
     try {
@@ -4410,6 +4424,7 @@ function AppInner() {
   }, [cachedNetworkLevels.length, pypsaResolutionSwitching, selectedCachedNetworkIndex]);
 
   const loadCachedNetworkLevel = useCallback(async (index) => {
+    if (boundModelGeographyError('change-resolution')) return null;
     const level = cachedNetworkLevels[index];
     if (!level || pypsaLoading || pypsaResolutionSwitching) return;
 
@@ -4465,6 +4480,7 @@ function AppInner() {
     }
   }, [
     activePypsaCountryCode,
+    boundModelGeographyError,
     cachedNetworkLevels,
     countryCodeToName,
     loadPyPSAMapBatch,
@@ -4507,6 +4523,10 @@ function AppInner() {
   const addCountryNetwork = useCallback(async (countryCode) => {
     const normalizedCode = String(countryCode || '').trim().toUpperCase();
     if (!normalizedCode || pypsaLoading || pypsaBatchRef.current) return;
+    if (boundModelGeographyError('add-country-network')) {
+      setCountryDropdownValue('');
+      return;
+    }
     setGeographyLoadError('');
     setCountryDropdownValue(normalizedCode);
 
@@ -4567,6 +4587,7 @@ function AppInner() {
       setCountryDropdownValue('');
     }
   }, [
+    boundModelGeographyError,
     countryCodeToName,
     loadPyPSAMapBatch,
     atlasDomainVisibility,
@@ -4580,6 +4601,7 @@ function AppInner() {
 
   const removeCountryNetwork = useCallback((countryCode) => {
     if (pypsaBatchRef.current) return;
+    if (boundModelGeographyError('add-country-network')) return;
     setMixedGranularityPlan(null);
     const normalizedCode = String(countryCode || '').trim().toUpperCase();
     const nextNetworks = loadedPypsaNetworks.filter((network) => network.countryCode !== normalizedCode);
@@ -4630,10 +4652,11 @@ function AppInner() {
         ? nextNetworks.map((network) => network.countryName).join(' + ')
         : '',
     }));
-  }, [loadedPypsaNetworks]);
+  }, [boundModelGeographyError, loadedPypsaNetworks]);
 
   const activateCountryNetwork = useCallback((network) => {
     if (pypsaBatchRef.current) return;
+    if (boundModelGeographyError('add-country-network')) return;
     const countryCode = String(network?.countryCode || '').trim().toUpperCase();
     if (!countryCode) return;
     setSelectedPyPSACountryCode(countryCode);
@@ -4649,7 +4672,7 @@ function AppInner() {
       operation: 'fit_targets',
       countryCodes: [countryCode],
     });
-  }, [pypsaDeferredDetailLoad]);
+  }, [boundModelGeographyError, pypsaDeferredDetailLoad]);
 
   const findAtlasCountryNetworkEntry = useCallback((countryCode, resolutionKey = '') => {
     const normalizedCode = String(countryCode || '').trim().toUpperCase();
@@ -4697,6 +4720,8 @@ function AppInner() {
   ]);
 
   const applyMixedGranularityView = useCallback(async (focusCountryCode, levels = {}) => {
+    const restriction = boundModelGeographyError('mixed-resolution');
+    if (restriction) throw restriction;
     if (pypsaLoading || pypsaBatchRef.current) return null;
     const availableCodes = availablePypsaCountryOptions.map((option) => option.countryCode);
     const plan = buildMixedGranularityPlan(focusCountryCode, availableCodes, levels);
@@ -4730,6 +4755,7 @@ function AppInner() {
   }, [
     atlasDomainVisibility,
     availablePypsaCountryOptions,
+    boundModelGeographyError,
     countryCodeToName,
     findAtlasCountryNetworkEntry,
     loadPyPSAMapBatch,
@@ -4737,6 +4763,8 @@ function AppInner() {
   ]);
 
   const setAtlasResolutionFromAgent = useCallback(async (resolutionKey) => {
+    const restriction = boundModelGeographyError('change-resolution');
+    if (restriction) throw restriction;
     const normalized = String(resolutionKey || '').trim().toLowerCase();
     const targetIndex = cachedNetworkLevels.findIndex((level) => (
       level.isFullNodal ? normalized === 'full' : level.geographicLevel === normalized
@@ -4749,9 +4777,11 @@ function AppInner() {
       : loadedPypsaNetworks.map((network) => ({ filename: network.filename }));
     if (!entries) throw new Error(`Could not switch to ${ATLAS_RESOLUTION_LABELS[normalized] || normalized}.`);
     return { ...cachedNetworkLevels[targetIndex], entries };
-  }, [cachedNetworkLevels, loadCachedNetworkLevel, loadedPypsaNetworks, selectedCachedNetworkIndex]);
+  }, [boundModelGeographyError, cachedNetworkLevels, loadCachedNetworkLevel, loadedPypsaNetworks, selectedCachedNetworkIndex]);
 
   const stepAtlasResolutionFromAgent = useCallback(async (direction) => {
+    const restriction = boundModelGeographyError('change-resolution');
+    if (restriction) throw restriction;
     if (!cachedNetworkLevels.length) throw new Error('Load a country network first.');
     const delta = Number(direction) < 0 ? -1 : 1;
     const targetIndex = Math.max(
@@ -4770,9 +4800,11 @@ function AppInner() {
     const entries = await loadCachedNetworkLevel(targetIndex);
     if (!entries) throw new Error(`Could not switch to ${cachedNetworkLevels[targetIndex].label}.`);
     return { changed: true, level: { ...cachedNetworkLevels[targetIndex], entries } };
-  }, [cachedNetworkLevels, loadCachedNetworkLevel, loadedPypsaNetworks, selectedCachedNetworkIndex]);
+  }, [boundModelGeographyError, cachedNetworkLevels, loadCachedNetworkLevel, loadedPypsaNetworks, selectedCachedNetworkIndex]);
 
   const loadAtlasCountriesFromAgent = useCallback(async (countryCodes, options = {}) => {
+    const restriction = boundModelGeographyError('add-country-network');
+    if (restriction) throw restriction;
     const codes = [...new Set((countryCodes || []).map((code) => String(code || '').trim().toUpperCase()).filter(Boolean))];
     if (!codes.length) throw new Error('No country was provided.');
     const mode = options.mode === 'add' ? 'add' : 'replace';
@@ -4819,6 +4851,7 @@ function AppInner() {
     }));
     return { entries, resolutionKey };
   }, [
+    boundModelGeographyError,
     countryCodeToName,
     currentAtlasResolutionKey,
     mixedGranularityPlan,
@@ -4831,6 +4864,7 @@ function AppInner() {
   ]);
 
   const selectAllCountryNetworks = useCallback(async () => {
+    if (boundModelGeographyError('select-all-country-networks')) return;
     if (pypsaLoading || pypsaBatchRef.current || !availablePypsaCountryOptions.length
         || allPypsaCountriesSelected) return;
     const countryCodes = availablePypsaCountryOptions.map((option) => option.countryCode);
@@ -4854,6 +4888,7 @@ function AppInner() {
   }, [
     allPypsaCountriesSelected,
     availablePypsaCountryOptions,
+    boundModelGeographyError,
     currentAtlasResolutionKey,
     loadAtlasCountriesFromAgent,
     mixedGranularityPlan,
@@ -15127,7 +15162,9 @@ function AppInner() {
                             </p>
                           </div>
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] px-2 py-1 rounded-full border border-emerald-500/25 bg-emerald-500/10 text-emerald-300">Local</span>
+                            <span className="text-[10px] px-2 py-1 rounded-full border border-emerald-500/25 bg-emerald-500/10 text-emerald-300">
+                              {boundModelGeography ? 'Model' : 'Local'}
+                            </span>
                             <button
                               type="button"
                               onClick={() => setMapControlsCollapsed(true)}
@@ -15141,9 +15178,10 @@ function AppInner() {
                         </div>
 
                         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden scrollbar-hidden">
-                        {(!ATLAS_IS_EMBEDDED
-                          || activeWorkspaceArea === 'geography'
-                          || (activeWorkspaceArea === 'operations' && nohmWorkspaceContext?.mode !== 'model')) && (
+                        {(!ATLAS_IS_EMBEDDED || nohmWorkspaceContext?.mode !== 'model')
+                          && (!ATLAS_IS_EMBEDDED
+                            || activeWorkspaceArea === 'geography'
+                            || activeWorkspaceArea === 'operations') && (
                         <div className="px-3 py-3 border-b border-white/10">
                           {loadedPypsaNetworks.length > 1 && !solveNetworkStaging && !pypsaLoading && !pypsaResolutionSwitching ? (
                             <div className="flex items-center gap-2.5 rounded-lg border border-emerald-400/20 bg-emerald-400/[0.07] px-3 py-2.5">
@@ -15186,12 +15224,38 @@ function AppInner() {
                         <AtlasDomainSection
                           icon={MapPin}
                           title="Geography Domain"
-                          summary={`${loadedCountrySummary} · ${selectedCachedNetworkLevel?.isFull || selectedCachedNetworkLevel?.isGeographic ? selectedCachedNetworkLevel.label : selectedCachedNetworkLevel ? `${selectedCachedNetworkLevel.label} nodes` : 'No cache'}`}
+                          summary={boundModelGeography
+                            ? `${boundModelGeography.projectName} · ${boundModelGeography.nativeGeography}`
+                            : `${loadedCountrySummary} · ${selectedCachedNetworkLevel?.isFull || selectedCachedNetworkLevel?.isGeographic ? selectedCachedNetworkLevel.label : selectedCachedNetworkLevel ? `${selectedCachedNetworkLevel.label} nodes` : 'No cache'}`}
                           open={pypsaSectionOpen.geography}
                           onToggle={() => togglePypsaDomainSection('geography')}
                           compact={compactAtlasLayout || ATLAS_IS_EMBEDDED}
                         >
                           <div className="space-y-2.5">
+                            {boundModelGeography ? (
+                              <div aria-label="Loaded model geography" className="rounded-xl border border-cyan-300/20 bg-cyan-300/[0.06] p-3">
+                                <span className="block text-[10px] uppercase tracking-wider text-cyan-100/70">Loaded model</span>
+                                <strong className="mt-1 block text-sm text-white">{boundModelGeography.projectName}</strong>
+                                <span className="mt-0.5 block text-[10px] text-tj-slate">
+                                  {[boundModelGeography.modelVersion, boundModelGeography.nativeGeography].filter(Boolean).join(' · ')}
+                                </span>
+                                <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]">
+                                  <span className="rounded-lg border border-white/10 bg-black/15 px-2 py-1.5 text-tj-slate">
+                                    <b className="block text-white">{modelSceneStatus.meta?.nodeCount ?? '—'}</b> existing nodes
+                                  </span>
+                                  <span className="rounded-lg border border-white/10 bg-black/15 px-2 py-1.5 text-tj-slate">
+                                    <b className="block text-white">{boundModelGeography.sourceCountries.length}</b> source countries
+                                  </span>
+                                </div>
+                                <p className="mt-2 text-[10px] leading-4 text-tj-slate">
+                                  Countries are attributes inside this project, not separately loadable networks. Use Distil geography below to retain a subset of the existing schema.
+                                </p>
+                                <p className="mt-1 text-[10px] leading-4 text-amber-100/80">
+                                  Expanding a country to a finer topology requires the future governed split workflow; Atlas will not substitute an unrelated full-granularity cache.
+                                </p>
+                              </div>
+                            ) : (
+                            <>
                             <div className="block">
                               <span className="block mb-1 text-[10px] uppercase tracking-wider text-tj-slate">{atlasOverlayMode ? 'Countries · all overlay carriers' : 'Countries'}</span>
                               <div className="flex items-stretch gap-2">
@@ -15362,6 +15426,8 @@ function AppInner() {
                                 onApply={applyMixedGranularityView}
                               />
                             </div>
+                            </>
+                            )}
                           </div>
                         </AtlasDomainSection>
                         )}
@@ -15427,7 +15493,7 @@ function AppInner() {
                             <ModelPortalControls
                               embedded={ATLAS_IS_EMBEDDED}
                               onOpen={requestNohmAtlasPortal}
-                              targets={['explore-model', 'demand']}
+                              targets={['explore-model', 'demand', 'climate', 'commodity']}
                             />
                           </section>
                         )}

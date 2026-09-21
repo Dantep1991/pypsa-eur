@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, BarChart3, BrainCircuit, PanelRightOpen, PlayCircle, ShieldCheck } from 'lucide-react';
+import { Activity, BarChart3, BrainCircuit, CloudSun, Gem, PanelRightOpen, PlayCircle, ShieldCheck } from 'lucide-react';
 
 const PORTALS = [
   {
@@ -37,6 +37,18 @@ const PORTALS = [
     label: 'Analysis',
     description: 'Open Emil analysis for the active project beside Atlas.',
     Icon: BrainCircuit,
+  },
+  {
+    id: 'climate',
+    label: 'Climate',
+    description: 'Inspect linked climate profiles and weather evidence for this project.',
+    Icon: CloudSun,
+  },
+  {
+    id: 'commodity',
+    label: 'Commodity',
+    description: 'Inspect linked commodity assumptions and price trajectories.',
+    Icon: Gem,
   },
 ];
 

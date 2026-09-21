@@ -24,6 +24,8 @@ export const NOHM_ATLAS_PORTAL_TARGETS = Object.freeze([
   'model-runs',
   'visualisation',
   'analysis',
+  'climate',
+  'commodity',
 ]);
 export const NOHM_ATLAS_ACTIONS = Object.freeze([
   'map.zoom-in',
