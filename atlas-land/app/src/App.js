@@ -15110,7 +15110,9 @@ function AppInner() {
                         </div>
 
                         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden scrollbar-hidden">
-                        {(!ATLAS_IS_EMBEDDED || ['geography', 'operations'].includes(activeWorkspaceArea)) && (
+                        {(!ATLAS_IS_EMBEDDED
+                          || activeWorkspaceArea === 'geography'
+                          || (activeWorkspaceArea === 'operations' && nohmWorkspaceContext?.mode !== 'model')) && (
                         <div className="px-3 py-3 border-b border-white/10">
                           {loadedPypsaNetworks.length > 1 && !solveNetworkStaging && !pypsaLoading && !pypsaResolutionSwitching ? (
                             <div className="flex items-center gap-2.5 rounded-lg border border-emerald-400/20 bg-emerald-400/[0.07] px-3 py-2.5">
@@ -15142,7 +15144,7 @@ function AppInner() {
                         </div>
                         )}
 
-                        {!ATLAS_IS_EMBEDDED && (
+                        {(!ATLAS_IS_EMBEDDED || nohmWorkspaceContext?.mode === 'model') && (
                           <AtlasWorkspaceRail
                             activeArea={activeWorkspaceArea}
                             onSelect={openAtlasWorkspaceArea}
@@ -15391,11 +15393,39 @@ function AppInner() {
                                 <span className="atlas-domain-section__summary">Work in project tools beside the live map</span>
                               </span>
                             </div>
-                            <ModelPortalControls embedded={ATLAS_IS_EMBEDDED} onOpen={requestNohmAtlasPortal} />
+                            <ModelPortalControls
+                              embedded={ATLAS_IS_EMBEDDED}
+                              onOpen={requestNohmAtlasPortal}
+                              targets={['explore-model', 'demand']}
+                            />
                           </section>
                         )}
 
-                        {atlasWorkspaceAreaIsVisible('operations', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
+                        {nohmWorkspaceContext?.mode === 'model'
+                          && ATLAS_IS_EMBEDDED
+                          && atlasWorkspaceAreaIsVisible('operations', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
+                          <section className="border-t border-white/10 px-3 py-3" aria-label="Nohm model operations">
+                            <div className="mb-2.5 flex items-start gap-2">
+                              <span className="atlas-domain-section__icon is-active"><Cog className="h-4 w-4" /></span>
+                              <span className="min-w-0 flex-1">
+                                <span className="atlas-domain-section__eyebrow">Operate domain</span>
+                                <span className="atlas-domain-section__title">Model Operations</span>
+                                <span className="atlas-domain-section__summary">Use Nohm&apos;s validated tools beside the live model</span>
+                              </span>
+                            </div>
+                            <div className="mb-2.5 rounded-lg border border-emerald-300/20 bg-emerald-300/[0.06] px-3 py-2 text-[10px] leading-4 text-tj-slate">
+                              Atlas supplies project and model-version context. Operations, confirmations and audit history remain governed by Nohm.
+                            </div>
+                            <ModelPortalControls
+                              embedded={ATLAS_IS_EMBEDDED}
+                              onOpen={requestNohmAtlasPortal}
+                              targets={['model-operations']}
+                            />
+                          </section>
+                        )}
+
+                        {(!ATLAS_IS_EMBEDDED || nohmWorkspaceContext?.mode !== 'model')
+                          && atlasWorkspaceAreaIsVisible('operations', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
                         <AtlasDomainSection
                           icon={Cog}
                           title={atlasOverlayMode ? 'Power Operations' : 'Operations Domain'}

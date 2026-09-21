@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, PanelRightOpen } from 'lucide-react';
+import { Activity, PanelRightOpen, ShieldCheck } from 'lucide-react';
 
 const PORTALS = [
   {
@@ -14,12 +14,21 @@ const PORTALS = [
     description: 'Open the project demand workspace beside Atlas.',
     Icon: PanelRightOpen,
   },
+  {
+    id: 'model-operations',
+    label: 'Model Operations',
+    description: 'Open Nohm\'s governed operations workspace for this model.',
+    Icon: ShieldCheck,
+  },
 ];
 
-export default function ModelPortalControls({ embedded = false, onOpen }) {
+export default function ModelPortalControls({ embedded = false, onOpen, targets = null }) {
+  const visiblePortals = Array.isArray(targets)
+    ? PORTALS.filter(({ id }) => targets.includes(id))
+    : PORTALS;
   return (
     <div className="space-y-2">
-      {PORTALS.map(({ id, label, description, Icon }) => (
+      {visiblePortals.map(({ id, label, description, Icon }) => (
         <button
           key={id}
           type="button"
