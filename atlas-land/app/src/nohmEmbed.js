@@ -10,6 +10,7 @@ export const NOHM_ATLAS_PORTAL_REQUEST_MESSAGE = 'nohm.atlas.portal.request.v1';
 export const NOHM_ATLAS_ACTION_MESSAGE = 'nohm.atlas.action.v1';
 export const NOHM_ATLAS_ACTION_ACK_MESSAGE = 'nohm.atlas.action.ack.v1';
 export const NOHM_ATLAS_ACTION_EVENT = 'nohm:atlas-action';
+export const NOHM_ATLAS_VIEW_STATE_MESSAGE = 'nohm.atlas.view-state.v1';
 export const NOHM_ATLAS_THEME_MESSAGE = 'nohm.atlas.theme.v1';
 export const NOHM_ATLAS_THEME_EVENT = 'nohm:atlas-theme';
 export const NOHM_ATLAS_DOMAINS = Object.freeze(['model', 'operate', 'visualise', 'explore']);
@@ -48,6 +49,44 @@ export const NOHM_ATLAS_ACTIONS = Object.freeze([
 function optionalText(value) {
   const text = String(value ?? '').trim();
   return text || null;
+}
+
+function finiteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+export function normalizeNohmAtlasViewState(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const layers = source.layers && typeof source.layers === 'object' ? source.layers : {};
+  const viewport = source.viewport && typeof source.viewport === 'object' ? source.viewport : {};
+  return {
+    nodeMarkers: Boolean(source.nodeMarkers),
+    geographicBoundaries: Boolean(source.geographicBoundaries),
+    generationMix: Boolean(source.generationMix),
+    networkResolution: optionalText(source.networkResolution),
+    layers: Object.fromEntries(['Grid', 'Supply', 'Storage', 'Demand', 'Access']
+      .map((key) => [key, Boolean(layers[key])])),
+    viewport: {
+      lat: finiteNumber(viewport.lat),
+      lng: finiteNumber(viewport.lng),
+      zoom: finiteNumber(viewport.zoom),
+    },
+  };
+}
+
+export function announceNohmAtlasViewState(payload, targetWindow = window) {
+  const revision = Number(payload?.revision);
+  if (!targetWindow?.parent || targetWindow.parent === targetWindow
+      || !Number.isInteger(revision) || revision < 1) return false;
+  targetWindow.parent.postMessage({
+    type: NOHM_ATLAS_VIEW_STATE_MESSAGE,
+    protocolVersion: 1,
+    source: 'nohm-atlas',
+    revision,
+    state: normalizeNohmAtlasViewState(payload?.state),
+  }, targetWindow.location.origin);
+  return true;
 }
 
 export function normalizeNohmAtlasWorkspaceContext(context) {
@@ -141,6 +180,9 @@ export function acknowledgeNohmAtlasAction(receipt, targetWindow = window) {
     status,
     summary: optionalText(receipt?.summary),
     observed: receipt?.observed && typeof receipt.observed === 'object' ? receipt.observed : null,
+    viewRevision: Number.isInteger(receipt?.viewRevision) && receipt.viewRevision >= 1
+      ? receipt.viewRevision
+      : null,
   }, targetWindow.location.origin);
   return true;
 }
@@ -208,9 +250,16 @@ export function startNohmEmbedBridge(targetWindow = window, { onDomainChange, on
       const requestId = optionalText(event.data?.requestId);
       const actionId = optionalText(event.data?.actionId);
       if (!requestId || !NOHM_ATLAS_ACTIONS.includes(actionId)) return;
+      const expectedRevision = Number(event.data?.expectedRevision);
       if (typeof targetWindow.CustomEvent === 'function') {
         targetWindow.dispatchEvent(new targetWindow.CustomEvent(NOHM_ATLAS_ACTION_EVENT, {
-          detail: { requestId, actionId },
+          detail: {
+            requestId,
+            actionId,
+            expectedRevision: Number.isInteger(expectedRevision) && expectedRevision >= 1
+              ? expectedRevision
+              : null,
+          },
         }));
       }
       return;

@@ -1,10 +1,12 @@
 import {
+  announceNohmAtlasViewState,
   announceNohmEmbedReady,
   announceNohmModelScene,
   NOHM_ATLAS_DOMAIN_MESSAGE,
   NOHM_ATLAS_ACTION_ACK_MESSAGE,
   NOHM_ATLAS_ACTION_EVENT,
   NOHM_ATLAS_ACTION_MESSAGE,
+  NOHM_ATLAS_VIEW_STATE_MESSAGE,
   NOHM_ATLAS_THEME_EVENT,
   NOHM_ATLAS_THEME_MESSAGE,
   NOHM_ATLAS_READY_MESSAGE,
@@ -15,6 +17,7 @@ import {
   NOHM_ATLAS_MODEL_SCENE_MESSAGE,
   NOHM_ATLAS_PORTAL_REQUEST_MESSAGE,
   normalizeNohmAtlasWorkspaceContext,
+  normalizeNohmAtlasViewState,
   acknowledgeNohmAtlasAction,
   scheduleNohmEmbedReady,
   requestNohmAtlasPortal,
@@ -195,10 +198,19 @@ test('the embed bridge dispatches only allowlisted same-origin Atlas actions', (
     },
     ...overrides,
   });
-  send('display.hide-nodes');
+  send('display.hide-nodes', {
+    data: {
+      type: NOHM_ATLAS_ACTION_MESSAGE,
+      protocolVersion: 1,
+      source: 'nohm-shell',
+      requestId: 'atlas-action-7',
+      actionId: 'display.hide-nodes',
+      expectedRevision: 12,
+    },
+  });
   expect(target.dispatchEvent).toHaveBeenCalledWith({
     type: NOHM_ATLAS_ACTION_EVENT,
-    detail: { requestId: 'atlas-action-7', actionId: 'display.hide-nodes' },
+    detail: { requestId: 'atlas-action-7', actionId: 'display.hide-nodes', expectedRevision: 12 },
   });
   send('system.delete-data');
   send('map.zoom-in', { origin: 'https://other.example.test' });
@@ -252,9 +264,40 @@ test('embedded Atlas returns an exact action receipt to its same-origin shell', 
     status: 'applied',
     summary: 'Zoomed in one level.',
     observed: { operation: 'zoom_in' },
+    viewRevision: null,
   }, target.location.origin);
   expect(acknowledgeNohmAtlasAction({ requestId: 'bad', actionId: 'system.delete-data', status: 'applied' }, target)).toBe(false);
   expect(parent.postMessage).toHaveBeenCalledTimes(1);
+});
+
+test('embedded Atlas publishes a closed monotonic view-state snapshot', () => {
+  const parent = { postMessage: jest.fn() };
+  const target = { parent, location: { origin: 'https://nohm.example.test' } };
+  const state = normalizeNohmAtlasViewState({
+    nodeMarkers: true,
+    geographicBoundaries: false,
+    generationMix: true,
+    networkResolution: 'nuts3',
+    layers: { Grid: true, Supply: true, ignored: true },
+    viewport: { lat: 48.8, lng: 2.3, zoom: 7, ignored: 1 },
+    ignored: 'not transported',
+  });
+  expect(announceNohmAtlasViewState({ revision: 9, state }, target)).toBe(true);
+  expect(parent.postMessage).toHaveBeenCalledWith({
+    type: NOHM_ATLAS_VIEW_STATE_MESSAGE,
+    protocolVersion: 1,
+    source: 'nohm-atlas',
+    revision: 9,
+    state: {
+      nodeMarkers: true,
+      geographicBoundaries: false,
+      generationMix: true,
+      networkResolution: 'nuts3',
+      layers: { Grid: true, Supply: true, Storage: false, Demand: false, Access: false },
+      viewport: { lat: 48.8, lng: 2.3, zoom: 7 },
+    },
+  }, target.location.origin);
+  expect(announceNohmAtlasViewState({ revision: 0, state }, target)).toBe(false);
 });
 
 test('workspace context is acknowledged and stale revisions cannot replace newer model state', () => {

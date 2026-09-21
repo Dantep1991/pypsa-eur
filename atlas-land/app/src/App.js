@@ -57,7 +57,9 @@ import {
 } from './atlasWorkspaceNavigation';
 import {
   acknowledgeNohmAtlasAction,
+  announceNohmAtlasViewState,
   announceNohmModelScene,
+  normalizeNohmAtlasViewState,
   NOHM_ATLAS_ACTION_EVENT,
   NOHM_ATLAS_DOMAIN_EVENT,
   NOHM_ATLAS_THEME_EVENT,
@@ -109,6 +111,12 @@ const RegionalClusteringControls = deferredPanel(
   () => import('./components/RegionalClusteringControls'),
   'regional clustering',
 );
+
+function afterAtlasRender() {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
+  });
+}
 
 const ATLAS_IS_EMBEDDED = typeof window !== 'undefined' && window.self !== window.top;
 
@@ -924,15 +932,45 @@ function AppInner() {
   const [emilFocusLocation, setEmilFocusLocation] = useState(null);
   const [emilViewportCommand, setEmilViewportCommand] = useState(null);
   const pendingNohmViewportActionRef = useRef(new Map());
+  const atlasViewRevisionRef = useRef(0);
+  const atlasViewStateRef = useRef(normalizeNohmAtlasViewState(null));
+  const atlasViewFingerprintRef = useRef('');
+  const updateNohmAtlasViewState = useCallback((patch) => {
+    const current = atlasViewStateRef.current;
+    const next = normalizeNohmAtlasViewState({
+      ...current,
+      ...patch,
+      layers: patch?.layers ? { ...current.layers, ...patch.layers } : current.layers,
+      viewport: patch?.viewport ? { ...current.viewport, ...patch.viewport } : current.viewport,
+    });
+    const fingerprint = JSON.stringify(next);
+    if (fingerprint === atlasViewFingerprintRef.current) {
+      return { revision: atlasViewRevisionRef.current, state: next };
+    }
+    atlasViewStateRef.current = next;
+    atlasViewFingerprintRef.current = fingerprint;
+    atlasViewRevisionRef.current += 1;
+    announceNohmAtlasViewState({ revision: atlasViewRevisionRef.current, state: next });
+    return { revision: atlasViewRevisionRef.current, state: next };
+  }, []);
   const handleViewportCommandApplied = useCallback((id) => {
     setEmilViewportCommand((pending) => clearAppliedViewportCommand(pending, id));
     const receipt = pendingNohmViewportActionRef.current.get(id);
     if (receipt) {
       pendingNohmViewportActionRef.current.delete(id);
-      acknowledgeNohmAtlasAction({
-        ...receipt,
-        status: 'applied',
-        observed: { operation: receipt.operation, steps: receipt.steps || null },
+      afterAtlasRender().then(() => {
+        const viewRevision = atlasViewRevisionRef.current;
+        acknowledgeNohmAtlasAction({
+          ...receipt,
+          status: 'applied',
+          observed: {
+            operation: receipt.operation,
+            steps: receipt.steps || null,
+            viewport: atlasViewStateRef.current.viewport,
+            viewRevision,
+          },
+          viewRevision,
+        });
       });
     }
   }, []);
@@ -2087,6 +2125,7 @@ function AppInner() {
       zoom: Number.isFinite(view.zoom) ? view.zoom : null,
     };
     mapViewRef.current = nextView;
+    updateNohmAtlasViewState({ viewport: nextView });
     if (!pypsaDeferredDetailLoad) return;
     setMapViewState((prev) => (
       prev.lat === nextView.lat && prev.lng === nextView.lng && prev.zoom === nextView.zoom
@@ -2193,7 +2232,7 @@ function AppInner() {
     };
     window.addEventListener(NOHM_ATLAS_THEME_EVENT, handleNohmAtlasTheme);
     return () => window.removeEventListener(NOHM_ATLAS_THEME_EVENT, handleNohmAtlasTheme);
-  }, []);
+  }, [pypsaDeferredDetailLoad, updateNohmAtlasViewState]);
   useEffect(() => {
     const handleNohmAtlasWorkspaceContext = (event) => {
       if (event?.detail?.context) setNohmWorkspaceContext(event.detail.context);
@@ -4609,6 +4648,30 @@ function AppInner() {
     mixedGranularityPlan ? 'mixed' : selectedCachedNetworkLevel ? atlasResolutionKeyForEntry(selectedCachedNetworkLevel) : ''
   ), [mixedGranularityPlan, selectedCachedNetworkLevel]);
 
+  useEffect(() => {
+    updateNohmAtlasViewState({
+      nodeMarkers: showMapNodes,
+      geographicBoundaries: showGeographicBoundaries,
+      generationMix: showGenerationMix,
+      networkResolution: currentAtlasResolutionKey,
+      layers: {
+        Grid: atlasDomainVisibility.Grid !== false,
+        Supply: atlasDomainVisibility.Supply !== false,
+        Storage: atlasDomainVisibility.Storage !== false,
+        Demand: atlasDomainVisibility.Demand !== false,
+        Access: Boolean(gridAccessOverlay.enabled),
+      },
+    });
+  }, [
+    atlasDomainVisibility,
+    currentAtlasResolutionKey,
+    gridAccessOverlay.enabled,
+    showGenerationMix,
+    showGeographicBoundaries,
+    showMapNodes,
+    updateNohmAtlasViewState,
+  ]);
+
   const applyMixedGranularityView = useCallback(async (focusCountryCode, levels = {}) => {
     if (pypsaLoading || pypsaBatchRef.current) return null;
     const availableCodes = availablePypsaCountryOptions.map((option) => option.countryCode);
@@ -5612,6 +5675,26 @@ function AppInner() {
       const actionId = String(event?.detail?.actionId || '').trim();
       if (!requestId || !actionId) return;
 
+      const expectedRevision = Number(event?.detail?.expectedRevision);
+      const hasExpectedRevision = Number.isInteger(expectedRevision) && expectedRevision >= 1;
+      if (hasExpectedRevision && expectedRevision !== atlasViewRevisionRef.current) {
+        const viewRevision = atlasViewRevisionRef.current;
+        acknowledgeNohmAtlasAction({
+          requestId,
+          actionId,
+          status: 'rejected',
+          summary: 'Atlas changed while that plan was running, so the remaining view change was cancelled.',
+          observed: {
+            ...atlasViewStateRef.current,
+            stalePlan: true,
+            expectedRevision,
+            viewRevision,
+          },
+          viewRevision,
+        });
+        return;
+      }
+
       let summary = '';
       let observed = null;
       try {
@@ -5634,6 +5717,7 @@ function AppInner() {
             summary,
             operation: command.operation,
             steps: command.steps,
+            expectedRevision: hasExpectedRevision ? expectedRevision : null,
           });
           setEmilViewportCommand(command);
           return;
@@ -5651,34 +5735,37 @@ function AppInner() {
           summary = replies.filter(Boolean).join(' ') || 'Atlas view updated.';
           observed = {
             requestedAction: actionId,
-            networkResolution: actionId.startsWith('resolution.') ? currentAtlasResolutionKey : null,
             layer: actionId.startsWith('layer.') ? direct.domains?.[0] || null : null,
-            generationMix: actionId.startsWith('generation.') ? Boolean(direct.visible) : null,
           };
         } else {
           throw new Error('This Atlas action is not supported by the current workspace.');
         }
 
+        await afterAtlasRender();
+        const viewRevision = atlasViewRevisionRef.current;
         acknowledgeNohmAtlasAction({
           requestId,
           actionId,
           status: 'applied',
           summary,
-          observed,
+          observed: { ...observed, ...atlasViewStateRef.current, viewRevision },
+          viewRevision,
         });
       } catch (error) {
+        const viewRevision = atlasViewRevisionRef.current;
         acknowledgeNohmAtlasAction({
           requestId,
           actionId,
           status: 'rejected',
           summary: `Could not update Atlas: ${error?.message || 'Unknown error'}`,
-          observed,
+          observed: { ...observed, ...atlasViewStateRef.current, viewRevision },
+          viewRevision,
         });
       }
     };
     window.addEventListener(NOHM_ATLAS_ACTION_EVENT, handleNohmAtlasAction);
     return () => window.removeEventListener(NOHM_ATLAS_ACTION_EVENT, handleNohmAtlasAction);
-  }, [currentAtlasResolutionKey, executeAtlasDirectAction]);
+  }, [executeAtlasDirectAction]);
 
   const handleSolveNetworkCommand = useCallback(async (
     query,
