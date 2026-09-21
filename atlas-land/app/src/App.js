@@ -51,6 +51,7 @@ import {
   atlasWorkspaceAreaIsVisible,
 } from './atlasWorkspaceNavigation';
 import {
+  announceNohmModelScene,
   NOHM_ATLAS_DOMAIN_EVENT,
   NOHM_ATLAS_THEME_EVENT,
   NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT,
@@ -2182,6 +2183,12 @@ function AppInner() {
       setAtlasOverlayMode(false);
       setHiddenCarriers(new Set());
       if (modelScene.focus) setEmilFocusLocation(modelScene.focus);
+      setNohmWorkspaceContext((previous) => (
+        previous?.projectId === modelScene.meta.projectId
+          ? { ...previous, version: modelScene.meta.version }
+          : previous
+      ));
+      announceNohmModelScene(modelScene.meta);
       setModelSceneStatus({ state: 'ready', meta: modelScene.meta, error: '' });
     }).catch((error) => {
       if (controller.signal.aborted || error?.name === 'AbortError') return;

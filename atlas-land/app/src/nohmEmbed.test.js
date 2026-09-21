@@ -1,5 +1,6 @@
 import {
   announceNohmEmbedReady,
+  announceNohmModelScene,
   NOHM_ATLAS_DOMAIN_MESSAGE,
   NOHM_ATLAS_THEME_EVENT,
   NOHM_ATLAS_THEME_MESSAGE,
@@ -8,6 +9,7 @@ import {
   NOHM_ATLAS_WORKSPACE_CONTEXT_ACK_MESSAGE,
   NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT,
   NOHM_ATLAS_WORKSPACE_CONTEXT_MESSAGE,
+  NOHM_ATLAS_MODEL_SCENE_MESSAGE,
   normalizeNohmAtlasWorkspaceContext,
   scheduleNohmEmbedReady,
   startNohmEmbedBridge,
@@ -209,6 +211,29 @@ test('embedded Atlas announces a versioned readiness contract to its same origin
     protocolVersion: 1,
     source: 'nohm-atlas',
   }, 'https://nohm.example.test');
+});
+
+test('embedded Atlas reports the exact canonical scene it loaded', () => {
+  const parent = { postMessage: jest.fn() };
+  const target = { parent, location: { origin: 'https://nohm.example.test' } };
+  expect(announceNohmModelScene({
+    projectId: 'TYNDP_2026',
+    version: 'v3.0.0',
+    selectedYear: 2030,
+    nodeCount: 105,
+    linkCount: 178,
+  }, target)).toBe(true);
+  expect(parent.postMessage).toHaveBeenCalledWith({
+    type: NOHM_ATLAS_MODEL_SCENE_MESSAGE,
+    protocolVersion: 1,
+    source: 'nohm-atlas',
+    projectId: 'TYNDP_2026',
+    version: 'v3.0.0',
+    selectedYear: 2030,
+    nodeCount: 105,
+    linkCount: 178,
+  }, target.location.origin);
+  expect(announceNohmModelScene({ projectId: 'TYNDP_2026' }, target)).toBe(false);
 });
 
 test('scheduled readiness waits until the rendered frame', () => {

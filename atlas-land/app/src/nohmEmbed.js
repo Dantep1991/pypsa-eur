@@ -5,6 +5,7 @@ export const NOHM_ATLAS_DOMAIN_EVENT = 'nohm:atlas-domain';
 export const NOHM_ATLAS_WORKSPACE_CONTEXT_MESSAGE = 'nohm.atlas.workspace-context.v1';
 export const NOHM_ATLAS_WORKSPACE_CONTEXT_ACK_MESSAGE = 'nohm.atlas.workspace-context.ack.v1';
 export const NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT = 'nohm:atlas-workspace-context';
+export const NOHM_ATLAS_MODEL_SCENE_MESSAGE = 'nohm.atlas.model-scene.v1';
 export const NOHM_ATLAS_THEME_MESSAGE = 'nohm.atlas.theme.v1';
 export const NOHM_ATLAS_THEME_EVENT = 'nohm:atlas-theme';
 export const NOHM_ATLAS_DOMAINS = Object.freeze(['model', 'operate', 'visualise', 'explore']);
@@ -52,6 +53,29 @@ export function scheduleNohmEmbedReady(targetWindow = window) {
   targetWindow.requestAnimationFrame(() => {
     targetWindow.requestAnimationFrame(() => announceNohmEmbedReady(targetWindow));
   });
+  return true;
+}
+
+export function announceNohmModelScene(scene, targetWindow = window) {
+  if (!targetWindow?.parent || targetWindow.parent === targetWindow) return false;
+  const projectId = optionalText(scene?.projectId);
+  const version = optionalText(scene?.version);
+  const selectedYear = Number(scene?.selectedYear);
+  const nodeCount = Number(scene?.nodeCount);
+  const linkCount = Number(scene?.linkCount);
+  if (!projectId || !version || !Number.isInteger(selectedYear)
+      || !Number.isInteger(nodeCount) || nodeCount < 0
+      || !Number.isInteger(linkCount) || linkCount < 0) return false;
+  targetWindow.parent.postMessage({
+    type: NOHM_ATLAS_MODEL_SCENE_MESSAGE,
+    protocolVersion: 1,
+    source: 'nohm-atlas',
+    projectId,
+    version,
+    selectedYear,
+    nodeCount,
+    linkCount,
+  }, targetWindow.location.origin);
   return true;
 }
 
