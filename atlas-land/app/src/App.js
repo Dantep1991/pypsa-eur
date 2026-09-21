@@ -15434,6 +15434,29 @@ function AppInner() {
 
                         {nohmWorkspaceContext?.mode === 'model'
                           && ATLAS_IS_EMBEDDED
+                          && atlasWorkspaceAreaIsVisible('filters', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
+                          <section className="border-t border-white/10 px-3 py-3" aria-label="Model visualisation portals">
+                            <div className="mb-2.5 flex items-start gap-2">
+                              <span className="atlas-domain-section__icon is-active"><BarChart3 className="h-4 w-4" /></span>
+                              <span className="min-w-0 flex-1">
+                                <span className="atlas-domain-section__eyebrow">Visualise domain</span>
+                                <span className="atlas-domain-section__title">Results &amp; analysis</span>
+                                <span className="atlas-domain-section__summary">Open project evidence without leaving the map</span>
+                              </span>
+                            </div>
+                            <div className="mb-2.5 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] px-3 py-2 text-[10px] leading-4 text-tj-slate">
+                              Visualisation filters labelled solved runs to this model version. Analysis is currently project-bound.
+                            </div>
+                            <ModelPortalControls
+                              embedded={ATLAS_IS_EMBEDDED}
+                              onOpen={requestNohmAtlasPortal}
+                              targets={['visualisation', 'analysis']}
+                            />
+                          </section>
+                        )}
+
+                        {nohmWorkspaceContext?.mode === 'model'
+                          && ATLAS_IS_EMBEDDED
                           && atlasWorkspaceAreaIsVisible('operations', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
                           <section className="border-t border-white/10 px-3 py-3" aria-label="Nohm model operations">
                             <div className="mb-2.5 flex items-start gap-2">

@@ -474,8 +474,22 @@ test('embedded Atlas requests only allowlisted host-owned portals', () => {
     source: 'nohm-atlas',
     target: 'model-runs',
   }, target.location.origin);
+  expect(requestNohmAtlasPortal('visualisation', target)).toBe(true);
+  expect(parent.postMessage).toHaveBeenLastCalledWith({
+    type: NOHM_ATLAS_PORTAL_REQUEST_MESSAGE,
+    protocolVersion: 1,
+    source: 'nohm-atlas',
+    target: 'visualisation',
+  }, target.location.origin);
+  expect(requestNohmAtlasPortal('analysis', target)).toBe(true);
+  expect(parent.postMessage).toHaveBeenLastCalledWith({
+    type: NOHM_ATLAS_PORTAL_REQUEST_MESSAGE,
+    protocolVersion: 1,
+    source: 'nohm-atlas',
+    target: 'analysis',
+  }, target.location.origin);
   expect(requestNohmAtlasPortal('admin', target)).toBe(false);
-  expect(parent.postMessage).toHaveBeenCalledTimes(3);
+  expect(parent.postMessage).toHaveBeenCalledTimes(5);
 });
 
 test('scheduled readiness waits until the rendered frame', () => {

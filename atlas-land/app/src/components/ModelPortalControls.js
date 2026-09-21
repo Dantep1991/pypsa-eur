@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, PanelRightOpen, PlayCircle, ShieldCheck } from 'lucide-react';
+import { Activity, BarChart3, BrainCircuit, PanelRightOpen, PlayCircle, ShieldCheck } from 'lucide-react';
 
 const PORTALS = [
   {
@@ -25,6 +25,18 @@ const PORTALS = [
     label: 'Run Model',
     description: 'Validate, launch and monitor model runs in Nohm.',
     Icon: PlayCircle,
+  },
+  {
+    id: 'visualisation',
+    label: 'Visualisation',
+    description: 'Inspect verified solution charts and maps for this model version.',
+    Icon: BarChart3,
+  },
+  {
+    id: 'analysis',
+    label: 'Analysis',
+    description: 'Open Emil analysis for the active project beside Atlas.',
+    Icon: BrainCircuit,
   },
 ];
 
