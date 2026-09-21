@@ -61,6 +61,7 @@ import { stageMapBatch, assembleMapBatch, groupPypsaFacilities, mapSharedFacilit
 import { stitchElectricityCrossBorderConnections } from './crossBorderNetwork';
 import electricityCrossBorderTopology from './data/electricity-cross-border.json';
 import { clearPypsaCatalogueCache, readPypsaCatalogueCache, writePypsaCatalogueCache } from './pypsaCatalogueCache';
+import { fetchModelScene } from './modelWorkspace/modelScene';
 import {
   ATLAS_NETWORK_CARRIER_META,
   ATLAS_NETWORK_CARRIER_ORDER,
@@ -503,6 +504,7 @@ function AppInner() {
   const [nohmWorkspaceContext, setNohmWorkspaceContext] = useState(
     () => window.__NOHM_ATLAS_WORKSPACE_CONTEXT__ || null
   );
+  const [modelSceneStatus, setModelSceneStatus] = useState({ state: 'idle', meta: null, error: '' });
   const [viewMode, setViewMode] = useState('properties');
   const [lolaLiveUrl] = useState('https://joule-model.terajouleenergy.com/');
   const [assistantStatus, setAssistantStatus] = useState({
@@ -2125,6 +2127,78 @@ function AppInner() {
     window.addEventListener(NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT, handleNohmAtlasWorkspaceContext);
     return () => window.removeEventListener(NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT, handleNohmAtlasWorkspaceContext);
   }, []);
+  useEffect(() => {
+    if (nohmWorkspaceContext?.mode !== 'model' || !nohmWorkspaceContext?.projectId) {
+      setModelSceneStatus({ state: 'idle', meta: null, error: '' });
+      return undefined;
+    }
+    const controller = new AbortController();
+    const layers = [
+      'grid',
+      ...(atlasDomainVisibility.Supply ? ['supply'] : []),
+      ...(atlasDomainVisibility.Storage ? ['storage'] : []),
+    ];
+    const contextYear = [nohmWorkspaceContext.scenario, activeScenario, planningHorizonYear]
+      .map((value) => String(value || '').match(/\b(20\d{2})\b/)?.[1])
+      .find(Boolean);
+    setModelSceneStatus((previous) => ({ ...previous, state: 'loading', error: '' }));
+    setPypsaLoading(true);
+    fetchModelScene(nohmWorkspaceContext, {
+      layers,
+      year: Number(contextYear || 2030),
+      signal: controller.signal,
+    }).then((modelScene) => {
+      if (controller.signal.aborted) return;
+      const facilities = groupPypsaFacilities(modelScene.facilities);
+      pypsaFacilitiesDataRef.current = facilities;
+      pypsaConnectionsRef.current = modelScene.connections;
+      pypsaGeoJsonOverlaysRef.current = [];
+      setPypsaFacilitiesData(facilities);
+      setPypsaConnections(modelScene.connections);
+      setPypsaGeoJsonOverlays([]);
+      setPypsaDatasetMeta({
+        filename: `${modelScene.meta.projectId}@${modelScene.meta.version}`,
+        sourceBusCount: modelScene.meta.nodeCount,
+        source: 'canonical_model_schema',
+      });
+      setLoadedPypsaNetworks([{
+        countryCode: '',
+        countryName: `${modelScene.meta.projectId} model`,
+        filename: `model:${modelScene.meta.projectId}@${modelScene.meta.version}`,
+      }]);
+      setPypsaLoadedDomainsByNetwork({
+        [`model:${modelScene.meta.projectId}@${modelScene.meta.version}`]: {
+          Grid: true,
+          Supply: layers.includes('supply'),
+          Storage: layers.includes('storage'),
+          Demand: false,
+        },
+      });
+      setSelectedPyPSACountryCode('');
+      setSelectedPyPSAFile('');
+      setPypsaComponentScope(layers.length > 1 ? 'full' : 'grid');
+      setPypsaDeferredDetailLoad(false);
+      setAtlasNetworkCarrier('electricity');
+      setAtlasOverlayMode(false);
+      setHiddenCarriers(new Set());
+      if (modelScene.focus) setEmilFocusLocation(modelScene.focus);
+      setModelSceneStatus({ state: 'ready', meta: modelScene.meta, error: '' });
+    }).catch((error) => {
+      if (controller.signal.aborted || error?.name === 'AbortError') return;
+      setModelSceneStatus({ state: 'error', meta: null, error: error?.message || 'The bound model could not be loaded.' });
+    }).finally(() => {
+      if (!controller.signal.aborted) setPypsaLoading(false);
+    });
+    return () => controller.abort();
+  }, [
+    nohmWorkspaceContext?.mode,
+    nohmWorkspaceContext?.projectId,
+    nohmWorkspaceContext?.scenario,
+    activeScenario,
+    planningHorizonYear,
+    atlasDomainVisibility.Supply,
+    atlasDomainVisibility.Storage,
+  ]);
   const [mapAgentInput, setMapAgentInput] = useState('');
   const [mapAgentBusy, setMapAgentBusy] = useState(false);
   const [mapAgentMessages, setMapAgentMessages] = useState([
@@ -10759,32 +10833,43 @@ function AppInner() {
   // the compact map status aligned with that selection instead of continuing
   // to advertise Geography and Network Resolution in every workspace.
   const workspaceStatusCards = useMemo(() => {
-    const geographyValue = atlasOverlayMode
-      ? atlasOverlayCountrySummary
-      : atlasNetworkCarrier === 'gas'
-        ? (gasCountryFilter || 'All Europe')
-        : atlasNetworkCarrier === 'water'
-          ? (waterCountryFilter || 'All Europe')
-          : atlasNetworkCarrier === 'liquids'
-            ? (liquidsCountryFilter || 'All Europe')
-            : atlasNetworkCarrier === 'logistics'
-              ? (logisticsCountryFilter || 'All Europe')
-              : loadedCountrySummary;
-    const resolutionValue = atlasOverlayMode
-      ? 'Multi-network overlay'
-      : atlasNetworkCarrier === 'gas'
-        ? 'Transmission topology'
-        : atlasNetworkCarrier === 'water'
-          ? 'Mapped + reported topology'
-          : atlasNetworkCarrier === 'liquids'
-            ? 'Mapped source topology'
-            : atlasNetworkCarrier === 'logistics'
-              ? 'Ports + air-freight assets'
-              : selectedCachedNetworkLevel?.isFull || selectedCachedNetworkLevel?.isGeographic
-                ? selectedCachedNetworkLevel.label
-                : selectedCachedNetworkLevel
-                  ? `${selectedCachedNetworkLevel.accessNodes} access nodes`
-                  : 'No cache';
+    const modelSceneReady = nohmWorkspaceContext?.mode === 'model' && modelSceneStatus.state === 'ready';
+    const geographyValue = modelSceneReady
+      ? `${modelSceneStatus.meta.countries.length} countries · ${modelSceneStatus.meta.selectedYear || 'model year'}`
+      : nohmWorkspaceContext?.mode === 'model' && modelSceneStatus.state === 'loading'
+        ? 'Loading bound model…'
+        : nohmWorkspaceContext?.mode === 'model' && modelSceneStatus.state === 'error'
+          ? 'Bound model unavailable'
+          : atlasOverlayMode
+            ? atlasOverlayCountrySummary
+            : atlasNetworkCarrier === 'gas'
+              ? (gasCountryFilter || 'All Europe')
+              : atlasNetworkCarrier === 'water'
+                ? (waterCountryFilter || 'All Europe')
+                : atlasNetworkCarrier === 'liquids'
+                  ? (liquidsCountryFilter || 'All Europe')
+                  : atlasNetworkCarrier === 'logistics'
+                    ? (logisticsCountryFilter || 'All Europe')
+                    : loadedCountrySummary;
+    const resolutionValue = modelSceneReady
+      ? `${modelSceneStatus.meta.nodeCount} nodes · ${modelSceneStatus.meta.linkCount} links`
+      : nohmWorkspaceContext?.mode === 'model' && modelSceneStatus.state === 'error'
+        ? modelSceneStatus.error
+        : atlasOverlayMode
+          ? 'Multi-network overlay'
+          : atlasNetworkCarrier === 'gas'
+            ? 'Transmission topology'
+            : atlasNetworkCarrier === 'water'
+              ? 'Mapped + reported topology'
+              : atlasNetworkCarrier === 'liquids'
+                ? 'Mapped source topology'
+                : atlasNetworkCarrier === 'logistics'
+                  ? 'Ports + air-freight assets'
+                  : selectedCachedNetworkLevel?.isFull || selectedCachedNetworkLevel?.isGeographic
+                    ? selectedCachedNetworkLevel.label
+                    : selectedCachedNetworkLevel
+                      ? `${selectedCachedNetworkLevel.accessNodes} access nodes`
+                      : 'No cache';
 
     if (!ATLAS_IS_EMBEDDED || activeWorkspaceArea === 'geography') {
       return [
@@ -10841,7 +10926,8 @@ function AppInner() {
   }, [
     activeWorkspaceArea, atlasDomainVisibility, atlasNetworkCarrier, atlasOverlayCountrySummary,
     atlasOverlayMode, gasCountryFilter, hiddenCarriers, liquidsCountryFilter, loadedCountrySummary,
-    logisticsCountryFilter, pypsaHasGenerationMixData, pypsaSettings.solver_method,
+    logisticsCountryFilter, modelSceneStatus, nohmWorkspaceContext?.mode,
+    pypsaHasGenerationMixData, pypsaSettings.solver_method,
     regionalClusterOverlay, runMode, selectedCachedNetworkLevel, showGenerationMix, waterCountryFilter,
   ]);
 
