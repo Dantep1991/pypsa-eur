@@ -20,6 +20,7 @@ import ModelResultsControls from './components/ModelResultsControls';
 import ModelResultLegend from './components/ModelResultLegend';
 import ModelDistillationControls from './components/ModelDistillationControls';
 import ModelDistillationLegend from './components/ModelDistillationLegend';
+import ModelPortalControls from './components/ModelPortalControls';
 import { EMIL_VOICE_MODES } from './voice/emilVoiceState';
 import { buildAtlasTranscriptionContext } from './voice/atlasTranscriptionContext';
 import {
@@ -59,6 +60,7 @@ import {
   NOHM_ATLAS_DOMAIN_EVENT,
   NOHM_ATLAS_THEME_EVENT,
   NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT,
+  requestNohmAtlasPortal,
 } from './nohmEmbed';
 import { applyAtlasTheme, nextAtlasTheme, normalizeAtlasTheme } from './atlasTheme';
 import { createCarrierNetworkRequests } from './carrierNetworkRequests';
@@ -15117,6 +15119,21 @@ function AppInner() {
                               onClear={clearDistillationPreview}
                               countryName={countryCodeToName}
                             />
+                          </section>
+                        )}
+
+                        {nohmWorkspaceContext?.mode === 'model'
+                          && atlasWorkspaceAreaIsVisible('geography', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
+                          <section className="border-t border-white/10 px-3 py-3" aria-label="Model portals">
+                            <div className="mb-2.5 flex items-start gap-2">
+                              <span className="atlas-domain-section__icon is-active"><PanelLeftOpen className="h-4 w-4" /></span>
+                              <span className="min-w-0 flex-1">
+                                <span className="atlas-domain-section__eyebrow">Model workspace</span>
+                                <span className="atlas-domain-section__title">Portals</span>
+                                <span className="atlas-domain-section__summary">Work in project tools beside the live map</span>
+                              </span>
+                            </div>
+                            <ModelPortalControls embedded={ATLAS_IS_EMBEDDED} onOpen={requestNohmAtlasPortal} />
                           </section>
                         )}
 

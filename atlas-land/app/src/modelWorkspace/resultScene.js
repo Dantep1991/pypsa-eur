@@ -1,3 +1,5 @@
+import { atlasApiUrl } from '../config/api';
+
 export const MODEL_RESULT_CATALOG_SCHEMA = 'nohm.atlas.result-catalog.v1';
 export const MODEL_RESULT_SCENE_SCHEMA = 'nohm.atlas.result-scene.v1';
 
@@ -9,7 +11,7 @@ export function modelResultCatalogRequestUrl(context, modelVersion = '') {
   const query = new URLSearchParams();
   if (text(modelVersion)) query.set('version', text(modelVersion));
   const suffix = query.toString();
-  return `/api/emil/atlas/projects/${encodeURIComponent(projectId)}/results${suffix ? `?${suffix}` : ''}`;
+  return `/api/atlas/projects/${encodeURIComponent(projectId)}/results${suffix ? `?${suffix}` : ''}`;
 }
 
 export function modelResultSceneRequestUrl(context, selection = {}) {
@@ -26,7 +28,7 @@ export function modelResultSceneRequestUrl(context, selection = {}) {
   if (text(selection.modelVersion)) query.set('version', text(selection.modelVersion));
   if (text(selection.period)) query.set('period', text(selection.period));
   if (text(selection.unit)) query.set('unit', text(selection.unit));
-  return `/api/emil/atlas/projects/${encodeURIComponent(projectId)}/results/${encodeURIComponent(runId)}/scene?${query.toString()}`;
+  return `/api/atlas/projects/${encodeURIComponent(projectId)}/results/${encodeURIComponent(runId)}/scene?${query.toString()}`;
 }
 
 async function readJson(response, label) {
@@ -78,7 +80,7 @@ export function adaptModelResultScene(payload, expectedProjectId = '', expectedM
 export async function fetchModelResultCatalog(context, modelVersion, options = {}, fetchImpl = window.fetch.bind(window)) {
   const url = modelResultCatalogRequestUrl(context, modelVersion);
   if (!url) throw new Error('A bound model project is required to load Atlas results.');
-  const response = await fetchImpl(url, { signal: options.signal, credentials: 'same-origin' });
+  const response = await fetchImpl(atlasApiUrl(url, options.apiBase), { signal: options.signal, credentials: 'same-origin' });
   return adaptModelResultCatalog(
     await readJson(response, 'Atlas could not load model results'),
     context.projectId,
@@ -89,7 +91,7 @@ export async function fetchModelResultCatalog(context, modelVersion, options = {
 export async function fetchModelResultScene(context, selection, options = {}, fetchImpl = window.fetch.bind(window)) {
   const url = modelResultSceneRequestUrl(context, selection);
   if (!url) throw new Error('A complete model-result selection is required.');
-  const response = await fetchImpl(url, { signal: options.signal, credentials: 'same-origin' });
+  const response = await fetchImpl(atlasApiUrl(url, options.apiBase), { signal: options.signal, credentials: 'same-origin' });
   return adaptModelResultScene(
     await readJson(response, 'Atlas could not load the selected result'),
     context.projectId,

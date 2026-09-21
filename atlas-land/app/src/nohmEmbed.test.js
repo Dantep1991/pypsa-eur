@@ -10,8 +10,10 @@ import {
   NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT,
   NOHM_ATLAS_WORKSPACE_CONTEXT_MESSAGE,
   NOHM_ATLAS_MODEL_SCENE_MESSAGE,
+  NOHM_ATLAS_PORTAL_REQUEST_MESSAGE,
   normalizeNohmAtlasWorkspaceContext,
   scheduleNohmEmbedReady,
+  requestNohmAtlasPortal,
   startNohmEmbedBridge,
 } from './nohmEmbed';
 
@@ -234,6 +236,20 @@ test('embedded Atlas reports the exact canonical scene it loaded', () => {
     linkCount: 178,
   }, target.location.origin);
   expect(announceNohmModelScene({ projectId: 'TYNDP_2026' }, target)).toBe(false);
+});
+
+test('embedded Atlas requests only allowlisted host-owned portals', () => {
+  const parent = { postMessage: jest.fn() };
+  const target = { parent, location: { origin: 'https://nohm.example.test' } };
+  expect(requestNohmAtlasPortal('explore-model', target)).toBe(true);
+  expect(parent.postMessage).toHaveBeenCalledWith({
+    type: NOHM_ATLAS_PORTAL_REQUEST_MESSAGE,
+    protocolVersion: 1,
+    source: 'nohm-atlas',
+    target: 'explore-model',
+  }, target.location.origin);
+  expect(requestNohmAtlasPortal('admin', target)).toBe(false);
+  expect(parent.postMessage).toHaveBeenCalledTimes(1);
 });
 
 test('scheduled readiness waits until the rendered frame', () => {

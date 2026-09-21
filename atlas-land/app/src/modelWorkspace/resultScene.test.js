@@ -12,12 +12,12 @@ const context = { mode: 'model', projectId: 'TYNDP 2026' };
 
 test('model result URLs are same-origin, encoded, and version bound', () => {
   expect(modelResultCatalogRequestUrl(context, 'v3.0.0')).toBe(
-    '/api/emil/atlas/projects/TYNDP%202026/results?version=v3.0.0',
+    '/api/atlas/projects/TYNDP%202026/results?version=v3.0.0',
   );
   expect(modelResultSceneRequestUrl(context, {
     runId: 'DISPATCH A/B', className: 'Node', propertyName: 'Price', modelVersion: 'v3.0.0', period: '2030', unit: '$/MWh',
   })).toBe(
-    '/api/emil/atlas/projects/TYNDP%202026/results/DISPATCH%20A%2FB/scene?class_name=Node&property_name=Price&carrier=electricity&version=v3.0.0&period=2030&unit=%24%2FMWh',
+    '/api/atlas/projects/TYNDP%202026/results/DISPATCH%20A%2FB/scene?class_name=Node&property_name=Price&carrier=electricity&version=v3.0.0&period=2030&unit=%24%2FMWh',
   );
   expect(modelResultCatalogRequestUrl({ mode: 'reference', projectId: 'x' })).toBeNull();
 });

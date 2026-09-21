@@ -1,3 +1,5 @@
+import { atlasApiUrl } from '../config/api';
+
 export const MODEL_SCENE_SCHEMA = 'nohm.atlas.model-scene.v1';
 export const MODEL_SCENE_DOMAINS = Object.freeze(['Grid', 'Supply', 'Storage']);
 
@@ -18,8 +20,8 @@ export function modelSceneRequestUrl(context, { layers = ['grid'], year = null }
     carrier: 'electricity',
     layers: [...new Set(layers.map((value) => text(value).toLowerCase()).filter(Boolean))].join(',') || 'grid',
   });
-  if (Number.isInteger(Number(year))) query.set('year', String(Number(year)));
-  return `/api/emil/atlas/projects/${encodeURIComponent(projectId)}/scene?${query.toString()}`;
+  if (text(year) && Number.isInteger(Number(year))) query.set('year', String(Number(year)));
+  return `/api/atlas/projects/${encodeURIComponent(projectId)}/scene?${query.toString()}`;
 }
 
 function propertiesForNode(node) {
@@ -197,7 +199,7 @@ export function adaptModelScene(scene, expectedProjectId = '') {
 export async function fetchModelScene(context, options = {}, fetchImpl = window.fetch.bind(window)) {
   const url = modelSceneRequestUrl(context, options);
   if (!url) throw new Error('A bound model project is required to load an Atlas model scene.');
-  const response = await fetchImpl(url, { signal: options.signal, credentials: 'same-origin' });
+  const response = await fetchImpl(atlasApiUrl(url, options.apiBase), { signal: options.signal, credentials: 'same-origin' });
   let payload;
   try {
     payload = await response.json();

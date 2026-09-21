@@ -24,7 +24,7 @@ const scene = {
 
 test('modelSceneRequestUrl is same-origin, encoded, and layer scoped', () => {
   expect(modelSceneRequestUrl(context, { layers: ['grid', 'supply'], year: 2030 })).toBe(
-    '/api/emil/atlas/projects/TYNDP%202026/scene?carrier=electricity&layers=grid%2Csupply&year=2030',
+    '/api/atlas/projects/TYNDP%202026/scene?carrier=electricity&layers=grid%2Csupply&year=2030',
   );
   expect(modelSceneRequestUrl({ mode: 'reference', projectId: 'x' })).toBeNull();
 });
@@ -62,4 +62,13 @@ test('fetchModelScene reports backend errors without JSON parse noise', async ()
     json: async () => ({ detail: 'carrier metadata is missing' }),
   }));
   await expect(fetchModelScene(context, {}, fetchImpl)).rejects.toThrow(/carrier metadata is missing/i);
+});
+
+test('fetchModelScene uses the configured Atlas API boundary', async () => {
+  const fetchImpl = jest.fn(async () => ({ ok: true, status: 200, json: async () => scene }));
+  await fetchModelScene(context, { apiBase: '/atlas-api' }, fetchImpl);
+  expect(fetchImpl).toHaveBeenCalledWith(
+    '/atlas-api/api/atlas/projects/TYNDP%202026/scene?carrier=electricity&layers=grid',
+    expect.objectContaining({ credentials: 'same-origin' }),
+  );
 });

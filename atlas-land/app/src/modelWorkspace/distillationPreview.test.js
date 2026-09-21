@@ -23,7 +23,7 @@ test('builds an explicit model-version and country-scoped request', () => {
   expect(distillationPreviewRequestUrl(
     { mode: 'model', projectId: 'TYNDP_2026_Scenarios' },
     { countries: ['FR', 'ES', 'ES'], modelVersion: 'v3.0.0', year: 2030, layers: ['grid', 'supply'] },
-  )).toBe('/api/emil/atlas/projects/TYNDP_2026_Scenarios/distillation-preview?countries=ES%2CFR&carrier=electricity&layers=grid%2Csupply&version=v3.0.0&year=2030');
+  )).toBe('/api/atlas/projects/TYNDP_2026_Scenarios/distillation-preview?countries=ES%2CFR&carrier=electricity&layers=grid%2Csupply&version=v3.0.0&year=2030');
 });
 
 test('validates reconciled, read-only previews and indexes source identities', () => {
@@ -49,4 +49,3 @@ test('shows retained objects, marks cut links, and can ghost or hide excluded co
   expect(ghosted.atlas_distillation_hidden).toBe(false);
   expect(ghosted.atlas_distillation_opacity).toBe(0.16);
 });
-

@@ -6,10 +6,12 @@ export const NOHM_ATLAS_WORKSPACE_CONTEXT_MESSAGE = 'nohm.atlas.workspace-contex
 export const NOHM_ATLAS_WORKSPACE_CONTEXT_ACK_MESSAGE = 'nohm.atlas.workspace-context.ack.v1';
 export const NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT = 'nohm:atlas-workspace-context';
 export const NOHM_ATLAS_MODEL_SCENE_MESSAGE = 'nohm.atlas.model-scene.v1';
+export const NOHM_ATLAS_PORTAL_REQUEST_MESSAGE = 'nohm.atlas.portal.request.v1';
 export const NOHM_ATLAS_THEME_MESSAGE = 'nohm.atlas.theme.v1';
 export const NOHM_ATLAS_THEME_EVENT = 'nohm:atlas-theme';
 export const NOHM_ATLAS_DOMAINS = Object.freeze(['model', 'operate', 'visualise', 'explore']);
 export const NOHM_ATLAS_THEMES = Object.freeze(['dark', 'light', 'horizon']);
+export const NOHM_ATLAS_PORTAL_TARGETS = Object.freeze(['explore-model', 'demand']);
 
 function optionalText(value) {
   const text = String(value ?? '').trim();
@@ -75,6 +77,19 @@ export function announceNohmModelScene(scene, targetWindow = window) {
     selectedYear,
     nodeCount,
     linkCount,
+  }, targetWindow.location.origin);
+  return true;
+}
+
+export function requestNohmAtlasPortal(target, targetWindow = window) {
+  const safeTarget = optionalText(target);
+  if (!targetWindow?.parent || targetWindow.parent === targetWindow
+      || !NOHM_ATLAS_PORTAL_TARGETS.includes(safeTarget)) return false;
+  targetWindow.parent.postMessage({
+    type: NOHM_ATLAS_PORTAL_REQUEST_MESSAGE,
+    protocolVersion: 1,
+    source: 'nohm-atlas',
+    target: safeTarget,
   }, targetWindow.location.origin);
   return true;
 }

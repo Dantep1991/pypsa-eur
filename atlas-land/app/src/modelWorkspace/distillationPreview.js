@@ -1,3 +1,5 @@
+import { atlasApiUrl } from '../config/api';
+
 export const DISTILLATION_PREVIEW_SCHEMA = 'nohm.atlas.distillation-preview.v1';
 
 const text = value => String(value ?? '').trim();
@@ -19,8 +21,8 @@ export function distillationPreviewRequestUrl(context, options = {}) {
     layers: layers.join(',') || 'grid',
   });
   if (text(options.modelVersion)) query.set('version', text(options.modelVersion));
-  if (Number.isInteger(Number(options.year))) query.set('year', String(Number(options.year)));
-  return `/api/emil/atlas/projects/${encodeURIComponent(projectId)}/distillation-preview?${query.toString()}`;
+  if (text(options.year) && Number.isInteger(Number(options.year))) query.set('year', String(Number(options.year)));
+  return `/api/atlas/projects/${encodeURIComponent(projectId)}/distillation-preview?${query.toString()}`;
 }
 
 async function readJson(response) {
@@ -75,7 +77,7 @@ export function adaptDistillationPreview(payload, expectedProjectId = '', expect
 export async function fetchDistillationPreview(context, options = {}, fetchImpl = window.fetch.bind(window)) {
   const url = distillationPreviewRequestUrl(context, options);
   if (!url) throw new Error('Choose at least one country before previewing a geographical subset.');
-  const response = await fetchImpl(url, { signal: options.signal, credentials: 'same-origin' });
+  const response = await fetchImpl(atlasApiUrl(url, options.apiBase), { signal: options.signal, credentials: 'same-origin' });
   return adaptDistillationPreview(await readJson(response), context.projectId, options.modelVersion);
 }
 
