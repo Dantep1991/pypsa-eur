@@ -18,6 +18,8 @@ import LoadedCountryList from './components/LoadedCountryList';
 import MixedGranularityControls from './components/MixedGranularityControls';
 import ModelResultsControls from './components/ModelResultsControls';
 import ModelResultLegend from './components/ModelResultLegend';
+import ModelDistillationControls from './components/ModelDistillationControls';
+import ModelDistillationLegend from './components/ModelDistillationLegend';
 import { EMIL_VOICE_MODES } from './voice/emilVoiceState';
 import { buildAtlasTranscriptionContext } from './voice/atlasTranscriptionContext';
 import {
@@ -71,6 +73,10 @@ import {
   fetchModelResultCatalog,
   fetchModelResultScene,
 } from './modelWorkspace/resultScene';
+import {
+  decorateDistillationRecord,
+  fetchDistillationPreview,
+} from './modelWorkspace/distillationPreview';
 import {
   ATLAS_NETWORK_CARRIER_META,
   ATLAS_NETWORK_CARRIER_ORDER,
@@ -518,6 +524,10 @@ function AppInner() {
   const [modelResultSelection, setModelResultSelection] = useState(null);
   const [modelResultStatus, setModelResultStatus] = useState({ state: 'idle', scene: null, error: '' });
   const modelResultRequestRef = useRef(null);
+  const [distillationCountries, setDistillationCountries] = useState([]);
+  const [distillationPreviewStatus, setDistillationPreviewStatus] = useState({ state: 'idle', preview: null, error: '' });
+  const [showDistillationContext, setShowDistillationContext] = useState(false);
+  const distillationPreviewRequestRef = useRef(null);
   const [viewMode, setViewMode] = useState('properties');
   const [lolaLiveUrl] = useState('https://joule-model.terajouleenergy.com/');
   const [assistantStatus, setAssistantStatus] = useState({
@@ -2247,6 +2257,8 @@ function AppInner() {
 
   const showSelectedModelResult = useCallback(async () => {
     if (!modelResultSelection || !modelSceneStatus.meta?.version || nohmWorkspaceContext?.mode !== 'model') return;
+    distillationPreviewRequestRef.current?.abort();
+    setDistillationPreviewStatus({ state: 'idle', preview: null, error: '' });
     modelResultRequestRef.current?.abort();
     const controller = new AbortController();
     modelResultRequestRef.current = controller;
@@ -2271,6 +2283,62 @@ function AppInner() {
   }, []);
 
   useEffect(() => () => modelResultRequestRef.current?.abort(), []);
+
+  const clearDistillationPreview = useCallback(() => {
+    distillationPreviewRequestRef.current?.abort();
+    setDistillationPreviewStatus({ state: 'idle', preview: null, error: '' });
+    setShowDistillationContext(false);
+  }, []);
+
+  const updateDistillationCountries = useCallback((countries) => {
+    distillationPreviewRequestRef.current?.abort();
+    setDistillationCountries(countries);
+    setDistillationPreviewStatus({ state: 'idle', preview: null, error: '' });
+    setShowDistillationContext(false);
+  }, []);
+
+  const runDistillationPreview = useCallback(async () => {
+    const meta = modelSceneStatus.meta;
+    if (!distillationCountries.length || !meta?.version || nohmWorkspaceContext?.mode !== 'model') return;
+    distillationPreviewRequestRef.current?.abort();
+    const controller = new AbortController();
+    distillationPreviewRequestRef.current = controller;
+    clearModelResult();
+    setDistillationPreviewStatus(previous => ({ ...previous, state: 'loading', error: '' }));
+    try {
+      const preview = await fetchDistillationPreview(nohmWorkspaceContext, {
+        countries: distillationCountries,
+        carrier: 'electricity',
+        modelVersion: meta.version,
+        year: meta.selectedYear,
+        layers: meta.layers,
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      setDistillationPreviewStatus({ state: 'ready', preview, error: '' });
+    } catch (error) {
+      if (controller.signal.aborted || error?.name === 'AbortError') return;
+      setDistillationPreviewStatus(previous => ({ ...previous, state: 'error', error: error?.message || 'The geographical subset could not be previewed.' }));
+    }
+  }, [clearModelResult, distillationCountries, modelSceneStatus.meta, nohmWorkspaceContext]);
+
+  useEffect(() => {
+    setDistillationCountries([]);
+    clearDistillationPreview();
+  }, [nohmWorkspaceContext?.projectId, clearDistillationPreview]);
+
+  const modelSceneLayerKey = (modelSceneStatus.meta?.layers || []).join(',');
+  useEffect(() => {
+    const preview = distillationPreviewStatus.preview;
+    if (!preview) return;
+    if (
+      preview.model_version !== modelSceneStatus.meta?.version
+      || (preview.layers || []).join(',') !== modelSceneLayerKey
+      || Number(preview.selected_year) !== Number(modelSceneStatus.meta?.selectedYear)
+    ) clearDistillationPreview();
+  }, [distillationPreviewStatus.preview, modelSceneStatus.meta?.version, modelSceneStatus.meta?.selectedYear, modelSceneLayerKey, clearDistillationPreview]);
+
+  useEffect(() => () => distillationPreviewRequestRef.current?.abort(), []);
   const [mapAgentInput, setMapAgentInput] = useState('');
   const [mapAgentBusy, setMapAgentBusy] = useState(false);
   const [mapAgentMessages, setMapAgentMessages] = useState([
@@ -3874,6 +3942,7 @@ function AppInner() {
       BG: 'Bulgaria',
       BY: 'Belarus',
       CH: 'Switzerland',
+      CY: 'Cyprus',
       CZ: 'Czechia',
       DE: 'Germany',
       DK: 'Denmark',
@@ -5360,6 +5429,10 @@ function AppInner() {
         return true;
       }
       case 'run_mode': {
+        if (distillationPreviewStatus.preview) {
+          pushReply('This geographical subset is a non-executable preview. Return to the full model before changing run mode.');
+          return true;
+        }
         if (isInfrastructureAction) {
           pushReply(`Build and solve modes apply to electricity. The ${infrastructureLabel} Atlas currently visualizes its local source database.`);
           return true;
@@ -5383,6 +5456,10 @@ function AppInner() {
         pushReply(`${action.visible ? 'Opened' : 'Collapsed'} domain controls.`);
         return true;
       case 'build_network':
+        if (distillationPreviewStatus.preview) {
+          pushReply('This geographical subset has not been sutured or materialised, so it cannot be built, run, or published. Return to the full model first.');
+          return true;
+        }
         if (isInfrastructureAction) {
           pushReply(`The ${infrastructureLabel} Atlas is loaded from a local source database and cannot run the electricity Build Network workflow.`);
           return true;
@@ -5427,6 +5504,7 @@ function AppInner() {
     updateLandOverlay,
     waterFacilitiesData,
     liquidsCountryFilter,
+    distillationPreviewStatus.preview,
   ]);
 
   const handleSolveNetworkCommand = useCallback(async (
@@ -5435,6 +5513,9 @@ function AppInner() {
     granularityOverride = null,
     options = {}
   ) => {
+    if (distillationPreviewStatus.preview) {
+      throw new Error('This geographical subset is a non-executable preview. Return to the full model before building or solving.');
+    }
     const skipMapFocus = Boolean(options?.skipMapFocus);
     const normalizedQuery = (query || '').trim();
     if (!normalizedQuery) {
@@ -5585,9 +5666,13 @@ function AppInner() {
       fromExisting,
       existingMatch,
     };
-  }, [extractPypsaCountryCode, loadPyPSAFiles, loadPyPSANetworkFromFile, pypsaGranularity, planningHorizonYear, runMode]);
+  }, [distillationPreviewStatus.preview, extractPypsaCountryCode, loadPyPSAFiles, loadPyPSANetworkFromFile, pypsaGranularity, planningHorizonYear, runMode]);
 
   const submitSolveNetworkPrompt = useCallback(async () => {
+    if (distillationPreviewStatus.preview) {
+      setSolveNetworkStageMessage('This geographical subset is a non-executable preview. Return to the full model before building or solving.');
+      return;
+    }
     if (!solveNetworkSearch.trim() || solveNetworkStaging) return;
     const submittedPrompt = solveNetworkSearch.trim();
 
@@ -5715,6 +5800,7 @@ function AppInner() {
   }, [
     solveNetworkSearch, solveNetworkStaging, handleSolveNetworkCommand,
     selectedPyPSAFile, pypsaGranularity, extractPypsaCountryCode, planningHorizonYear,
+    distillationPreviewStatus.preview,
   ]);
 
   const updatePypsaSetting = useCallback((key, value) => {
@@ -5767,6 +5853,10 @@ function AppInner() {
   }, [useClusterDynamicArgs]);
 
   const runPypsaBuildFromSettings = useCallback(async () => {
+    if (distillationPreviewStatus.preview) {
+      setSolveNetworkStageMessage('This geographical subset is a non-executable preview. Return to the full model before building or solving.');
+      return;
+    }
     if (solveNetworkStaging || pypsaLoading) return;
     const prompt = buildPypsaPromptFromSettings(pypsaSettings);
     setSolveNetworkSearch(String(pypsaSettings.region || '').trim());
@@ -5830,6 +5920,7 @@ function AppInner() {
     runMode,
     extractPypsaCountryCode,
     loadPyPSANetworkFromFile,
+    distillationPreviewStatus.preview,
   ]);
 
   const openRegionPanelAt = useCallback((lat, lon) => {
@@ -6085,6 +6176,10 @@ function AppInner() {
   }, []);
 
   const solveRegion = useCallback(async (override = null) => {
+    if (distillationPreviewStatus.preview) {
+      setRegionError('This geographical subset is a non-executable preview. Return to the full model before solving.');
+      return;
+    }
     // Allow callers (e.g. the chatbot's combined select+solve intent) to pass
     // explicit lat/lon/radius so we don't depend on state having flushed yet.
     const effectiveLat = override?.lat ?? regionCenter?.lat;
@@ -6147,6 +6242,7 @@ function AppInner() {
     pypsaGranularity,
     extractRegionSourceDirname,
     loadRegionSavedRuns,
+    distillationPreviewStatus.preview,
   ]);
 
   useEffect(() => {
@@ -10352,6 +10448,14 @@ function AppInner() {
       facility => decorateModelResultRecord(facility, scene),
     );
   }, [modelResultStatus.scene, nohmWorkspaceContext?.mode, visibleMapFacilities]);
+  const distillationDecoratedMapFacilities = useMemo(() => {
+    const preview = distillationPreviewStatus.preview;
+    if (!preview || nohmWorkspaceContext?.mode !== 'model') return resultDecoratedMapFacilities;
+    return mapSharedFacilityGroups(
+      resultDecoratedMapFacilities,
+      facility => decorateDistillationRecord(facility, preview, showDistillationContext),
+    );
+  }, [distillationPreviewStatus.preview, nohmWorkspaceContext?.mode, resultDecoratedMapFacilities, showDistillationContext]);
   const getFilteredFacilities = useCallback(() => visibleMapFacilities, [visibleMapFacilities]);
 
   // Human-readable connection title
@@ -10436,6 +10540,13 @@ function AppInner() {
     if (!scene || nohmWorkspaceContext?.mode !== 'model') return renderedMapConnections;
     return renderedMapConnections.map(connection => decorateModelResultRecord(connection, scene));
   }, [modelResultStatus.scene, nohmWorkspaceContext?.mode, renderedMapConnections]);
+  const distillationDecoratedMapConnections = useMemo(() => {
+    const preview = distillationPreviewStatus.preview;
+    if (!preview || nohmWorkspaceContext?.mode !== 'model') return resultDecoratedMapConnections;
+    return resultDecoratedMapConnections.map(connection => (
+      decorateDistillationRecord(connection, preview, showDistillationContext)
+    ));
+  }, [distillationPreviewStatus.preview, nohmWorkspaceContext?.mode, resultDecoratedMapConnections, showDistillationContext]);
   // Opaque and stable across unrelated shell/assistant renders. If a new data
   // or display snapshot replaces the map inputs after an exception, the map
   // boundary gets one automatic recovery attempt even when record counts match.
@@ -10443,8 +10554,8 @@ function AppInner() {
     atlasOverlayMode,
     atlasNetworkCarrier,
     currentAtlasResolutionKey,
-    resultDecoratedMapFacilities,
-    resultDecoratedMapConnections,
+    distillationDecoratedMapFacilities,
+    distillationDecoratedMapConnections,
     showMapNodes,
     showGeographicBoundaries,
   ]);
@@ -14755,11 +14866,13 @@ function AppInner() {
                             <button
                               type="button"
                               onClick={runPypsaBuildFromSettings}
-                              disabled={solveNetworkStaging || pypsaLoading || pypsaResolutionSwitching}
-                              title="Build the selected country network"
+                              disabled={solveNetworkStaging || pypsaLoading || pypsaResolutionSwitching || Boolean(distillationPreviewStatus.preview)}
+                              title={distillationPreviewStatus.preview ? 'A distillation preview is non-executable. Return to the full model before running.' : 'Build the selected country network'}
                               className="atlas-primary-action w-full text-xs font-semibold px-4 py-2.5 rounded-lg border border-tj-gold/40 bg-tj-gold text-tj-navy-dark transition hover:brightness-105 disabled:opacity-40 disabled:cursor-not-allowed"
                             >
-                              {solveNetworkStaging || pypsaLoading || pypsaResolutionSwitching
+                              {distillationPreviewStatus.preview
+                                ? 'Preview is not executable'
+                                : solveNetworkStaging || pypsaLoading || pypsaResolutionSwitching
                                 ? 'Working…'
                                 : ATLAS_IS_EMBEDDED && activeWorkspaceArea === 'operations'
                                   ? runMode === 'solve_existing' ? 'Solve Existing Network' : runMode === 'build_solve' ? 'Build + Solve Network' : 'Build Network'
@@ -14982,6 +15095,31 @@ function AppInner() {
                           </section>
                         )}
 
+                        {nohmWorkspaceContext?.mode === 'model'
+                          && atlasWorkspaceAreaIsVisible('geography', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
+                          <section className="border-t border-white/10 px-3 py-3" aria-label="Distil geography">
+                            <div className="mb-2.5 flex items-start gap-2">
+                              <span className="atlas-domain-section__icon is-active"><Layers className="h-4 w-4" /></span>
+                              <span className="min-w-0 flex-1">
+                                <span className="atlas-domain-section__eyebrow">Model workspace</span>
+                                <span className="atlas-domain-section__title">Distil geography</span>
+                                <span className="atlas-domain-section__summary">Preview a reconciled schema subset without mutation</span>
+                              </span>
+                            </div>
+                            <ModelDistillationControls
+                              availableCountries={modelSceneStatus.meta?.countries || []}
+                              selectedCountries={distillationCountries}
+                              onSelectionChange={updateDistillationCountries}
+                              previewStatus={distillationPreviewStatus}
+                              showContext={showDistillationContext}
+                              onShowContextChange={setShowDistillationContext}
+                              onPreview={runDistillationPreview}
+                              onClear={clearDistillationPreview}
+                              countryName={countryCodeToName}
+                            />
+                          </section>
+                        )}
+
                         {atlasWorkspaceAreaIsVisible('operations', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
                         <AtlasDomainSection
                           icon={Cog}
@@ -14991,7 +15129,12 @@ function AppInner() {
                           onToggle={() => togglePypsaDomainSection('operations')}
                           compact={compactAtlasLayout || ATLAS_IS_EMBEDDED}
                         >
-                          <div className="space-y-3">
+                          {distillationPreviewStatus.preview && (
+                            <div className="mb-3 rounded-lg border border-amber-300/25 bg-amber-300/[0.08] px-3 py-2.5 text-[10px] leading-4 text-white">
+                              This geographical subset is a read-only schema preview. Return to the full model before configuring or launching a run; suturing, datafiles, validation and publication have not occurred.
+                            </div>
+                          )}
+                          <fieldset disabled={Boolean(distillationPreviewStatus.preview)} className={`space-y-3 ${distillationPreviewStatus.preview ? 'opacity-40' : ''}`}>
                             <div>
                               <span className="block mb-1 text-[10px] uppercase tracking-wider text-tj-slate">Run mode</span>
                               <div className="space-y-1">
@@ -15047,7 +15190,7 @@ function AppInner() {
                                 onClose={closeRegionPanel}
                               />
                             )}
-                          </div>
+                          </fieldset>
                         </AtlasDomainSection>
                         )}
 
@@ -15495,13 +15638,13 @@ function AppInner() {
                     countryCodes: activeLandCountryCodes,
                   }}
                   onGridAccessChange={updateGridAccessOverlay}
-                  facilities={resultDecoratedMapFacilities}
+                  facilities={distillationDecoratedMapFacilities}
                   selectedNode={selectedNode}
                   onNodeSelect={setSelectedNode}
                   mapLoaded={mapLoaded}
                   selectedNodes={selectedNodes}
                   onNodeSelection={handleNodeSelection}
-                  connections={resultDecoratedMapConnections}
+                  connections={distillationDecoratedMapConnections}
                   lineMetricEnabled={lineMetricEnabled}
                   onConnectionClick={(connection, position) => {
                     const connectionNetworkCarrier = atlasOverlayMode
@@ -15618,7 +15761,7 @@ function AppInner() {
                   }}
                   linePropertiesByChildName={linePropertiesByChildName}
                   activeDataLayer={activeDataLayer}
-                  showGenerationMix={!modelResultStatus.scene && !atlasOverlayMode && atlasNetworkCarrier === 'electricity' && showGenerationMix && pypsaHasGenerationMixData}
+                  showGenerationMix={!modelResultStatus.scene && !distillationPreviewStatus.preview && !atlasOverlayMode && atlasNetworkCarrier === 'electricity' && showGenerationMix && pypsaHasGenerationMixData}
                   mapViewMode={mapViewMode}
                   marketPrices={marketPrices}
                   generationMix={generationMix}
@@ -15638,6 +15781,7 @@ function AppInner() {
                 />
                 </MapWorkspaceBoundary>
                 <ModelResultLegend scene={modelResultStatus.scene} onClear={clearModelResult} />
+                <ModelDistillationLegend preview={distillationPreviewStatus.preview} showContext={showDistillationContext} onClear={clearDistillationPreview} />
                 {/* Right-click context menu: single-action popover positioned at cursor. */}
                 {engine === 'PyPSA Engine' && !atlasOverlayMode && atlasNetworkCarrier === 'electricity' && selectedPyPSAFile && regionContextMenu && !regionPanelVisible && (
                   <div

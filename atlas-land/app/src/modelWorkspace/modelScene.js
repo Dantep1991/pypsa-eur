@@ -183,6 +183,7 @@ export function adaptModelScene(scene, expectedProjectId = '') {
       projectId: scene.project_id,
       version: scene.version,
       selectedYear: scene.selected_year,
+      layers: Array.isArray(scene.layers) ? scene.layers : [],
       countries,
       nodeCount: Number(scene.coverage?.counts?.nodes || 0),
       mappedNodeCount: Number(scene.coverage?.counts?.mapped_nodes || 0),
