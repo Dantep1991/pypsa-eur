@@ -205,6 +205,34 @@ test('the embed bridge dispatches only allowlisted same-origin Atlas actions', (
   expect(target.dispatchEvent).toHaveBeenCalledTimes(1);
 });
 
+test('the action allowlist supports explicit layer add and hide semantics', () => {
+  const callbacks = new Map();
+  const parent = { postMessage: jest.fn() };
+  const target = {
+    parent,
+    location: { origin: 'https://nohm.example.test' },
+    document: { documentElement: { setAttribute: jest.fn() } },
+    requestAnimationFrame: jest.fn(),
+    addEventListener: (name, callback) => callbacks.set(name, callback),
+    removeEventListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+    CustomEvent: function CustomEvent(type, options) { return { type, ...options }; },
+  };
+  startNohmEmbedBridge(target);
+  ['layer.add-supply', 'layer.hide-supply'].forEach((actionId, index) => callbacks.get('message')({
+    source: parent,
+    origin: target.location.origin,
+    data: {
+      type: NOHM_ATLAS_ACTION_MESSAGE,
+      protocolVersion: 1,
+      source: 'nohm-shell',
+      requestId: `atlas-layer-${index}`,
+      actionId,
+    },
+  }));
+  expect(target.dispatchEvent).toHaveBeenCalledTimes(2);
+});
+
 test('embedded Atlas returns an exact action receipt to its same-origin shell', () => {
   const parent = { postMessage: jest.fn() };
   const target = { parent, location: { origin: 'https://nohm.example.test' } };
