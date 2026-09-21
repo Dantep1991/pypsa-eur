@@ -13,6 +13,9 @@ from pathlib import Path
 import re
 import shutil
 import sys
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 from atlas_runtime_config import (
     resolve_atlas_root, load_shared_nohm_key, server_options, configure_nohm_platform_path,
     load_shared_nohm_voice_key,
@@ -115,6 +118,62 @@ register_land_blueprint(atlas.app)
 register_voice_blueprint(atlas.app)
 register_clustering_blueprint(atlas.app)
 print("[Atlas startup] Land, voice and clustering extensions ready", flush=True)
+
+
+def _register_nohm_model_api_proxy() -> None:
+    """Expose Emil's read-only Atlas scene API through the Atlas API origin.
+
+    The canonical model-schema projection remains owned by Nohm/Emil. Atlas is
+    embedded behind a separate same-origin proxy mount, so its browser cannot
+    call Emil's process directly without leaking deployment topology into the
+    client. This bounded GET-only relay preserves that ownership while keeping
+    the iframe contract stable at ``/atlas-api/api/atlas/projects/...``.
+    """
+
+    configured = os.getenv("NOHM_ATLAS_MODEL_API_TARGET", "http://127.0.0.1:8009").rstrip("/")
+    parsed = urlparse(configured)
+    if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise RuntimeError("NOHM_ATLAS_MODEL_API_TARGET must be a loopback HTTP origin")
+
+    route = "/api/atlas/projects/<path:project_path>"
+    if route in {str(rule) for rule in atlas.app.url_map.iter_rules()}:
+        return
+
+    def relay_model_workspace_get(project_path: str):
+        suffix = f"/api/atlas/projects/{project_path}"
+        if atlas.request.query_string:
+            suffix += f"?{atlas.request.query_string.decode('ascii', errors='strict')}"
+        request = Request(
+            f"{configured}{suffix}",
+            method="GET",
+            headers={"Accept": "application/json"},
+        )
+        try:
+            with urlopen(request, timeout=120) as response:  # noqa: S310 - loopback target validated above
+                payload = response.read()
+                status = response.status
+                content_type = response.headers.get("Content-Type", "application/json")
+        except HTTPError as exc:
+            payload = exc.read()
+            status = exc.code
+            content_type = exc.headers.get("Content-Type", "application/json")
+        except (URLError, TimeoutError, OSError) as exc:
+            return atlas.jsonify(
+                error="model_workspace_unavailable",
+                detail=f"Emil's Atlas model API is unavailable: {exc}",
+            ), 503
+        return atlas.Response(payload, status=status, content_type=content_type)
+
+    atlas.app.add_url_rule(
+        route,
+        endpoint="nohm_atlas_model_workspace_proxy",
+        view_func=relay_model_workspace_get,
+        methods=["GET"],
+    )
+
+
+_register_nohm_model_api_proxy()
+print("[Atlas startup] Emil model-scene relay ready", flush=True)
 
 
 _LAND_CATEGORY_ORDER = ("protected", "water", "urban", "agriculture", "forest", "industrial")

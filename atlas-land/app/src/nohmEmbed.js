@@ -7,11 +7,33 @@ export const NOHM_ATLAS_WORKSPACE_CONTEXT_ACK_MESSAGE = 'nohm.atlas.workspace-co
 export const NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT = 'nohm:atlas-workspace-context';
 export const NOHM_ATLAS_MODEL_SCENE_MESSAGE = 'nohm.atlas.model-scene.v1';
 export const NOHM_ATLAS_PORTAL_REQUEST_MESSAGE = 'nohm.atlas.portal.request.v1';
+export const NOHM_ATLAS_ACTION_MESSAGE = 'nohm.atlas.action.v1';
+export const NOHM_ATLAS_ACTION_ACK_MESSAGE = 'nohm.atlas.action.ack.v1';
+export const NOHM_ATLAS_ACTION_EVENT = 'nohm:atlas-action';
 export const NOHM_ATLAS_THEME_MESSAGE = 'nohm.atlas.theme.v1';
 export const NOHM_ATLAS_THEME_EVENT = 'nohm:atlas-theme';
 export const NOHM_ATLAS_DOMAINS = Object.freeze(['model', 'operate', 'visualise', 'explore']);
 export const NOHM_ATLAS_THEMES = Object.freeze(['dark', 'light', 'horizon']);
 export const NOHM_ATLAS_PORTAL_TARGETS = Object.freeze(['explore-model', 'demand']);
+export const NOHM_ATLAS_ACTIONS = Object.freeze([
+  'map.zoom-in',
+  'map.zoom-out',
+  'map.fit-visible',
+  'map.reset',
+  'display.show-nodes',
+  'display.hide-nodes',
+  'display.show-boundaries',
+  'display.hide-boundaries',
+  'resolution.increase',
+  'resolution.decrease',
+  'layer.grid',
+  'layer.supply',
+  'layer.storage',
+  'layer.demand',
+  'layer.access',
+  'generation.show',
+  'generation.hide',
+]);
 
 function optionalText(value) {
   const text = String(value ?? '').trim();
@@ -94,6 +116,25 @@ export function requestNohmAtlasPortal(target, targetWindow = window) {
   return true;
 }
 
+export function acknowledgeNohmAtlasAction(receipt, targetWindow = window) {
+  const requestId = optionalText(receipt?.requestId);
+  const actionId = optionalText(receipt?.actionId);
+  const status = receipt?.status === 'applied' ? 'applied' : receipt?.status === 'rejected' ? 'rejected' : null;
+  if (!targetWindow?.parent || targetWindow.parent === targetWindow || !requestId
+      || !NOHM_ATLAS_ACTIONS.includes(actionId) || !status) return false;
+  targetWindow.parent.postMessage({
+    type: NOHM_ATLAS_ACTION_ACK_MESSAGE,
+    protocolVersion: 1,
+    source: 'nohm-atlas',
+    requestId,
+    actionId,
+    status,
+    summary: optionalText(receipt?.summary),
+    observed: receipt?.observed && typeof receipt.observed === 'object' ? receipt.observed : null,
+  }, targetWindow.location.origin);
+  return true;
+}
+
 export function startNohmEmbedBridge(targetWindow = window, { onDomainChange, onThemeChange, onWorkspaceContextChange } = {}) {
   if (!targetWindow?.parent || targetWindow.parent === targetWindow) return () => {};
   targetWindow.document?.documentElement?.setAttribute('data-nohm-atlas-ready', '1');
@@ -151,6 +192,17 @@ export function startNohmEmbedBridge(targetWindow = window, { onDomainChange, on
         revision,
         accepted,
       }, targetWindow.location.origin);
+      return;
+    }
+    if (event.data?.type === NOHM_ATLAS_ACTION_MESSAGE) {
+      const requestId = optionalText(event.data?.requestId);
+      const actionId = optionalText(event.data?.actionId);
+      if (!requestId || !NOHM_ATLAS_ACTIONS.includes(actionId)) return;
+      if (typeof targetWindow.CustomEvent === 'function') {
+        targetWindow.dispatchEvent(new targetWindow.CustomEvent(NOHM_ATLAS_ACTION_EVENT, {
+          detail: { requestId, actionId },
+        }));
+      }
       return;
     }
     const theme = String(event.data?.theme || '').toLowerCase();

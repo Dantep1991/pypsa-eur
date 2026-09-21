@@ -3,6 +3,7 @@ import {
   fetchModelScene,
   isModelSceneDomain,
   modelSceneRequestUrl,
+  resolveModelSceneDomains,
 } from './modelScene';
 
 const context = { mode: 'model', projectId: 'TYNDP 2026' };
@@ -34,6 +35,30 @@ test('model scenes expose only the implemented lazy map domains', () => {
   expect(isModelSceneDomain('Supply')).toBe(true);
   expect(isModelSceneDomain('Storage')).toBe(true);
   expect(isModelSceneDomain('Demand')).toBe(false);
+});
+
+test('bound model layer selection keeps grid data available while changing visible domains', () => {
+  expect(resolveModelSceneDomains(
+    { Grid: true, Supply: false, Storage: false },
+    ['Supply'],
+    'replace',
+  )).toEqual({
+    enabledDomains: ['Supply'],
+    layers: ['grid', 'supply'],
+    visibility: { Grid: false, Supply: true, Storage: false },
+  });
+  expect(resolveModelSceneDomains(
+    { Grid: false, Supply: true, Storage: false },
+    ['Storage'],
+    'add',
+  )).toEqual({
+    enabledDomains: ['Supply', 'Storage'],
+    layers: ['grid', 'supply', 'storage'],
+    visibility: { Grid: false, Supply: true, Storage: true },
+  });
+  expect(() => resolveModelSceneDomains({}, ['Demand'], 'replace')).toThrow(
+    'Demand is not available in the current canonical model scene.',
+  );
 });
 
 test('adaptModelScene retains canonical IDs and excludes only unmapped markers', () => {

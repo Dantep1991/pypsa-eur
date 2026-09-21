@@ -7,6 +7,31 @@ export function isModelSceneDomain(domain) {
   return MODEL_SCENE_DOMAINS.includes(text(domain));
 }
 
+export function resolveModelSceneDomains(currentVisibility = {}, requestedDomains = [], mode = 'replace') {
+  const requested = [...new Set(requestedDomains.map((domain) => text(domain)).filter(Boolean))];
+  const unsupported = requested.filter((domain) => !MODEL_SCENE_DOMAINS.includes(domain));
+  if (unsupported.length) {
+    throw new Error(`${unsupported.join(' and ')} is not available in the current canonical model scene.`);
+  }
+  const enabled = new Set(MODEL_SCENE_DOMAINS.filter((domain) => Boolean(currentVisibility[domain])));
+  if (mode === 'hide') requested.forEach((domain) => enabled.delete(domain));
+  else if (mode === 'add') requested.forEach((domain) => enabled.add(domain));
+  else {
+    enabled.clear();
+    requested.forEach((domain) => enabled.add(domain));
+  }
+  const enabledDomains = MODEL_SCENE_DOMAINS.filter((domain) => enabled.has(domain));
+  return {
+    enabledDomains,
+    layers: [
+      'grid',
+      ...(enabled.has('Supply') ? ['supply'] : []),
+      ...(enabled.has('Storage') ? ['storage'] : []),
+    ],
+    visibility: Object.fromEntries(MODEL_SCENE_DOMAINS.map((domain) => [domain, enabled.has(domain)])),
+  };
+}
+
 const text = (value) => String(value ?? '').trim();
 const finite = (value) => {
   const number = Number(value);

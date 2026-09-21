@@ -2,6 +2,9 @@ import {
   announceNohmEmbedReady,
   announceNohmModelScene,
   NOHM_ATLAS_DOMAIN_MESSAGE,
+  NOHM_ATLAS_ACTION_ACK_MESSAGE,
+  NOHM_ATLAS_ACTION_EVENT,
+  NOHM_ATLAS_ACTION_MESSAGE,
   NOHM_ATLAS_THEME_EVENT,
   NOHM_ATLAS_THEME_MESSAGE,
   NOHM_ATLAS_READY_MESSAGE,
@@ -12,6 +15,7 @@ import {
   NOHM_ATLAS_MODEL_SCENE_MESSAGE,
   NOHM_ATLAS_PORTAL_REQUEST_MESSAGE,
   normalizeNohmAtlasWorkspaceContext,
+  acknowledgeNohmAtlasAction,
   scheduleNohmEmbedReady,
   requestNohmAtlasPortal,
   startNohmEmbedBridge,
@@ -163,6 +167,66 @@ test('the default theme bridge publishes a window event for the Atlas applicatio
     type: NOHM_ATLAS_THEME_EVENT,
     detail: { theme: 'light' },
   });
+});
+
+test('the embed bridge dispatches only allowlisted same-origin Atlas actions', () => {
+  const callbacks = new Map();
+  const parent = { postMessage: jest.fn() };
+  const target = {
+    parent,
+    location: { origin: 'https://nohm.example.test' },
+    document: { documentElement: { setAttribute: jest.fn() } },
+    requestAnimationFrame: jest.fn(),
+    addEventListener: (name, callback) => callbacks.set(name, callback),
+    removeEventListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+    CustomEvent: function CustomEvent(type, options) { return { type, ...options }; },
+  };
+  startNohmEmbedBridge(target);
+  const send = (actionId, overrides = {}) => callbacks.get('message')({
+    source: parent,
+    origin: target.location.origin,
+    data: {
+      type: NOHM_ATLAS_ACTION_MESSAGE,
+      protocolVersion: 1,
+      source: 'nohm-shell',
+      requestId: 'atlas-action-7',
+      actionId,
+    },
+    ...overrides,
+  });
+  send('display.hide-nodes');
+  expect(target.dispatchEvent).toHaveBeenCalledWith({
+    type: NOHM_ATLAS_ACTION_EVENT,
+    detail: { requestId: 'atlas-action-7', actionId: 'display.hide-nodes' },
+  });
+  send('system.delete-data');
+  send('map.zoom-in', { origin: 'https://other.example.test' });
+  expect(target.dispatchEvent).toHaveBeenCalledTimes(1);
+});
+
+test('embedded Atlas returns an exact action receipt to its same-origin shell', () => {
+  const parent = { postMessage: jest.fn() };
+  const target = { parent, location: { origin: 'https://nohm.example.test' } };
+  expect(acknowledgeNohmAtlasAction({
+    requestId: 'atlas-action-8',
+    actionId: 'map.zoom-in',
+    status: 'applied',
+    summary: 'Zoomed in one level.',
+    observed: { operation: 'zoom_in' },
+  }, target)).toBe(true);
+  expect(parent.postMessage).toHaveBeenCalledWith({
+    type: NOHM_ATLAS_ACTION_ACK_MESSAGE,
+    protocolVersion: 1,
+    source: 'nohm-atlas',
+    requestId: 'atlas-action-8',
+    actionId: 'map.zoom-in',
+    status: 'applied',
+    summary: 'Zoomed in one level.',
+    observed: { operation: 'zoom_in' },
+  }, target.location.origin);
+  expect(acknowledgeNohmAtlasAction({ requestId: 'bad', actionId: 'system.delete-data', status: 'applied' }, target)).toBe(false);
+  expect(parent.postMessage).toHaveBeenCalledTimes(1);
 });
 
 test('workspace context is acknowledged and stale revisions cannot replace newer model state', () => {
