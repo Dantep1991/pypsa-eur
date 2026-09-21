@@ -11,6 +11,8 @@ export const NOHM_ATLAS_ACTION_MESSAGE = 'nohm.atlas.action.v1';
 export const NOHM_ATLAS_ACTION_ACK_MESSAGE = 'nohm.atlas.action.ack.v1';
 export const NOHM_ATLAS_ACTION_EVENT = 'nohm:atlas-action';
 export const NOHM_ATLAS_VIEW_STATE_MESSAGE = 'nohm.atlas.view-state.v1';
+export const NOHM_ATLAS_RUN_STATE_MESSAGE = 'nohm.atlas.run-state.v1';
+export const NOHM_ATLAS_RUN_STATE_EVENT = 'nohm:atlas-run-state';
 export const NOHM_ATLAS_THEME_MESSAGE = 'nohm.atlas.theme.v1';
 export const NOHM_ATLAS_THEME_EVENT = 'nohm:atlas-theme';
 export const NOHM_ATLAS_DOMAINS = Object.freeze(['model', 'operate', 'visualise', 'explore']);
@@ -108,6 +110,43 @@ export function normalizeNohmAtlasWorkspaceContext(context) {
     version: optionalText(context.version),
     scenario: optionalText(context.scenario),
     nativeGeography: geography,
+  };
+}
+
+export function normalizeNohmAtlasRunState(value) {
+  const projectId = optionalText(value?.projectId);
+  const modelVersion = optionalText(value?.modelVersion);
+  const allowedStatuses = ['idle', 'prepared', 'running', 'verifying', 'completed', 'failed', 'orphaned', 'unknown'];
+  const status = allowedStatuses.includes(value?.status) ? value.status : null;
+  const runCount = Number(value?.runCount);
+  const activeCount = Number(value?.activeCount);
+  if (!projectId || !modelVersion || !status
+      || !Number.isSafeInteger(runCount) || runCount < 0
+      || !Number.isSafeInteger(activeCount) || activeCount < 0 || activeCount > runCount) return null;
+  const latestSource = value?.latest && typeof value.latest === 'object' ? value.latest : null;
+  const latest = latestSource ? {
+    runId: optionalText(latestSource.runId),
+    label: optionalText(latestSource.label),
+    modelName: optionalText(latestSource.modelName),
+    status: allowedStatuses.includes(latestSource.status) ? latestSource.status : 'unknown',
+    rawStatus: optionalText(latestSource.rawStatus),
+    phase: optionalText(latestSource.phase),
+    startedAt: optionalText(latestSource.startedAt),
+    completedAt: optionalText(latestSource.completedAt),
+    verificationVerdict: optionalText(latestSource.verificationVerdict),
+    outputVerified: latestSource.outputVerified === true,
+    resultIdentity: optionalText(latestSource.resultIdentity),
+  } : null;
+  if (latest && !latest.runId) return null;
+  return {
+    projectId,
+    modelVersion,
+    status,
+    runCount,
+    activeCount,
+    refreshedAt: optionalText(value.refreshedAt),
+    latest,
+    verifiedResultReceipt: optionalText(value.verifiedResultReceipt),
   };
 }
 
@@ -244,6 +283,19 @@ export function startNohmEmbedBridge(targetWindow = window, { onDomainChange, on
         revision,
         accepted,
       }, targetWindow.location.origin);
+      return;
+    }
+    if (event.data?.type === NOHM_ATLAS_RUN_STATE_MESSAGE) {
+      const runState = normalizeNohmAtlasRunState(event.data?.runState);
+      const context = targetWindow.__NOHM_ATLAS_WORKSPACE_CONTEXT__;
+      if (!runState || context?.mode !== 'model'
+          || runState.projectId !== context.projectId
+          || (context.version && runState.modelVersion !== context.version)) return;
+      if (typeof targetWindow.CustomEvent === 'function') {
+        targetWindow.dispatchEvent(new targetWindow.CustomEvent(NOHM_ATLAS_RUN_STATE_EVENT, {
+          detail: { runState },
+        }));
+      }
       return;
     }
     if (event.data?.type === NOHM_ATLAS_ACTION_MESSAGE) {

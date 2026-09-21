@@ -21,6 +21,7 @@ import ModelResultLegend from './components/ModelResultLegend';
 import ModelDistillationControls from './components/ModelDistillationControls';
 import ModelDistillationLegend from './components/ModelDistillationLegend';
 import ModelPortalControls from './components/ModelPortalControls';
+import ModelRunStatus from './components/ModelRunStatus';
 import { EMIL_VOICE_MODES } from './voice/emilVoiceState';
 import { buildAtlasTranscriptionContext } from './voice/atlasTranscriptionContext';
 import {
@@ -62,6 +63,7 @@ import {
   normalizeNohmAtlasViewState,
   NOHM_ATLAS_ACTION_EVENT,
   NOHM_ATLAS_DOMAIN_EVENT,
+  NOHM_ATLAS_RUN_STATE_EVENT,
   NOHM_ATLAS_THEME_EVENT,
   NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT,
   requestNohmAtlasPortal,
@@ -572,6 +574,7 @@ function AppInner() {
   const [modelResultCatalogStatus, setModelResultCatalogStatus] = useState({ state: 'idle', catalog: null, error: '' });
   const [modelResultSelection, setModelResultSelection] = useState(null);
   const [modelResultStatus, setModelResultStatus] = useState({ state: 'idle', scene: null, error: '' });
+  const [nohmRunState, setNohmRunState] = useState(null);
   const modelResultRequestRef = useRef(null);
   const [distillationCountries, setDistillationCountries] = useState([]);
   const [distillationPreviewStatus, setDistillationPreviewStatus] = useState({ state: 'idle', preview: null, error: '' });
@@ -2235,11 +2238,24 @@ function AppInner() {
   }, [pypsaDeferredDetailLoad, updateNohmAtlasViewState]);
   useEffect(() => {
     const handleNohmAtlasWorkspaceContext = (event) => {
-      if (event?.detail?.context) setNohmWorkspaceContext(event.detail.context);
+      if (event?.detail?.context) {
+        setNohmRunState(null);
+        setNohmWorkspaceContext(event.detail.context);
+      }
     };
     window.addEventListener(NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT, handleNohmAtlasWorkspaceContext);
     return () => window.removeEventListener(NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT, handleNohmAtlasWorkspaceContext);
   }, []);
+  useEffect(() => {
+    const handleNohmAtlasRunState = (event) => {
+      const next = event?.detail?.runState;
+      if (!next || next.projectId !== nohmWorkspaceContext?.projectId
+          || next.modelVersion !== nohmWorkspaceContext?.version) return;
+      setNohmRunState(next);
+    };
+    window.addEventListener(NOHM_ATLAS_RUN_STATE_EVENT, handleNohmAtlasRunState);
+    return () => window.removeEventListener(NOHM_ATLAS_RUN_STATE_EVENT, handleNohmAtlasRunState);
+  }, [nohmWorkspaceContext?.projectId, nohmWorkspaceContext?.version]);
 
   const applyBoundModelScene = useCallback((modelScene, layers) => {
     const facilities = groupPypsaFacilities(modelScene.facilities);
@@ -2281,9 +2297,16 @@ function AppInner() {
         ? { ...previous, version: modelScene.meta.version }
         : previous
     ));
+    if (window.__NOHM_ATLAS_WORKSPACE_CONTEXT__?.projectId === modelScene.meta.projectId) {
+      window.__NOHM_ATLAS_WORKSPACE_CONTEXT__ = {
+        ...window.__NOHM_ATLAS_WORKSPACE_CONTEXT__,
+        version: modelScene.meta.version,
+      };
+    }
     announceNohmModelScene(modelScene.meta);
     modelSceneLoadedSignatureRef.current = [
       modelScene.meta.projectId,
+      modelScene.meta.version,
       modelScene.meta.selectedYear,
       layers.join(','),
     ].join('|');
@@ -2339,6 +2362,7 @@ function AppInner() {
     }
     const requestedSignature = [
       nohmWorkspaceContext.projectId,
+      nohmWorkspaceContext.version,
       modelSceneRequestYear,
       modelSceneRequestLayerKey,
     ].join('|');
@@ -2379,7 +2403,7 @@ function AppInner() {
         setModelResultCatalogStatus({ state: 'error', catalog: null, error: error?.message || 'Model results could not be discovered.' });
       });
     return () => controller.abort();
-  }, [nohmWorkspaceContext?.mode, nohmWorkspaceContext?.projectId, modelSceneStatus.meta?.version]);
+  }, [nohmWorkspaceContext?.mode, nohmWorkspaceContext?.projectId, modelSceneStatus.meta?.version, nohmRunState?.verifiedResultReceipt]);
 
   const showSelectedModelResult = useCallback(async () => {
     if (!modelResultSelection || !modelSceneStatus.meta?.version || nohmWorkspaceContext?.mode !== 'model') return;
@@ -11347,6 +11371,12 @@ function AppInner() {
     }
 
     if (activeWorkspaceArea === 'operations') {
+      if (nohmWorkspaceContext?.mode === 'model') {
+        return [
+          { label: 'Run status', value: nohmRunState ? (nohmRunState.latest?.label || 'No runs') : 'Checking run ledger…' },
+          { label: 'Model version', value: nohmRunState?.modelVersion || modelSceneStatus.meta?.version || nohmWorkspaceContext.version || 'Unresolved' },
+        ];
+      }
       return [
         {
           label: 'Run mode',
@@ -11397,6 +11427,7 @@ function AppInner() {
     logisticsCountryFilter, modelSceneStatus, nohmWorkspaceContext?.mode,
     pypsaHasGenerationMixData, pypsaSettings.solver_method,
     regionalClusterOverlay, runMode, selectedCachedNetworkLevel, showGenerationMix, waterCountryFilter,
+    nohmRunState, nohmWorkspaceContext?.version,
   ]);
 
   return (
@@ -15416,6 +15447,10 @@ function AppInner() {
                             <div className="mb-2.5 rounded-lg border border-emerald-300/20 bg-emerald-300/[0.06] px-3 py-2 text-[10px] leading-4 text-tj-slate">
                               Atlas supplies project and model-version context. Operations, confirmations and audit history remain governed by Nohm.
                             </div>
+                            <ModelRunStatus
+                              runState={nohmRunState}
+                              onOpen={() => requestNohmAtlasPortal('model-runs')}
+                            />
                             <ModelPortalControls
                               embedded={ATLAS_IS_EMBEDDED}
                               onOpen={requestNohmAtlasPortal}

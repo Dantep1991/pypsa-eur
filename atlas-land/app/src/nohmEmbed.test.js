@@ -14,15 +14,92 @@ import {
   NOHM_ATLAS_WORKSPACE_CONTEXT_ACK_MESSAGE,
   NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT,
   NOHM_ATLAS_WORKSPACE_CONTEXT_MESSAGE,
+  NOHM_ATLAS_RUN_STATE_EVENT,
+  NOHM_ATLAS_RUN_STATE_MESSAGE,
   NOHM_ATLAS_MODEL_SCENE_MESSAGE,
   NOHM_ATLAS_PORTAL_REQUEST_MESSAGE,
   normalizeNohmAtlasWorkspaceContext,
   normalizeNohmAtlasViewState,
+  normalizeNohmAtlasRunState,
   acknowledgeNohmAtlasAction,
   scheduleNohmEmbedReady,
   requestNohmAtlasPortal,
   startNohmEmbedBridge,
 } from './nohmEmbed';
+
+test('Atlas accepts run state only for the exact bound project and model version', () => {
+  const callbacks = new Map();
+  const dispatched = [];
+  const parent = { postMessage: jest.fn() };
+  const target = {
+    parent,
+    location: { origin: 'https://nohm.example.test' },
+    document: { documentElement: { setAttribute: jest.fn() } },
+    requestAnimationFrame: jest.fn(),
+    addEventListener: (name, callback) => callbacks.set(name, callback),
+    removeEventListener: jest.fn(),
+    CustomEvent: class CustomEvent {
+      constructor(type, options) { this.type = type; this.detail = options.detail; }
+    },
+    dispatchEvent: (event) => dispatched.push({ type: event.type, detail: event.detail }),
+  };
+  startNohmEmbedBridge(target);
+  target.__NOHM_ATLAS_WORKSPACE_CONTEXT__ = {
+    mode: 'model', projectId: 'TYNDP_2026', version: 'v3.0.0',
+  };
+  callbacks.get('message')({
+    source: target.parent,
+    origin: target.location.origin,
+    data: {
+      type: NOHM_ATLAS_RUN_STATE_MESSAGE, protocolVersion: 1, source: 'nohm-shell',
+      runState: { projectId: 'TYNDP_2026', modelVersion: 'v3.0.0', status: 'running', runCount: 1, activeCount: 1 },
+    },
+  });
+  expect(dispatched.at(-1)).toEqual({
+    type: NOHM_ATLAS_RUN_STATE_EVENT,
+    detail: { runState: normalizeNohmAtlasRunState({ projectId: 'TYNDP_2026', modelVersion: 'v3.0.0', status: 'running', runCount: 1, activeCount: 1 }) },
+  });
+  const acceptedCount = dispatched.length;
+  callbacks.get('message')({
+    source: target.parent,
+    origin: target.location.origin,
+    data: {
+      type: NOHM_ATLAS_RUN_STATE_MESSAGE, protocolVersion: 1, source: 'nohm-shell',
+      runState: { projectId: 'TYNDP_2026', modelVersion: 'v4.0.0', status: 'running', runCount: 1, activeCount: 1 },
+    },
+  });
+  expect(dispatched).toHaveLength(acceptedCount);
+});
+
+test('Atlas defers an unresolved bridge version to the application exact-version guard', () => {
+  const callbacks = new Map();
+  const dispatched = [];
+  const parent = { postMessage: jest.fn() };
+  const target = {
+    parent,
+    location: { origin: 'https://nohm.example.test' },
+    document: { documentElement: { setAttribute: jest.fn() } },
+    requestAnimationFrame: jest.fn(),
+    addEventListener: (name, callback) => callbacks.set(name, callback),
+    removeEventListener: jest.fn(),
+    CustomEvent: class CustomEvent {
+      constructor(type, options) { this.type = type; this.detail = options.detail; }
+    },
+    dispatchEvent: (event) => dispatched.push(event),
+    __NOHM_ATLAS_WORKSPACE_CONTEXT__: { mode: 'model', projectId: 'TYNDP_2026', version: null },
+  };
+  startNohmEmbedBridge(target);
+  callbacks.get('message')({
+    source: parent,
+    origin: target.location.origin,
+    data: {
+      type: NOHM_ATLAS_RUN_STATE_MESSAGE, protocolVersion: 1, source: 'nohm-shell',
+      runState: { projectId: 'TYNDP_2026', modelVersion: 'v3.0.0', status: 'idle', runCount: 0, activeCount: 0 },
+    },
+  });
+  expect(dispatched).toHaveLength(1);
+  expect(dispatched[0].detail.runState.modelVersion).toBe('v3.0.0');
+});
 
 test('workspace contexts retain only the versioned Atlas binding contract', () => {
   expect(normalizeNohmAtlasWorkspaceContext({
