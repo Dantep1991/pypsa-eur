@@ -502,8 +502,15 @@ test('embedded Atlas requests only allowlisted host-owned portals', () => {
     source: 'nohm-atlas',
     target: 'commodity',
   }, target.location.origin);
+  expect(requestNohmAtlasPortal('lola-flow', target)).toBe(true);
+  expect(parent.postMessage).toHaveBeenLastCalledWith({
+    type: NOHM_ATLAS_PORTAL_REQUEST_MESSAGE,
+    protocolVersion: 1,
+    source: 'nohm-atlas',
+    target: 'lola-flow',
+  }, target.location.origin);
   expect(requestNohmAtlasPortal('admin', target)).toBe(false);
-  expect(parent.postMessage).toHaveBeenCalledTimes(7);
+  expect(parent.postMessage).toHaveBeenCalledTimes(8);
 });
 
 test('scheduled readiness waits until the rendered frame', () => {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, BarChart3, BrainCircuit, CloudSun, Gem, PanelRightOpen, PlayCircle, ShieldCheck } from 'lucide-react';
+import { Activity, BarChart3, BrainCircuit, CloudSun, Gem, GitBranch, PanelRightOpen, PlayCircle, ShieldCheck } from 'lucide-react';
 
 const PORTALS = [
   {
@@ -37,6 +37,12 @@ const PORTALS = [
     label: 'Analysis',
     description: 'Open Emil analysis for the active project beside Atlas.',
     Icon: BrainCircuit,
+  },
+  {
+    id: 'lola-flow',
+    label: 'Lola Flow',
+    description: 'Animate signed line flows for an exact compatible solution run.',
+    Icon: GitBranch,
   },
   {
     id: 'climate',

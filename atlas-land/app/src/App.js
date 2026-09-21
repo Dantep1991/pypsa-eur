@@ -15516,7 +15516,7 @@ function AppInner() {
                             <ModelPortalControls
                               embedded={ATLAS_IS_EMBEDDED}
                               onOpen={requestNohmAtlasPortal}
-                              targets={['visualisation', 'analysis']}
+                              targets={['visualisation', 'analysis', 'lola-flow']}
                             />
                           </section>
                         )}
