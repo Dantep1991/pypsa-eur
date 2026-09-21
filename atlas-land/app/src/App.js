@@ -62,7 +62,7 @@ import { stageMapBatch, assembleMapBatch, groupPypsaFacilities, mapSharedFacilit
 import { stitchElectricityCrossBorderConnections } from './crossBorderNetwork';
 import electricityCrossBorderTopology from './data/electricity-cross-border.json';
 import { clearPypsaCatalogueCache, readPypsaCatalogueCache, writePypsaCatalogueCache } from './pypsaCatalogueCache';
-import { fetchModelScene } from './modelWorkspace/modelScene';
+import { fetchModelScene, isModelSceneDomain } from './modelWorkspace/modelScene';
 import {
   ATLAS_NETWORK_CARRIER_META,
   ATLAS_NETWORK_CARRIER_ORDER,
@@ -2182,6 +2182,7 @@ function AppInner() {
       setAtlasNetworkCarrier('electricity');
       setAtlasOverlayMode(false);
       setHiddenCarriers(new Set());
+      setGeographyLoadError('');
       if (modelScene.focus) setEmilFocusLocation(modelScene.focus);
       setNohmWorkspaceContext((previous) => (
         previous?.projectId === modelScene.meta.projectId
@@ -3683,6 +3684,19 @@ function AppInner() {
 
   const handleAtlasDomainSelection = async (domain) => {
     if (pypsaBatchRef.current) return;
+    const domainName = String(domain || 'Grid');
+    if (nohmWorkspaceContext?.mode === 'model' && nohmWorkspaceContext?.projectId) {
+      if (!isModelSceneDomain(domainName)) {
+        setGeographyLoadError('Demand is not yet projected from the canonical model scene.');
+        return;
+      }
+      setGeographyLoadError('');
+      setAtlasDomainVisibility((previous) => ({
+        ...previous,
+        [domainName]: previous[domainName] === false,
+      }));
+      return;
+    }
     if (atlasOverlayMode) {
       try {
         await handleAtlasOverlayDomainSelection(domain);
@@ -3707,7 +3721,6 @@ function AppInner() {
       await handleLogisticsDomainSelection(domain);
       return;
     }
-    const domainName = String(domain || 'Grid');
     const networks = loadedPypsaNetworks.length
       ? loadedPypsaNetworks
       : (selectedPyPSAFile ? [{ filename: selectedPyPSAFile }] : []);
@@ -15103,6 +15116,7 @@ function AppInner() {
                       ));
                       const overlayAnyLoading = Boolean(pypsaDomainLoading || gasDomainLoading || waterDomainLoading || liquidsDomainLoading || logisticsDomainLoading);
                       const isInfrastructure = atlasOverlayMode || isGas || isWater || isLiquids || isLogistics;
+                      const isModelScene = nohmWorkspaceContext?.mode === 'model' && Boolean(nohmWorkspaceContext?.projectId);
                       const carrierFacilities = atlasOverlayMode
                         ? overlayAvailableCarriers.flatMap((carrier) => overlayFacilitiesByCarrier[carrier] || [])
                         : isGas ? gasFacilitiesData : isWater ? waterFacilitiesData : isLiquids ? liquidsFacilitiesData : isLogistics ? logisticsFacilitiesData : pypsaFacilitiesData;
@@ -15134,6 +15148,7 @@ function AppInner() {
                           <div className="pointer-events-auto max-w-full rounded-xl border border-white/10 bg-[#071421]/92 p-1.5 backdrop-blur-xl shadow-2xl">
                             <div role="group" aria-label="Map layers and display" className="flex flex-wrap items-stretch justify-center gap-1">
                               {ATLAS_MAP_DOMAINS.map((domain) => {
+                                const modelDomainSupported = !isModelScene || isModelSceneDomain(domain);
                                 const hasNetworks = isInfrastructure ? Boolean(infrastructureStatus?.available) : loadedPypsaNetworks.length > 0;
                                 const loaded = isInfrastructure
                                   ? Boolean(infrastructureLoadedDomains[domain])
@@ -15141,9 +15156,15 @@ function AppInner() {
                                     (network) => pypsaLoadedDomainsByNetwork[network.filename]?.[domain]
                                   );
                                 const visible = loaded && atlasDomainVisibility[domain] !== false;
-                                const loading = atlasOverlayMode ? overlayDomainLoading(domain) : (isInfrastructure ? infrastructureLoading : pypsaDomainLoading) === domain;
+                                const loading = isModelScene
+                                  ? modelSceneStatus.state === 'loading' && atlasDomainVisibility[domain] !== false
+                                  : atlasOverlayMode
+                                    ? overlayDomainLoading(domain)
+                                    : (isInfrastructure ? infrastructureLoading : pypsaDomainLoading) === domain;
                                 const status = loading
                                   ? 'Loading…'
+                                  : !modelDomainSupported
+                                    ? 'Not available'
                                   : loaded
                                     ? unavailableByDomain[domain].length === loadedPypsaNetworks.length && !isInfrastructure
                                       ? 'No data'
@@ -15156,7 +15177,13 @@ function AppInner() {
                                     key={domain}
                                     type="button"
                                     onClick={() => handleAtlasDomainSelection(domain)}
-                                    disabled={!hasNetworks || Boolean(atlasOverlayMode ? overlayAnyLoading : isInfrastructure ? infrastructureLoading : pypsaDomainLoading) || (!isInfrastructure && pypsaResolutionSwitching)}
+                                    disabled={!hasNetworks || !modelDomainSupported || Boolean(
+                                      isModelScene
+                                        ? modelSceneStatus.state === 'loading'
+                                        : atlasOverlayMode
+                                          ? overlayAnyLoading
+                                          : isInfrastructure ? infrastructureLoading : pypsaDomainLoading
+                                    ) || (!isInfrastructure && pypsaResolutionSwitching)}
                                     aria-pressed={visible}
                                     aria-label={`${domain} map layer`}
                                     title={loaded ? `${visible ? 'Hide' : 'Show'} ${domain.toLowerCase()} layer` : `Load ${domain.toLowerCase()} data`}

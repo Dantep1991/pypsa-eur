@@ -1,4 +1,9 @@
-import { adaptModelScene, fetchModelScene, modelSceneRequestUrl } from './modelScene';
+import {
+  adaptModelScene,
+  fetchModelScene,
+  isModelSceneDomain,
+  modelSceneRequestUrl,
+} from './modelScene';
 
 const context = { mode: 'model', projectId: 'TYNDP 2026' };
 const scene = {
@@ -22,6 +27,13 @@ test('modelSceneRequestUrl is same-origin, encoded, and layer scoped', () => {
     '/api/emil/atlas/projects/TYNDP%202026/scene?carrier=electricity&layers=grid%2Csupply&year=2030',
   );
   expect(modelSceneRequestUrl({ mode: 'reference', projectId: 'x' })).toBeNull();
+});
+
+test('model scenes expose only the implemented lazy map domains', () => {
+  expect(isModelSceneDomain('Grid')).toBe(true);
+  expect(isModelSceneDomain('Supply')).toBe(true);
+  expect(isModelSceneDomain('Storage')).toBe(true);
+  expect(isModelSceneDomain('Demand')).toBe(false);
 });
 
 test('adaptModelScene retains canonical IDs and excludes only unmapped markers', () => {

@@ -1,4 +1,9 @@
 export const MODEL_SCENE_SCHEMA = 'nohm.atlas.model-scene.v1';
+export const MODEL_SCENE_DOMAINS = Object.freeze(['Grid', 'Supply', 'Storage']);
+
+export function isModelSceneDomain(domain) {
+  return MODEL_SCENE_DOMAINS.includes(text(domain));
+}
 
 const text = (value) => String(value ?? '').trim();
 const finite = (value) => {
