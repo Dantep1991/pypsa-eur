@@ -15419,7 +15419,7 @@ function AppInner() {
                             <ModelPortalControls
                               embedded={ATLAS_IS_EMBEDDED}
                               onOpen={requestNohmAtlasPortal}
-                              targets={['model-operations']}
+                              targets={['model-operations', 'model-runs']}
                             />
                           </section>
                         )}

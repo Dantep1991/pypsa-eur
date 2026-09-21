@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, PanelRightOpen, ShieldCheck } from 'lucide-react';
+import { Activity, PanelRightOpen, PlayCircle, ShieldCheck } from 'lucide-react';
 
 const PORTALS = [
   {
@@ -19,6 +19,12 @@ const PORTALS = [
     label: 'Model Operations',
     description: 'Open Nohm\'s governed operations workspace for this model.',
     Icon: ShieldCheck,
+  },
+  {
+    id: 'model-runs',
+    label: 'Run Model',
+    description: 'Validate, launch and monitor model runs in Nohm.',
+    Icon: PlayCircle,
   },
 ];
 
