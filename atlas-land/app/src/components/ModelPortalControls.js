@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, BarChart3, BrainCircuit, CloudSun, Gem, GitBranch, PanelRightOpen, PlayCircle, ShieldCheck } from 'lucide-react';
+import { Activity, BarChart3, BrainCircuit, Calculator, CloudSun, Gem, GitBranch, PanelRightOpen, PlayCircle, Scale, ShieldCheck } from 'lucide-react';
 
 const PORTALS = [
   {
@@ -43,6 +43,18 @@ const PORTALS = [
     label: 'Lola Flow',
     description: 'Animate signed line flows for an exact compatible solution run.',
     Icon: GitBranch,
+  },
+  {
+    id: 'cba',
+    label: 'Cost-Benefit Analysis',
+    description: 'Inspect the project\'s linked Theo CBA package beside the map.',
+    Icon: Scale,
+  },
+  {
+    id: 'economic-assessment',
+    label: 'Economic Assessment',
+    description: 'Review project investment appraisal, NPV and annualised cost.',
+    Icon: Calculator,
   },
   {
     id: 'climate',

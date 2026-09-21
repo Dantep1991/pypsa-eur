@@ -15511,12 +15511,12 @@ function AppInner() {
                               </span>
                             </div>
                             <div className="mb-2.5 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] px-3 py-2 text-[10px] leading-4 text-tj-slate">
-                              Visualisation filters labelled solved runs to this model version. Analysis is currently project-bound.
+                              Results and Lola Flow use labelled solution versions. Analysis, CBA and economic assessment are currently project-bound.
                             </div>
                             <ModelPortalControls
                               embedded={ATLAS_IS_EMBEDDED}
                               onOpen={requestNohmAtlasPortal}
-                              targets={['visualisation', 'analysis', 'lola-flow']}
+                              targets={['visualisation', 'analysis', 'lola-flow', 'cba', 'economic-assessment']}
                             />
                           </section>
                         )}
