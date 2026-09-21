@@ -2,10 +2,40 @@ export const NOHM_ATLAS_READY_MESSAGE = 'nohm.atlas.ready.v1';
 export const NOHM_ATLAS_PING_MESSAGE = 'nohm.atlas.ping.v1';
 export const NOHM_ATLAS_DOMAIN_MESSAGE = 'nohm.atlas.domain.v1';
 export const NOHM_ATLAS_DOMAIN_EVENT = 'nohm:atlas-domain';
+export const NOHM_ATLAS_WORKSPACE_CONTEXT_MESSAGE = 'nohm.atlas.workspace-context.v1';
+export const NOHM_ATLAS_WORKSPACE_CONTEXT_ACK_MESSAGE = 'nohm.atlas.workspace-context.ack.v1';
+export const NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT = 'nohm:atlas-workspace-context';
 export const NOHM_ATLAS_THEME_MESSAGE = 'nohm.atlas.theme.v1';
 export const NOHM_ATLAS_THEME_EVENT = 'nohm:atlas-theme';
 export const NOHM_ATLAS_DOMAINS = Object.freeze(['model', 'operate', 'visualise', 'explore']);
 export const NOHM_ATLAS_THEMES = Object.freeze(['dark', 'light', 'horizon']);
+
+function optionalText(value) {
+  const text = String(value ?? '').trim();
+  return text || null;
+}
+
+export function normalizeNohmAtlasWorkspaceContext(context) {
+  if (!context || typeof context !== 'object') return null;
+  const projectId = optionalText(context.projectId);
+  const mode = context.mode === 'model' && projectId ? 'model' : 'reference';
+  const geography = context.nativeGeography && typeof context.nativeGeography === 'object'
+    ? {
+      id: optionalText(context.nativeGeography.id) || 'model-native',
+      label: optionalText(context.nativeGeography.label) || 'Model-native geography',
+      resolved: Boolean(context.nativeGeography.resolved),
+    }
+    : { id: 'model-native', label: 'Model-native geography', resolved: false };
+  return {
+    mode,
+    projectId,
+    projectName: optionalText(context.projectName) || projectId || 'Reference Atlas',
+    modelId: optionalText(context.modelId),
+    version: optionalText(context.version),
+    scenario: optionalText(context.scenario),
+    nativeGeography: geography,
+  };
+}
 
 export function announceNohmEmbedReady(targetWindow = window) {
   if (!targetWindow?.parent || targetWindow.parent === targetWindow) return false;
@@ -25,9 +55,10 @@ export function scheduleNohmEmbedReady(targetWindow = window) {
   return true;
 }
 
-export function startNohmEmbedBridge(targetWindow = window, { onDomainChange, onThemeChange } = {}) {
+export function startNohmEmbedBridge(targetWindow = window, { onDomainChange, onThemeChange, onWorkspaceContextChange } = {}) {
   if (!targetWindow?.parent || targetWindow.parent === targetWindow) return () => {};
   targetWindow.document?.documentElement?.setAttribute('data-nohm-atlas-ready', '1');
+  let latestWorkspaceRevision = 0;
   const handleMessage = (event) => {
     const fromNohmShell = (
       event.source === targetWindow.parent
@@ -49,6 +80,38 @@ export function startNohmEmbedBridge(targetWindow = window, { onDomainChange, on
           detail: { domain },
         }));
       }
+      return;
+    }
+    if (event.data?.type === NOHM_ATLAS_WORKSPACE_CONTEXT_MESSAGE) {
+      const requestId = optionalText(event.data?.requestId);
+      const revision = Number(event.data?.revision);
+      const context = normalizeNohmAtlasWorkspaceContext(event.data?.context);
+      const accepted = Boolean(
+        requestId
+        && context
+        && Number.isSafeInteger(revision)
+        && revision >= 1
+        && revision >= latestWorkspaceRevision
+      );
+      if (accepted) {
+        latestWorkspaceRevision = revision;
+        targetWindow.__NOHM_ATLAS_WORKSPACE_CONTEXT__ = context;
+        if (typeof onWorkspaceContextChange === 'function') {
+          onWorkspaceContextChange(context);
+        } else if (typeof targetWindow.CustomEvent === 'function') {
+          targetWindow.dispatchEvent(new targetWindow.CustomEvent(NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT, {
+            detail: { context },
+          }));
+        }
+      }
+      targetWindow.parent.postMessage({
+        type: NOHM_ATLAS_WORKSPACE_CONTEXT_ACK_MESSAGE,
+        protocolVersion: 1,
+        source: 'nohm-atlas',
+        requestId,
+        revision,
+        accepted,
+      }, targetWindow.location.origin);
       return;
     }
     const theme = String(event.data?.theme || '').toLowerCase();

@@ -50,7 +50,11 @@ import {
   atlasWorkspaceAreaForDomain,
   atlasWorkspaceAreaIsVisible,
 } from './atlasWorkspaceNavigation';
-import { NOHM_ATLAS_DOMAIN_EVENT, NOHM_ATLAS_THEME_EVENT } from './nohmEmbed';
+import {
+  NOHM_ATLAS_DOMAIN_EVENT,
+  NOHM_ATLAS_THEME_EVENT,
+  NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT,
+} from './nohmEmbed';
 import { applyAtlasTheme, nextAtlasTheme, normalizeAtlasTheme } from './atlasTheme';
 import { createCarrierNetworkRequests } from './carrierNetworkRequests';
 import { stageMapBatch, assembleMapBatch, groupPypsaFacilities, mapSharedFacilityGroups } from './pypsaMapBatch';
@@ -496,6 +500,9 @@ function AppInner() {
   const setActiveTab = () => {};
   const [aiOpen, setAiOpen] = useState(true);
   const [activeScenario, setActiveScenario] = useState("Base 2030");
+  const [nohmWorkspaceContext, setNohmWorkspaceContext] = useState(
+    () => window.__NOHM_ATLAS_WORKSPACE_CONTEXT__ || null
+  );
   const [viewMode, setViewMode] = useState('properties');
   const [lolaLiveUrl] = useState('https://joule-model.terajouleenergy.com/');
   const [assistantStatus, setAssistantStatus] = useState({
@@ -2110,6 +2117,13 @@ function AppInner() {
     };
     window.addEventListener(NOHM_ATLAS_THEME_EVENT, handleNohmAtlasTheme);
     return () => window.removeEventListener(NOHM_ATLAS_THEME_EVENT, handleNohmAtlasTheme);
+  }, []);
+  useEffect(() => {
+    const handleNohmAtlasWorkspaceContext = (event) => {
+      if (event?.detail?.context) setNohmWorkspaceContext(event.detail.context);
+    };
+    window.addEventListener(NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT, handleNohmAtlasWorkspaceContext);
+    return () => window.removeEventListener(NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT, handleNohmAtlasWorkspaceContext);
   }, []);
   const [mapAgentInput, setMapAgentInput] = useState('');
   const [mapAgentBusy, setMapAgentBusy] = useState(false);
@@ -14266,11 +14280,33 @@ function AppInner() {
                               <p className="text-sm font-semibold tracking-[0.16em] text-tj-gold">ATLAS</p>
                               <span className="hidden sm:inline text-[10px] uppercase tracking-wider text-tj-slate">Network intelligence</span>
                             </div>
-                            <p className="text-[11px] text-white/75 truncate"><span className="sm:hidden">Nohm Flow</span><span className="hidden sm:inline">Nohm Flow · Atlas workspace</span></p>
+                            <p className="text-[11px] text-white/75 truncate">
+                              {nohmWorkspaceContext
+                                ? `${nohmWorkspaceContext.projectName}${nohmWorkspaceContext.version ? ` · ${nohmWorkspaceContext.version}` : ''}`
+                                : <><span className="sm:hidden">Nohm Flow</span><span className="hidden sm:inline">Nohm Flow · Reference Atlas</span></>}
+                            </p>
                           </div>
                         </div>
 
                         <div className="hidden md:flex items-center gap-2 min-w-0">
+                          {nohmWorkspaceContext && (
+                            <div className="atlas-status-card rounded-lg border border-tj-gold/25 bg-tj-gold/[0.06] px-2.5 py-1.5">
+                              <p className="text-[9px] uppercase tracking-wider text-tj-gold">
+                                {nohmWorkspaceContext.mode === 'model' ? 'Model context' : 'Reference context'}
+                              </p>
+                              <p className="text-[11px] text-white max-w-[190px] truncate">
+                                {[nohmWorkspaceContext.modelId, nohmWorkspaceContext.scenario].filter(Boolean).join(' · ') || nohmWorkspaceContext.projectId || 'Reference Atlas'}
+                              </p>
+                            </div>
+                          )}
+                          {nohmWorkspaceContext && (
+                            <div className="atlas-status-card rounded-lg border border-white/10 bg-white/[0.035] px-2.5 py-1.5">
+                              <p className="text-[9px] uppercase tracking-wider text-tj-slate">Native geography</p>
+                              <p className="text-[11px] text-white max-w-[190px] truncate">
+                                {nohmWorkspaceContext.nativeGeography?.label || 'Model-native geography'}
+                              </p>
+                            </div>
+                          )}
                           {workspaceStatusCards.map((card) => (
                             <div key={card.label} className="atlas-status-card rounded-lg border border-white/10 bg-white/[0.035] px-2.5 py-1.5">
                               <p className="text-[9px] uppercase tracking-wider text-tj-slate">{card.label}</p>
