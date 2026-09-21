@@ -186,6 +186,7 @@ const MapViewBridge = ({ onViewChange }) => {
 
 // Standalone color resolver — used by both the map and the popup
 const getFacilityColor = (facility) => {
+  if (facility?.atlas_result_color) return facility.atlas_result_color;
   if (facility?.carrier_color) return facility.carrier_color;
   const carrierColors = {
     'coal':       '#78716c', // warm stone
@@ -1632,7 +1633,9 @@ const EnhancedLeafletMapContent = ({
         const overlayStyle = networkResolution === 'overlay'
           ? ATLAS_NETWORK_CARRIER_META[overlayCarrier]
           : null;
-        const color = overlayStyle?.color || (capacityRatio != null
+        const resultRatio = Number(connection.atlas_result_ratio);
+        const hasResult = Number.isFinite(resultRatio) && connection.atlas_result_color;
+        const color = hasResult ? connection.atlas_result_color : overlayStyle?.color || (capacityRatio != null
           ? capacityColor(capacityRatio)
           : (halo.dashOverride ? '#fbbf24' : (connection.color || '#38bdf8')));
         const sourceWeight = Number.isFinite(Number(connection.weight)) ? Number(connection.weight) : 0;
@@ -1644,7 +1647,10 @@ const EnhancedLeafletMapContent = ({
         const capacityWeight = capacityRatio == null
           ? topologyWeight
           : zoomLineWeight * (0.72 + (2.3 * Math.sqrt(capacityRatio)));
-        const weight = Math.max(overlayStyle ? 1.05 : 0.55, Math.min(6.5, capacityWeight));
+        const resultWeight = hasResult
+          ? zoomLineWeight * (0.9 + (2.5 * Math.sqrt(Math.max(0, Math.min(1, resultRatio)))))
+          : capacityWeight;
+        const weight = Math.max(overlayStyle ? 1.05 : 0.55, Math.min(6.5, resultWeight));
         // Dragging must not change the render key: dimming at movement start
         // and restoring on idle rebuilt the entire graph twice per gesture.
         const perfOpacityMul = performanceMode ? 0.8 : 1;
@@ -2287,10 +2293,14 @@ const EnhancedLeafletMapContent = ({
                       const availableRow = capacity.available != null && Math.abs(capacity.available - capacity.value) > 0.01
                         ? `<div style="display:flex;justify-content:space-between;gap:18px;margin-top:4px;color:#cbd5e1;"><span>Available limit</span><strong style="color:#f8fafc;">${formatCapacity(capacity.available)} ${escapeHtml(capacity.availableUnits)}</strong></div>`
                         : '';
+                      const resultRow = Number.isFinite(Number(connection?.atlas_result_value))
+                        ? `<div style="display:flex;justify-content:space-between;gap:18px;margin-top:4px;color:#cbd5e1;"><span>${escapeHtml(connection.atlas_result_label || 'Result')}</span><strong style="color:#ffffff;">${formatCapacity(connection.atlas_result_value)} ${escapeHtml(connection.atlas_result_unit || '')}</strong></div><div style="margin-top:3px;color:#94a3b8;">${escapeHtml(connection.atlas_result_period || '')}</div>`
+                        : '';
                       return `<div style="min-width:176px;font-size:11px;line-height:1.35;color:#e2e8f0;">
                       <div style="font-weight:750;color:#ffffff;margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:250px;">${escapeHtml(title)}</div>
                       <div style="display:flex;justify-content:space-between;gap:18px;"><span>${escapeHtml(capacity.kind)}</span><strong style="color:#facc15;">${formatCapacity(capacity.value)} ${escapeHtml(capacity.units)}</strong></div>
                       ${availableRow}
+                      ${resultRow}
                     </div>`;
                     },
                     {
@@ -2300,6 +2310,11 @@ const EnhancedLeafletMapContent = ({
                       pane: 'line-capacity-tooltip-pane',
                       className: 'line-capacity-tooltip',
                     },
+                  );
+                } else if (Number.isFinite(Number(connection?.atlas_result_value))) {
+                  layer.bindTooltip(
+                    `${escapeHtml(connection.atlas_result_label || 'Result')}: ${formatCapacity(connection.atlas_result_value)}${connection.atlas_result_unit ? ` ${escapeHtml(connection.atlas_result_unit)}` : ''}`,
+                    { direction: 'top', opacity: 0.96, sticky: true, pane: 'line-capacity-tooltip-pane', className: 'line-capacity-tooltip' },
                   );
                 } else if (!performanceMode && lineMetricEnabled && Number.isFinite(connection?.metricValue)) {
                   layer.bindTooltip(

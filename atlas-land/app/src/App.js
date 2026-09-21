@@ -16,6 +16,8 @@ import useEmilVoice from './hooks/useEmilVoice';
 import AudioLevelMeter from './components/AudioLevelMeter';
 import LoadedCountryList from './components/LoadedCountryList';
 import MixedGranularityControls from './components/MixedGranularityControls';
+import ModelResultsControls from './components/ModelResultsControls';
+import ModelResultLegend from './components/ModelResultLegend';
 import { EMIL_VOICE_MODES } from './voice/emilVoiceState';
 import { buildAtlasTranscriptionContext } from './voice/atlasTranscriptionContext';
 import {
@@ -64,6 +66,12 @@ import electricityCrossBorderTopology from './data/electricity-cross-border.json
 import { clearPypsaCatalogueCache, readPypsaCatalogueCache, writePypsaCatalogueCache } from './pypsaCatalogueCache';
 import { fetchModelScene, isModelSceneDomain } from './modelWorkspace/modelScene';
 import {
+  decorateModelResultRecord,
+  defaultModelResultSelection,
+  fetchModelResultCatalog,
+  fetchModelResultScene,
+} from './modelWorkspace/resultScene';
+import {
   ATLAS_NETWORK_CARRIER_META,
   ATLAS_NETWORK_CARRIER_ORDER,
   normalizeOverlayCountryCodes,
@@ -102,7 +110,7 @@ const {
   Sun, Moon, Wind, Waves, Droplets, Flame, Factory, Battery, Atom, Car, Hammer,
   Shield, CircleDot, Cog, Leaf, FlaskConical, MapPin, Layers, Clock3,
   CalendarDays, Info, HelpCircle, Circle, Check, PanelLeftClose, PanelLeftOpen,
-  Ship,
+  Ship, BarChart3,
 } = LucideIcons;
 const SlidersHorizontal = Settings;
 
@@ -506,6 +514,10 @@ function AppInner() {
     () => window.__NOHM_ATLAS_WORKSPACE_CONTEXT__ || null
   );
   const [modelSceneStatus, setModelSceneStatus] = useState({ state: 'idle', meta: null, error: '' });
+  const [modelResultCatalogStatus, setModelResultCatalogStatus] = useState({ state: 'idle', catalog: null, error: '' });
+  const [modelResultSelection, setModelResultSelection] = useState(null);
+  const [modelResultStatus, setModelResultStatus] = useState({ state: 'idle', scene: null, error: '' });
+  const modelResultRequestRef = useRef(null);
   const [viewMode, setViewMode] = useState('properties');
   const [lolaLiveUrl] = useState('https://joule-model.terajouleenergy.com/');
   const [assistantStatus, setAssistantStatus] = useState({
@@ -2207,6 +2219,58 @@ function AppInner() {
     atlasDomainVisibility.Supply,
     atlasDomainVisibility.Storage,
   ]);
+  useEffect(() => {
+    const projectId = nohmWorkspaceContext?.mode === 'model' ? nohmWorkspaceContext?.projectId : '';
+    const modelVersion = modelSceneStatus.meta?.version;
+    if (!projectId || !modelVersion) {
+      setModelResultCatalogStatus({ state: 'idle', catalog: null, error: '' });
+      setModelResultSelection(null);
+      setModelResultStatus({ state: 'idle', scene: null, error: '' });
+      modelResultRequestRef.current?.abort();
+      return undefined;
+    }
+    const controller = new AbortController();
+    setModelResultCatalogStatus({ state: 'loading', catalog: null, error: '' });
+    setModelResultStatus({ state: 'idle', scene: null, error: '' });
+    fetchModelResultCatalog(nohmWorkspaceContext, modelVersion, { signal: controller.signal })
+      .then((catalog) => {
+        if (controller.signal.aborted) return;
+        setModelResultCatalogStatus({ state: 'ready', catalog, error: '' });
+        setModelResultSelection(defaultModelResultSelection(catalog));
+      })
+      .catch((error) => {
+        if (controller.signal.aborted || error?.name === 'AbortError') return;
+        setModelResultCatalogStatus({ state: 'error', catalog: null, error: error?.message || 'Model results could not be discovered.' });
+      });
+    return () => controller.abort();
+  }, [nohmWorkspaceContext?.mode, nohmWorkspaceContext?.projectId, modelSceneStatus.meta?.version]);
+
+  const showSelectedModelResult = useCallback(async () => {
+    if (!modelResultSelection || !modelSceneStatus.meta?.version || nohmWorkspaceContext?.mode !== 'model') return;
+    modelResultRequestRef.current?.abort();
+    const controller = new AbortController();
+    modelResultRequestRef.current = controller;
+    setModelResultStatus((previous) => ({ ...previous, state: 'loading', error: '' }));
+    try {
+      const scene = await fetchModelResultScene(nohmWorkspaceContext, {
+        ...modelResultSelection,
+        modelVersion: modelSceneStatus.meta.version,
+        carrier: 'electricity',
+      }, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      setModelResultStatus({ state: 'ready', scene, error: '' });
+    } catch (error) {
+      if (controller.signal.aborted || error?.name === 'AbortError') return;
+      setModelResultStatus((previous) => ({ ...previous, state: 'error', error: error?.message || 'The selected model result could not be shown.' }));
+    }
+  }, [modelResultSelection, modelSceneStatus.meta?.version, nohmWorkspaceContext]);
+
+  const clearModelResult = useCallback(() => {
+    modelResultRequestRef.current?.abort();
+    setModelResultStatus({ state: 'idle', scene: null, error: '' });
+  }, []);
+
+  useEffect(() => () => modelResultRequestRef.current?.abort(), []);
   const [mapAgentInput, setMapAgentInput] = useState('');
   const [mapAgentBusy, setMapAgentBusy] = useState(false);
   const [mapAgentMessages, setMapAgentMessages] = useState([
@@ -10280,6 +10344,14 @@ function AppInner() {
     hiddenCarriers, facilitiesData, selectedCountry, selectedCapacityType,
     connectionClassGroupFilter, connectionClassFilter, connectionCategoryFilter,
     connectionObjectFilter, connectionPropertyFilter, connections]);
+  const resultDecoratedMapFacilities = useMemo(() => {
+    const scene = modelResultStatus.scene;
+    if (!scene || nohmWorkspaceContext?.mode !== 'model') return visibleMapFacilities;
+    return mapSharedFacilityGroups(
+      visibleMapFacilities,
+      facility => decorateModelResultRecord(facility, scene),
+    );
+  }, [modelResultStatus.scene, nohmWorkspaceContext?.mode, visibleMapFacilities]);
   const getFilteredFacilities = useCallback(() => visibleMapFacilities, [visibleMapFacilities]);
 
   // Human-readable connection title
@@ -10359,6 +10431,11 @@ function AppInner() {
     () => enrichConnectionsForMetrics(visibleMapConnections),
     [enrichConnectionsForMetrics, visibleMapConnections],
   );
+  const resultDecoratedMapConnections = useMemo(() => {
+    const scene = modelResultStatus.scene;
+    if (!scene || nohmWorkspaceContext?.mode !== 'model') return renderedMapConnections;
+    return renderedMapConnections.map(connection => decorateModelResultRecord(connection, scene));
+  }, [modelResultStatus.scene, nohmWorkspaceContext?.mode, renderedMapConnections]);
   // Opaque and stable across unrelated shell/assistant renders. If a new data
   // or display snapshot replaces the map inputs after an exception, the map
   // boundary gets one automatic recovery attempt even when record counts match.
@@ -10366,8 +10443,8 @@ function AppInner() {
     atlasOverlayMode,
     atlasNetworkCarrier,
     currentAtlasResolutionKey,
-    visibleMapFacilities,
-    renderedMapConnections,
+    resultDecoratedMapFacilities,
+    resultDecoratedMapConnections,
     showMapNodes,
     showGeographicBoundaries,
   ]);
@@ -14883,6 +14960,28 @@ function AppInner() {
                         </AtlasDomainSection>
                         )}
 
+                        {nohmWorkspaceContext?.mode === 'model'
+                          && atlasWorkspaceAreaIsVisible('geography', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
+                          <section className="border-t border-white/10 px-3 py-3" aria-label="Model Results">
+                            <div className="mb-2.5 flex items-start gap-2">
+                              <span className="atlas-domain-section__icon is-active"><BarChart3 className="h-4 w-4" /></span>
+                              <span className="min-w-0 flex-1">
+                                <span className="atlas-domain-section__eyebrow">Model workspace</span>
+                                <span className="atlas-domain-section__title">Results</span>
+                                <span className="atlas-domain-section__summary">Existing solved outputs on the loaded topology</span>
+                              </span>
+                            </div>
+                            <ModelResultsControls
+                              catalogStatus={modelResultCatalogStatus}
+                              selection={modelResultSelection}
+                              resultStatus={modelResultStatus}
+                              onSelectionChange={setModelResultSelection}
+                              onShow={showSelectedModelResult}
+                              onClear={clearModelResult}
+                            />
+                          </section>
+                        )}
+
                         {atlasWorkspaceAreaIsVisible('operations', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
                         <AtlasDomainSection
                           icon={Cog}
@@ -15396,13 +15495,13 @@ function AppInner() {
                     countryCodes: activeLandCountryCodes,
                   }}
                   onGridAccessChange={updateGridAccessOverlay}
-                  facilities={visibleMapFacilities}
+                  facilities={resultDecoratedMapFacilities}
                   selectedNode={selectedNode}
                   onNodeSelect={setSelectedNode}
                   mapLoaded={mapLoaded}
                   selectedNodes={selectedNodes}
                   onNodeSelection={handleNodeSelection}
-                  connections={renderedMapConnections}
+                  connections={resultDecoratedMapConnections}
                   lineMetricEnabled={lineMetricEnabled}
                   onConnectionClick={(connection, position) => {
                     const connectionNetworkCarrier = atlasOverlayMode
@@ -15519,7 +15618,7 @@ function AppInner() {
                   }}
                   linePropertiesByChildName={linePropertiesByChildName}
                   activeDataLayer={activeDataLayer}
-                  showGenerationMix={!atlasOverlayMode && atlasNetworkCarrier === 'electricity' && showGenerationMix && pypsaHasGenerationMixData}
+                  showGenerationMix={!modelResultStatus.scene && !atlasOverlayMode && atlasNetworkCarrier === 'electricity' && showGenerationMix && pypsaHasGenerationMixData}
                   mapViewMode={mapViewMode}
                   marketPrices={marketPrices}
                   generationMix={generationMix}
@@ -15538,6 +15637,7 @@ function AppInner() {
                   }}
                 />
                 </MapWorkspaceBoundary>
+                <ModelResultLegend scene={modelResultStatus.scene} onClear={clearModelResult} />
                 {/* Right-click context menu: single-action popover positioned at cursor. */}
                 {engine === 'PyPSA Engine' && !atlasOverlayMode && atlasNetworkCarrier === 'electricity' && selectedPyPSAFile && regionContextMenu && !regionPanelVisible && (
                   <div
