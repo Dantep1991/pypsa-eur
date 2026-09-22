@@ -1,7 +1,13 @@
 import React from 'react';
-import { Activity, BarChart3, BrainCircuit, Calculator, CloudSun, Gem, GitBranch, PanelRightOpen, PlayCircle, Scale, ShieldCheck } from 'lucide-react';
+import { Activity, BarChart3, BrainCircuit, Calculator, CloudSun, DraftingCompass, Gem, GitBranch, PanelRightOpen, PlayCircle, Scale, ShieldCheck } from 'lucide-react';
 
 const PORTALS = [
+  {
+    id: 'model-builder',
+    label: 'Model Builder',
+    description: 'Open an isolated construction draft for this project. Published model data stays unchanged.',
+    Icon: DraftingCompass,
+  },
   {
     id: 'explore-model',
     label: 'Explore Model',

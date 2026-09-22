@@ -453,6 +453,13 @@ test('embedded Atlas reports the exact canonical scene it loaded', () => {
 test('embedded Atlas requests only allowlisted host-owned portals', () => {
   const parent = { postMessage: jest.fn() };
   const target = { parent, location: { origin: 'https://nohm.example.test' } };
+  expect(requestNohmAtlasPortal('model-builder', target)).toBe(true);
+  expect(parent.postMessage).toHaveBeenLastCalledWith({
+    type: NOHM_ATLAS_PORTAL_REQUEST_MESSAGE,
+    protocolVersion: 1,
+    source: 'nohm-atlas',
+    target: 'model-builder',
+  }, target.location.origin);
   expect(requestNohmAtlasPortal('explore-model', target)).toBe(true);
   expect(parent.postMessage).toHaveBeenCalledWith({
     type: NOHM_ATLAS_PORTAL_REQUEST_MESSAGE,
@@ -524,7 +531,7 @@ test('embedded Atlas requests only allowlisted host-owned portals', () => {
     target: 'economic-assessment',
   }, target.location.origin);
   expect(requestNohmAtlasPortal('admin', target)).toBe(false);
-  expect(parent.postMessage).toHaveBeenCalledTimes(10);
+  expect(parent.postMessage).toHaveBeenCalledTimes(11);
 });
 
 test('scheduled readiness waits until the rendered frame', () => {

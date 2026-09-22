@@ -15549,7 +15549,7 @@ function AppInner() {
                             <ModelPortalControls
                               embedded={ATLAS_IS_EMBEDDED}
                               onOpen={requestNohmAtlasPortal}
-                              targets={['explore-model', 'demand', 'climate', 'commodity']}
+                              targets={['explore-model', 'demand', 'climate', 'commodity', 'model-builder']}
                             />
                           </section>
                         )}

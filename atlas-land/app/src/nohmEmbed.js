@@ -18,6 +18,7 @@ export const NOHM_ATLAS_THEME_EVENT = 'nohm:atlas-theme';
 export const NOHM_ATLAS_DOMAINS = Object.freeze(['model', 'operate', 'visualise', 'explore']);
 export const NOHM_ATLAS_THEMES = Object.freeze(['dark', 'light', 'horizon']);
 export const NOHM_ATLAS_PORTAL_TARGETS = Object.freeze([
+  'model-builder',
   'explore-model',
   'demand',
   'model-operations',
