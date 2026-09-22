@@ -1,13 +1,7 @@
 import React from 'react';
-import { Activity, BarChart3, BrainCircuit, Calculator, CloudSun, DraftingCompass, Gem, GitBranch, PanelRightOpen, PlayCircle, Scale, ShieldCheck } from 'lucide-react';
+import { Activity, CloudSun, Gem, PanelRightOpen, PlayCircle, ShieldCheck } from 'lucide-react';
 
 const PORTALS = [
-  {
-    id: 'model-builder',
-    label: 'Model Builder',
-    description: 'Open an isolated construction draft for this project. Published model data stays unchanged.',
-    Icon: DraftingCompass,
-  },
   {
     id: 'explore-model',
     label: 'Explore Model',
@@ -31,36 +25,6 @@ const PORTALS = [
     label: 'Run Model',
     description: 'Validate, launch and monitor model runs in Nohm.',
     Icon: PlayCircle,
-  },
-  {
-    id: 'visualisation',
-    label: 'Visualisation',
-    description: 'Inspect verified solution charts and maps for this model version.',
-    Icon: BarChart3,
-  },
-  {
-    id: 'analysis',
-    label: 'Analysis',
-    description: 'Open Emil analysis for the active project beside Atlas.',
-    Icon: BrainCircuit,
-  },
-  {
-    id: 'lola-flow',
-    label: 'Lola Flow',
-    description: 'Animate signed line flows for an exact compatible solution run.',
-    Icon: GitBranch,
-  },
-  {
-    id: 'cba',
-    label: 'Cost-Benefit Analysis',
-    description: 'Inspect the project\'s linked Theo CBA package beside the map.',
-    Icon: Scale,
-  },
-  {
-    id: 'economic-assessment',
-    label: 'Economic Assessment',
-    description: 'Review project investment appraisal, NPV and annualised cost.',
-    Icon: Calculator,
   },
   {
     id: 'climate',

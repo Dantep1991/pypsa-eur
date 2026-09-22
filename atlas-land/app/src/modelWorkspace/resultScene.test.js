@@ -31,7 +31,7 @@ test('catalog selection prefers an available annual node price result', () => {
     ] }],
   }, 'TYNDP 2026', 'v3.0.0');
   expect(defaultModelResultSelection(catalog)).toEqual({
-    runId: 'run', quantityId: 'Node.Price', className: 'Node', propertyName: 'Price', unit: '$/MWh', period: '2030',
+    runId: 'run', category: 'Node', quantityId: 'Node.Price', className: 'Node', propertyName: 'Price', unit: '$/MWh', period: '2030', scopeId: '',
   });
 });
 

@@ -168,10 +168,12 @@ export function defaultModelResultSelection(catalog) {
     || run.quantities[0];
   return {
     runId: run.run_id,
+    category: quantity.class_name,
     quantityId: quantity.id,
     className: quantity.class_name,
     propertyName: quantity.property_name,
     unit: quantity.unit || '',
     period: quantity.periods?.[0] || run.periods?.[0] || '',
+    scopeId: '',
   };
 }

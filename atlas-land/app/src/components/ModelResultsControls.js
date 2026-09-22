@@ -7,6 +7,7 @@ export default function ModelResultsControls({
   catalogStatus,
   selection,
   resultStatus,
+  scopeOptions = [],
   onSelectionChange,
   onShow,
   onClear,
@@ -14,21 +15,47 @@ export default function ModelResultsControls({
   const catalog = catalogStatus?.catalog;
   const compatibleRuns = (catalog?.runs || []).filter(run => run.compatible && run.quantities?.length);
   const run = compatibleRuns.find(item => item.run_id === selection?.runId) || compatibleRuns[0];
-  const quantities = run?.quantities || [];
+  const allQuantities = run?.quantities || [];
+  const categories = [...new Set(allQuantities.map(item => item.class_name).filter(Boolean))];
+  const category = categories.includes(selection?.category)
+    ? selection.category
+    : (allQuantities.find(item => item.id === selection?.quantityId)?.class_name || categories[0] || '');
+  const quantities = allQuantities.filter(item => item.class_name === category);
   const quantity = quantities.find(item => item.id === selection?.quantityId) || quantities[0];
   const periods = quantity?.periods?.length ? quantity.periods : (run?.periods || []);
   const busy = resultStatus?.state === 'loading';
 
   const selectRun = (runId) => {
     const nextRun = compatibleRuns.find(item => item.run_id === runId);
-    const nextQuantity = nextRun?.quantities?.find(item => item.id === 'Node.Price') || nextRun?.quantities?.[0];
+    const preferredCategory = selection?.category || 'Node';
+    const nextQuantity = nextRun?.quantities?.find(item => item.class_name === preferredCategory && item.id === selection?.quantityId)
+      || nextRun?.quantities?.find(item => item.class_name === preferredCategory)
+      || nextRun?.quantities?.find(item => item.id === 'Node.Price')
+      || nextRun?.quantities?.[0];
     onSelectionChange({
       runId,
+      category: nextQuantity?.class_name || '',
       quantityId: nextQuantity?.id || '',
       className: nextQuantity?.class_name || '',
       propertyName: nextQuantity?.property_name || '',
       unit: nextQuantity?.unit || '',
       period: nextQuantity?.periods?.[0] || nextRun?.periods?.[0] || '',
+      scopeId: selection?.scopeId || '',
+    });
+  };
+
+  const selectCategory = (className) => {
+    const next = allQuantities.find(item => item.class_name === className);
+    if (!next) return;
+    onSelectionChange({
+      ...selection,
+      runId: run?.run_id || '',
+      category: className,
+      quantityId: next.id,
+      className: next.class_name,
+      propertyName: next.property_name,
+      unit: next.unit || '',
+      period: next.periods?.[0] || run?.periods?.[0] || '',
     });
   };
 
@@ -38,6 +65,7 @@ export default function ModelResultsControls({
     onSelectionChange({
       ...selection,
       runId: run?.run_id || '',
+      category: next.class_name,
       quantityId: next.id,
       className: next.class_name,
       propertyName: next.property_name,
@@ -72,9 +100,22 @@ export default function ModelResultsControls({
         </select>
       </label>
       <label className="block">
+        <span className="mb-1 block text-[9px] uppercase tracking-wider text-tj-slate">Category</span>
+        <select value={category} onChange={event => selectCategory(event.target.value)} disabled={busy} className="w-full rounded-lg border border-white/10 bg-[#081523] px-2 py-2 text-[10px] text-white disabled:opacity-50" aria-label="Result category">
+          {categories.map(item => <option key={item} value={item}>{item}</option>)}
+        </select>
+      </label>
+      <label className="block">
         <span className="mb-1 block text-[9px] uppercase tracking-wider text-tj-slate">Quantity</span>
         <select value={quantity?.id || ''} onChange={event => selectQuantity(event.target.value)} disabled={busy} className="w-full rounded-lg border border-white/10 bg-[#081523] px-2 py-2 text-[10px] text-white disabled:opacity-50">
           {quantities.map(item => <option key={`${item.id}:${item.unit || ''}`} value={item.id}>{quantityLabel(item)}</option>)}
+        </select>
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-[9px] uppercase tracking-wider text-tj-slate">Node / region</span>
+        <select value={selection?.scopeId || ''} onChange={event => onSelectionChange({ ...selection, scopeId: event.target.value })} disabled={busy} className="w-full rounded-lg border border-white/10 bg-[#081523] px-2 py-2 text-[10px] text-white disabled:opacity-50" aria-label="Result node or region">
+          <option value="">All nodes and regions</option>
+          {scopeOptions.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
         </select>
       </label>
       <label className="block">

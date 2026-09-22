@@ -22,6 +22,7 @@ import ModelDistillationControls from './components/ModelDistillationControls';
 import ModelDistillationLegend from './components/ModelDistillationLegend';
 import ModelMixedResolutionControls from './components/ModelMixedResolutionControls';
 import ModelPortalControls from './components/ModelPortalControls';
+import ModelWorkspaceSection from './components/ModelWorkspaceSection';
 import ModelRunStatus from './components/ModelRunStatus';
 import ModelBuilderDraftPreview from './components/ModelBuilderDraftPreview';
 import { EMIL_VOICE_MODES } from './voice/emilVoiceState';
@@ -172,7 +173,7 @@ const {
   Sun, Moon, Wind, Waves, Droplets, Flame, Factory, Battery, Atom, Car, Hammer,
   Shield, CircleDot, Cog, Leaf, FlaskConical, MapPin, Layers, Clock3,
   CalendarDays, Info, HelpCircle, Circle, Check, PanelLeftClose, PanelLeftOpen,
-  Ship, BarChart3,
+  Ship, BarChart3, GitBranch, Scale,
 } = LucideIcons;
 const SlidersHorizontal = Settings;
 
@@ -2215,7 +2216,7 @@ function AppInner() {
     if (!pypsaSettings.build_only && runMode === 'build_only') setRunMode('build_solve');
   }, [pypsaSettings.build_only, runMode]);
   const [pypsaSectionOpen, setPypsaSectionOpen] = useState({
-    geography: true,
+    geography: false,
     operations: false,
     filters: false,
     clusters: false,
@@ -2237,6 +2238,16 @@ function AppInner() {
   }, [compactAtlasLayout]);
   const openAtlasWorkspaceArea = useCallback((section) => {
     setActiveWorkspaceArea(section);
+    if (ATLAS_IS_EMBEDDED) {
+      setPypsaSectionOpen((previous) => ({
+        ...previous,
+        geography: false,
+        operations: false,
+        filters: false,
+        clusters: false,
+      }));
+      return;
+    }
     setPypsaSectionOpen((previous) => (
       compactAtlasLayout
         ? { ...previous, geography: section === 'geography', operations: section === 'operations', filters: section === 'filters', clusters: section === 'clusters' }
@@ -2507,8 +2518,18 @@ function AppInner() {
     return () => controller.abort();
   }, [nohmWorkspaceContext?.mode, nohmWorkspaceContext?.projectId, modelSceneStatus.meta?.version, nohmRunState?.verifiedResultReceipt]);
 
-  const showSelectedModelResult = useCallback(async () => {
-    if (!modelResultSelection || !modelSceneStatus.meta?.version || nohmWorkspaceContext?.mode !== 'model') return;
+  const modelResultScopeOptions = useMemo(() => pypsaFacilitiesData
+    .filter(facility => String(facility?.component_type || '').toLowerCase() === 'bus')
+    .map(facility => ({
+      id: String(facility.id || ''),
+      label: `${facility.name || facility.id}${facility.country ? ` · ${facility.country}` : ''}`,
+    }))
+    .filter(option => option.id)
+    .sort((left, right) => left.label.localeCompare(right.label)), [pypsaFacilitiesData]);
+
+  const showSelectedModelResult = useCallback(async (selectionOverride = null) => {
+    const requestedSelection = selectionOverride?.runId ? selectionOverride : modelResultSelection;
+    if (!requestedSelection || !modelSceneStatus.meta?.version || nohmWorkspaceContext?.mode !== 'model') return;
     clearModelMixedResolutionPreview();
     distillationPreviewRequestRef.current?.abort();
     setDistillationPreviewStatus({ state: 'idle', preview: null, error: '' });
@@ -2518,17 +2539,58 @@ function AppInner() {
     setModelResultStatus((previous) => ({ ...previous, state: 'loading', error: '' }));
     try {
       const scene = await fetchModelResultScene(nohmWorkspaceContext, {
-        ...modelResultSelection,
+        ...requestedSelection,
         modelVersion: modelSceneStatus.meta.version,
         carrier: 'electricity',
       }, { signal: controller.signal });
       if (controller.signal.aborted) return;
-      setModelResultStatus({ state: 'ready', scene, error: '' });
+      const scopeId = String(requestedSelection.scopeId || '').trim();
+      if (!scopeId) {
+        setModelResultStatus({ state: 'ready', scene, error: '' });
+        return;
+      }
+      const allowedEntityIds = new Set([scopeId]);
+      pypsaFacilitiesDataRef.current.forEach((facility) => {
+        if (facility?.id === scopeId || facility?.bus === scopeId) allowedEntityIds.add(String(facility.id || ''));
+      });
+      pypsaConnectionsRef.current.forEach((connection) => {
+        if ([connection?.from, connection?.to, connection?.fromNode, connection?.toNode].includes(scopeId)) {
+          allowedEntityIds.add(String(connection.id || ''));
+        }
+      });
+      const values = scene.values.filter(row => allowedEntityIds.has(String(row.entity_id || '')));
+      const scopedScene = {
+        ...scene,
+        values,
+        valueByEntityId: new Map(values.map(row => [String(row.entity_id || ''), row])),
+        selection: { ...scene.selection, scope_id: scopeId },
+        coverage: { ...scene.coverage, projected_row_count: values.length },
+      };
+      setModelResultStatus({ state: 'ready', scene: scopedScene, error: '' });
     } catch (error) {
       if (controller.signal.aborted || error?.name === 'AbortError') return;
       setModelResultStatus((previous) => ({ ...previous, state: 'error', error: error?.message || 'The selected model result could not be shown.' }));
     }
   }, [clearModelMixedResolutionPreview, modelResultSelection, modelSceneStatus.meta?.version, nohmWorkspaceContext]);
+
+  const showLolaFlowOnMap = useCallback(() => {
+    const run = (modelResultCatalogStatus.catalog?.runs || []).find(item => item.compatible && item.quantities?.length);
+    const quantity = run?.quantities?.find(item => item.id === 'Line.Flow')
+      || run?.quantities?.find(item => item.class_name === 'Line');
+    if (!run || !quantity) return;
+    const selection = {
+      runId: run.run_id,
+      category: quantity.class_name,
+      quantityId: quantity.id,
+      className: quantity.class_name,
+      propertyName: quantity.property_name,
+      unit: quantity.unit || '',
+      period: quantity.periods?.[0] || run.periods?.[0] || '',
+      scopeId: '',
+    };
+    setModelResultSelection(selection);
+    showSelectedModelResult(selection);
+  }, [modelResultCatalogStatus.catalog, showSelectedModelResult]);
 
   const clearModelResult = useCallback(() => {
     modelResultRequestRef.current?.abort();
@@ -2550,9 +2612,10 @@ function AppInner() {
     setShowDistillationContext(false);
   }, []);
 
-  const runDistillationPreview = useCallback(async () => {
+  const runDistillationPreview = useCallback(async (countriesOverride = null) => {
     const meta = modelSceneStatus.meta;
-    if (!distillationCountries.length || !meta?.version || nohmWorkspaceContext?.mode !== 'model') return;
+    const requestedCountries = Array.isArray(countriesOverride) ? countriesOverride : distillationCountries;
+    if (!requestedCountries.length || !meta?.version || nohmWorkspaceContext?.mode !== 'model') return;
     clearModelMixedResolutionPreview();
     distillationPreviewRequestRef.current?.abort();
     const controller = new AbortController();
@@ -2561,7 +2624,7 @@ function AppInner() {
     setDistillationPreviewStatus(previous => ({ ...previous, state: 'loading', error: '' }));
     try {
       const preview = await fetchDistillationPreview(nohmWorkspaceContext, {
-        countries: distillationCountries,
+        countries: requestedCountries,
         carrier: 'electricity',
         modelVersion: meta.version,
         year: meta.selectedYear,
@@ -2575,6 +2638,23 @@ function AppInner() {
       setDistillationPreviewStatus(previous => ({ ...previous, state: 'error', error: error?.message || 'The geographical subset could not be previewed.' }));
     }
   }, [clearModelMixedResolutionPreview, clearModelResult, distillationCountries, modelSceneStatus.meta, nohmWorkspaceContext]);
+
+  const selectBoundModelCountry = useCallback((countryCode) => {
+    const normalized = String(countryCode || '').trim().toUpperCase();
+    if (!normalized) {
+      setDistillationCountries([]);
+      clearDistillationPreview();
+      setEmilViewportCommand({ id: Date.now() + Math.random(), operation: 'fit_targets' });
+      return;
+    }
+    setDistillationCountries([normalized]);
+    setEmilViewportCommand({
+      id: Date.now() + Math.random(),
+      operation: 'fit_targets',
+      countryCodes: [normalized],
+    });
+    runDistillationPreview([normalized]);
+  }, [clearDistillationPreview, runDistillationPreview]);
 
   const applyModelMixedResolutionPreview = useCallback((focusCountry) => {
     const sourceScene = boundModelSceneRef.current;
@@ -15342,7 +15422,7 @@ function AppInner() {
                             : `${loadedCountrySummary} · ${selectedCachedNetworkLevel?.isFull || selectedCachedNetworkLevel?.isGeographic ? selectedCachedNetworkLevel.label : selectedCachedNetworkLevel ? `${selectedCachedNetworkLevel.label} nodes` : 'No cache'}`}
                           open={pypsaSectionOpen.geography}
                           onToggle={() => togglePypsaDomainSection('geography')}
-                          compact={compactAtlasLayout || ATLAS_IS_EMBEDDED}
+                          compact={compactAtlasLayout && !ATLAS_IS_EMBEDDED}
                         >
                           <div className="space-y-2.5">
                             {boundModelGeography ? (
@@ -15368,6 +15448,24 @@ function AppInner() {
                                   Expanding a country to a finer topology requires the future governed split workflow; Atlas will not substitute an unrelated full-granularity cache.
                                 </p>
                               </div>
+                              <label className="block rounded-xl border border-white/10 bg-black/20 p-3">
+                                <span className="mb-1 block text-[9px] uppercase tracking-wider text-tj-slate">Country view</span>
+                                <select
+                                  value={distillationCountries.length === 1 ? distillationCountries[0] : ''}
+                                  onChange={(event) => selectBoundModelCountry(event.target.value)}
+                                  disabled={distillationPreviewStatus.state === 'loading'}
+                                  className="w-full rounded-lg border border-white/10 bg-[#081523] px-2 py-2 text-[10px] text-white disabled:opacity-50"
+                                  aria-label="Select country from loaded model"
+                                >
+                                  <option value="">All project countries</option>
+                                  {boundModelGeography.sourceCountries.map((code) => (
+                                    <option key={code} value={code}>{countryCodeToName(code)} ({code})</option>
+                                  ))}
+                                </select>
+                                <span className="mt-1.5 block text-[9px] leading-3.5 text-tj-slate">
+                                  Filters the existing project schema. It never substitutes a finer external country network.
+                                </span>
+                              </label>
                               {modelSceneStatus.state === 'ready' && boundModelGeography.sourceCountries.length > 1 && (
                                 <ModelMixedResolutionControls
                                   countries={boundModelGeography.sourceCountries}
@@ -15559,37 +15657,11 @@ function AppInner() {
 
                         {nohmWorkspaceContext?.mode === 'model'
                           && atlasWorkspaceAreaIsVisible('geography', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
-                          <section className="border-t border-white/10 px-3 py-3" aria-label="Model Results">
-                            <div className="mb-2.5 flex items-start gap-2">
-                              <span className="atlas-domain-section__icon is-active"><BarChart3 className="h-4 w-4" /></span>
-                              <span className="min-w-0 flex-1">
-                                <span className="atlas-domain-section__eyebrow">Model workspace</span>
-                                <span className="atlas-domain-section__title">Results</span>
-                                <span className="atlas-domain-section__summary">Existing solved outputs on the loaded topology</span>
-                              </span>
-                            </div>
-                            <ModelResultsControls
-                              catalogStatus={modelResultCatalogStatus}
-                              selection={modelResultSelection}
-                              resultStatus={modelResultStatus}
-                              onSelectionChange={setModelResultSelection}
-                              onShow={showSelectedModelResult}
-                              onClear={clearModelResult}
-                            />
-                          </section>
-                        )}
-
-                        {nohmWorkspaceContext?.mode === 'model'
-                          && atlasWorkspaceAreaIsVisible('geography', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
-                          <section className="border-t border-white/10 px-3 py-3" aria-label="Distil geography">
-                            <div className="mb-2.5 flex items-start gap-2">
-                              <span className="atlas-domain-section__icon is-active"><Layers className="h-4 w-4" /></span>
-                              <span className="min-w-0 flex-1">
-                                <span className="atlas-domain-section__eyebrow">Model workspace</span>
-                                <span className="atlas-domain-section__title">Distil geography</span>
-                                <span className="atlas-domain-section__summary">Preview a reconciled schema subset without mutation</span>
-                              </span>
-                            </div>
+                          <ModelWorkspaceSection
+                            title="Distil geography"
+                            summary="Preview a reconciled schema subset without mutation"
+                            Icon={Layers}
+                          >
                             <ModelDistillationControls
                               availableCountries={modelSceneStatus.meta?.countries || []}
                               selectedCountries={distillationCountries}
@@ -15601,63 +15673,83 @@ function AppInner() {
                               onClear={clearDistillationPreview}
                               countryName={countryCodeToName}
                             />
-                          </section>
+                          </ModelWorkspaceSection>
                         )}
 
                         {nohmWorkspaceContext?.mode === 'model'
                           && atlasWorkspaceAreaIsVisible('geography', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
-                          <section className="border-t border-white/10 px-3 py-3" aria-label="Model portals">
-                            <div className="mb-2.5 flex items-start gap-2">
-                              <span className="atlas-domain-section__icon is-active"><PanelLeftOpen className="h-4 w-4" /></span>
-                              <span className="min-w-0 flex-1">
-                                <span className="atlas-domain-section__eyebrow">Model workspace</span>
-                                <span className="atlas-domain-section__title">Portals</span>
-                                <span className="atlas-domain-section__summary">Work in project tools beside the live map</span>
-                              </span>
-                            </div>
+                          <ModelWorkspaceSection
+                            title="Project workspaces"
+                            summary="Open linked evidence beside the live map"
+                            Icon={PanelLeftOpen}
+                          >
                             <ModelPortalControls
                               embedded={ATLAS_IS_EMBEDDED}
                               onOpen={requestNohmAtlasPortal}
-                              targets={['explore-model', 'demand', 'climate', 'commodity', 'model-builder']}
+                              targets={['explore-model', 'demand', 'climate', 'commodity']}
                             />
-                          </section>
+                          </ModelWorkspaceSection>
                         )}
 
                         {nohmWorkspaceContext?.mode === 'model'
                           && ATLAS_IS_EMBEDDED
                           && atlasWorkspaceAreaIsVisible('filters', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
-                          <section className="border-t border-white/10 px-3 py-3" aria-label="Model visualisation portals">
-                            <div className="mb-2.5 flex items-start gap-2">
-                              <span className="atlas-domain-section__icon is-active"><BarChart3 className="h-4 w-4" /></span>
-                              <span className="min-w-0 flex-1">
-                                <span className="atlas-domain-section__eyebrow">Visualise domain</span>
-                                <span className="atlas-domain-section__title">Results &amp; analysis</span>
-                                <span className="atlas-domain-section__summary">Open project evidence without leaving the map</span>
-                              </span>
-                            </div>
-                            <div className="mb-2.5 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] px-3 py-2 text-[10px] leading-4 text-tj-slate">
-                              Results and Lola Flow use labelled solution versions. Analysis, CBA and economic assessment are currently project-bound.
-                            </div>
-                            <ModelPortalControls
-                              embedded={ATLAS_IS_EMBEDDED}
-                              onOpen={requestNohmAtlasPortal}
-                              targets={['visualisation', 'analysis', 'lola-flow', 'cba', 'economic-assessment']}
-                            />
-                          </section>
+                          <>
+                            <ModelWorkspaceSection
+                              title="Results"
+                              summary="Map solved quantities by category and node or region"
+                              Icon={BarChart3}
+                            >
+                              <ModelResultsControls
+                                catalogStatus={modelResultCatalogStatus}
+                                selection={modelResultSelection}
+                                resultStatus={modelResultStatus}
+                                scopeOptions={modelResultScopeOptions}
+                                onSelectionChange={setModelResultSelection}
+                                onShow={showSelectedModelResult}
+                                onClear={clearModelResult}
+                              />
+                            </ModelWorkspaceSection>
+                            <ModelWorkspaceSection
+                              title="Lola Flow"
+                              summary="Render solved transmission flow directly on Atlas"
+                              Icon={GitBranch}
+                            >
+                              <div className="space-y-2.5">
+                                <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] px-3 py-2 text-[10px] leading-4 text-tj-slate">
+                                  Uses the compatible labelled solution run and maps line-flow values onto the loaded topology. No external portal is opened.
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={showLolaFlowOnMap}
+                                  disabled={modelResultCatalogStatus.state !== 'ready' || modelResultStatus.state === 'loading'}
+                                  className="atlas-primary-action w-full rounded-lg border border-tj-gold/40 bg-tj-gold px-3 py-2 text-[10px] font-semibold text-tj-navy-dark disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  {modelResultStatus.state === 'loading' ? 'Mapping flow…' : 'Map solved line flow'}
+                                </button>
+                              </div>
+                            </ModelWorkspaceSection>
+                            <ModelWorkspaceSection
+                              title="Cost-benefit analysis"
+                              summary="Native Atlas assessment workspace · planned"
+                              Icon={Scale}
+                              badge="Later"
+                            >
+                              <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.06] px-3 py-2 text-[10px] leading-4 text-tj-slate">
+                                CBA will be implemented here as an Atlas-native section against governed model and result versions. It is intentionally not linked to a portal yet.
+                              </div>
+                            </ModelWorkspaceSection>
+                          </>
                         )}
 
                         {nohmWorkspaceContext?.mode === 'model'
                           && ATLAS_IS_EMBEDDED
                           && atlasWorkspaceAreaIsVisible('operations', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
-                          <section className="border-t border-white/10 px-3 py-3" aria-label="Nohm model operations">
-                            <div className="mb-2.5 flex items-start gap-2">
-                              <span className="atlas-domain-section__icon is-active"><Cog className="h-4 w-4" /></span>
-                              <span className="min-w-0 flex-1">
-                                <span className="atlas-domain-section__eyebrow">Operate domain</span>
-                                <span className="atlas-domain-section__title">Model Operations</span>
-                                <span className="atlas-domain-section__summary">Use Nohm&apos;s validated tools beside the live model</span>
-                              </span>
-                            </div>
+                          <ModelWorkspaceSection
+                            title="Model operations"
+                            summary="Use Nohm's validated tools beside the live model"
+                            Icon={Cog}
+                          >
                             <div className="mb-2.5 rounded-lg border border-emerald-300/20 bg-emerald-300/[0.06] px-3 py-2 text-[10px] leading-4 text-tj-slate">
                               Atlas supplies project and model-version context. Operations, confirmations and audit history remain governed by Nohm.
                             </div>
@@ -15670,7 +15762,7 @@ function AppInner() {
                               onOpen={requestNohmAtlasPortal}
                               targets={['model-operations', 'model-runs']}
                             />
-                          </section>
+                          </ModelWorkspaceSection>
                         )}
 
                         {(!ATLAS_IS_EMBEDDED || nohmWorkspaceContext?.mode !== 'model')
@@ -15681,7 +15773,7 @@ function AppInner() {
                           summary={`${runMode === 'build_only' ? 'Build only' : runMode === 'solve_existing' ? 'Solve existing' : 'Build + solve'} · HiGHS ${pypsaSettings.solver_method}`}
                           open={pypsaSectionOpen.operations}
                           onToggle={() => togglePypsaDomainSection('operations')}
-                          compact={compactAtlasLayout || ATLAS_IS_EMBEDDED}
+                          compact={compactAtlasLayout && !ATLAS_IS_EMBEDDED}
                         >
                           {distillationPreviewStatus.preview && (
                             <div className="mb-3 rounded-lg border border-amber-300/25 bg-amber-300/[0.08] px-3 py-2.5 text-[10px] leading-4 text-white">
@@ -15755,7 +15847,7 @@ function AppInner() {
                           summary={pypsaFacilitiesData.length ? `${hiddenCarriers.size} carrier filters${showGenerationMix && pypsaHasGenerationMixData ? ' · Mix on' : ''}` : 'Carrier filters and map display'}
                           open={pypsaSectionOpen.filters}
                           onToggle={() => togglePypsaDomainSection('filters')}
-                          compact={compactAtlasLayout || ATLAS_IS_EMBEDDED}
+                          compact={compactAtlasLayout && !ATLAS_IS_EMBEDDED}
                         >
                           {pypsaFacilitiesData.length === 0 ? (
                             <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-tj-slate">Load a local network to enable domain filters.</div>
@@ -15850,7 +15942,7 @@ function AppInner() {
                             : 'Eurostat regional typology'}
                           open={pypsaSectionOpen.clusters}
                           onToggle={() => togglePypsaDomainSection('clusters')}
-                          compact={compactAtlasLayout || ATLAS_IS_EMBEDDED}
+                          compact={compactAtlasLayout && !ATLAS_IS_EMBEDDED}
                           retain
                         >
                           <RegionalClusteringControls
