@@ -149,6 +149,39 @@ test('compressed API responses stream without a decoder or content-length mismat
   assert.deepEqual(await response.json(), { source: 'candidate' });
 });
 
+test('project model requests can use Emil without redirecting ordinary Atlas APIs', async () => {
+  const modelRequests = [];
+  const modelUpstream = http.createServer((req, res) => {
+    modelRequests.push(req.url);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('{"source":"emil-model"}');
+  });
+  await listen(modelUpstream);
+  const split = createPreviewServer({
+    buildDir: root,
+    backend: upstreamOrigin,
+    modelBackend: `http://127.0.0.1:${modelUpstream.address().port}`,
+  });
+  await listen(split);
+  try {
+    const splitOrigin = `http://127.0.0.1:${split.address().port}`;
+    const modelResponse = await fetch(`${splitOrigin}/atlas-api/api/atlas/projects/TYNDP/scene?layers=grid`);
+    assert.deepEqual(await modelResponse.json(), { source: 'emil-model' });
+    assert.equal(modelRequests.at(-1), '/api/atlas/projects/TYNDP/scene?layers=grid');
+
+    const solutionResponse = await fetch(`${splitOrigin}/atlas-api/api/solutions/TYNDP/runs`);
+    assert.deepEqual(await solutionResponse.json(), { source: 'emil-model' });
+    assert.equal(modelRequests.at(-1), '/api/solutions/TYNDP/runs');
+
+    const ordinaryResponse = await fetch(`${splitOrigin}/atlas-api/api/atlas/land/status`);
+    assert.deepEqual(await ordinaryResponse.json(), { source: 'candidate' });
+    assert.equal(upstreamRequests.at(-1).url, '/api/atlas/land/status');
+  } finally {
+    await close(split);
+    await close(modelUpstream);
+  }
+});
+
 test('host/origin checks reject foreign writes before they reach the candidate', async () => {
   const beforeCount = upstreamRequests.length;
   assert.equal((await fetch(`${origin}/atlas-api/change`, {
@@ -195,6 +228,9 @@ test('static files reject writes, hidden files and encoded traversal', async () 
 test('preview configuration refuses remote targets and overlapping mounts', () => {
   for (const backend of ['https://127.0.0.1', 'http://remote.example', 'http://user:pass@127.0.0.1', 'http://127.0.0.1/api']) {
     assert.throws(() => createPreviewServer({ buildDir: root, backend }), /loopback/);
+  }
+  for (const modelBackend of ['https://127.0.0.1', 'http://remote.example', 'http://user:pass@127.0.0.1']) {
+    assert.throws(() => createPreviewServer({ buildDir: root, backend: upstreamOrigin, modelBackend }), /model backend.*loopback/i);
   }
   assert.throws(() => createPreviewServer({ buildDir: root, apiPrefix: '/atlas/api' }), /overlap/);
   for (const allowedOrigin of ['*', 'https://localhost:5176', 'http://remote.example', 'http://localhost:5176/path']) {

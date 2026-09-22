@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.svg" type="image/svg+xml" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#071421" />
+    <meta
+      name="description"
+      content="Nohm Flow — the Atlas workspace for European energy and infrastructure network modelling."
+    />
+    <!-- The dark basemap is the first cross-origin resource needed by Atlas.
+         Resolve and negotiate it while the application bundle is parsing so
+         work-laptop users do not pay the connection setup cost after Leaflet
+         mounts. No data is sent and map behavior remains unchanged. -->
+    <link rel="dns-prefetch" href="//server.arcgisonline.com" />
+    <link rel="preconnect" href="https://server.arcgisonline.com" crossorigin />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/favicon.svg" />
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    <title>Nohm Flow · Atlas</title>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
+</html>

@@ -16,6 +16,16 @@ import useEmilVoice from './hooks/useEmilVoice';
 import AudioLevelMeter from './components/AudioLevelMeter';
 import LoadedCountryList from './components/LoadedCountryList';
 import MixedGranularityControls from './components/MixedGranularityControls';
+import ModelResultsControls from './components/ModelResultsControls';
+import ModelResultLegend from './components/ModelResultLegend';
+import ModelDistillationControls from './components/ModelDistillationControls';
+import ModelDistillationLegend from './components/ModelDistillationLegend';
+import ModelCountryScopeControls from './components/ModelCountryScopeControls';
+import ModelMixedResolutionControls from './components/ModelMixedResolutionControls';
+import ModelPortalControls from './components/ModelPortalControls';
+import ModelWorkspaceSection from './components/ModelWorkspaceSection';
+import ModelRunStatus from './components/ModelRunStatus';
+import ModelBuilderDraftPreview from './components/ModelBuilderDraftPreview';
 import { EMIL_VOICE_MODES } from './voice/emilVoiceState';
 import { buildAtlasTranscriptionContext } from './voice/atlasTranscriptionContext';
 import {
@@ -50,12 +60,43 @@ import {
   atlasWorkspaceAreaForDomain,
   atlasWorkspaceAreaIsVisible,
 } from './atlasWorkspaceNavigation';
-import { NOHM_ATLAS_DOMAIN_EVENT } from './nohmEmbed';
+import {
+  acknowledgeNohmAtlasAction,
+  announceNohmAtlasViewState,
+  announceNohmModelScene,
+  normalizeNohmAtlasViewState,
+  readNohmAtlasWorkspaceContextFromLocation,
+  NOHM_ATLAS_ACTION_EVENT,
+  NOHM_ATLAS_DOMAIN_EVENT,
+  NOHM_ATLAS_RUN_STATE_EVENT,
+  NOHM_ATLAS_BUILDER_DRAFT_EVENT,
+  NOHM_ATLAS_THEME_EVENT,
+  NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT,
+  requestNohmAtlasPortal,
+} from './nohmEmbed';
+import { applyAtlasTheme, nextAtlasTheme, normalizeAtlasTheme } from './atlasTheme';
 import { createCarrierNetworkRequests } from './carrierNetworkRequests';
 import { stageMapBatch, assembleMapBatch, groupPypsaFacilities, mapSharedFacilityGroups } from './pypsaMapBatch';
 import { stitchElectricityCrossBorderConnections } from './crossBorderNetwork';
 import electricityCrossBorderTopology from './data/electricity-cross-border.json';
 import { clearPypsaCatalogueCache, readPypsaCatalogueCache, writePypsaCatalogueCache } from './pypsaCatalogueCache';
+import { fetchModelScene, isModelSceneDomain, resolveModelSceneDomains } from './modelWorkspace/modelScene';
+import { fetchBuilderAssemblyScene } from './modelWorkspace/builderAssemblyScene';
+import { assertModelGeographyOperation, modelGeographyPolicy } from './modelWorkspace/modelGeographyPolicy';
+import {
+  decorateModelResultRecord,
+  defaultModelResultSelection,
+  fetchModelResultCatalog,
+  fetchModelResultScene,
+} from './modelWorkspace/resultScene';
+import {
+  decorateDistillationRecord,
+  fetchDistillationPreview,
+} from './modelWorkspace/distillationPreview';
+import {
+  buildModelMixedResolutionPreview,
+  buildModelUniformResolutionPreview,
+} from './modelWorkspace/mixedResolutionPreview';
 import {
   ATLAS_NETWORK_CARRIER_META,
   ATLAS_NETWORK_CARRIER_ORDER,
@@ -85,7 +126,49 @@ const RegionalClusteringControls = deferredPanel(
   'regional clustering',
 );
 
+function afterAtlasRender() {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
+  });
+}
+
 const ATLAS_IS_EMBEDDED = typeof window !== 'undefined' && window.self !== window.top;
+
+const NOHM_ATLAS_DIRECT_ACTIONS = Object.freeze({
+  'resolution.increase': { type: 'step_resolution', direction: 1 },
+  'resolution.decrease': { type: 'step_resolution', direction: -1 },
+  'layer.grid': { type: 'layers', domains: ['Grid'], mode: 'replace' },
+  'layer.supply': { type: 'layers', domains: ['Supply'], mode: 'replace' },
+  'layer.storage': { type: 'layers', domains: ['Storage'], mode: 'replace' },
+  'layer.demand': { type: 'layers', domains: ['Demand'], mode: 'replace' },
+  'layer.access': { type: 'layers', domains: ['Access'], mode: 'replace' },
+  'layer.add-grid': { type: 'layers', domains: ['Grid'], mode: 'add' },
+  'layer.add-supply': { type: 'layers', domains: ['Supply'], mode: 'add' },
+  'layer.add-storage': { type: 'layers', domains: ['Storage'], mode: 'add' },
+  'layer.add-demand': { type: 'layers', domains: ['Demand'], mode: 'add' },
+  'layer.add-access': { type: 'layers', domains: ['Access'], mode: 'add' },
+  'layer.hide-grid': { type: 'layers', domains: ['Grid'], mode: 'hide' },
+  'layer.hide-supply': { type: 'layers', domains: ['Supply'], mode: 'hide' },
+  'layer.hide-storage': { type: 'layers', domains: ['Storage'], mode: 'hide' },
+  'layer.hide-demand': { type: 'layers', domains: ['Demand'], mode: 'hide' },
+  'layer.hide-access': { type: 'layers', domains: ['Access'], mode: 'hide' },
+  'generation.show': { type: 'generation_mix', visible: true, showSupply: true },
+  'generation.hide': { type: 'generation_mix', visible: false },
+});
+
+const NOHM_ATLAS_VIEWPORT_ACTIONS = Object.freeze({
+  'map.zoom-in': { operation: 'zoom_in', steps: 1 },
+  'map.zoom-out': { operation: 'zoom_out', steps: 1 },
+  'map.fit-visible': { operation: 'fit_targets' },
+  'map.reset': { operation: 'reset', steps: 1 },
+});
+
+const NOHM_ATLAS_DISPLAY_ACTIONS = Object.freeze({
+  'display.show-nodes': { setting: 'nodeMarkers', visible: true, summary: 'Showing node markers.' },
+  'display.hide-nodes': { setting: 'nodeMarkers', visible: false, summary: 'Hiding node markers.' },
+  'display.show-boundaries': { setting: 'geographicBoundaries', visible: true, summary: 'Showing geographic boundaries.' },
+  'display.hide-boundaries': { setting: 'geographicBoundaries', visible: false, summary: 'Hiding geographic boundaries.' },
+});
 
 const {
   ChevronDown, Database, Rocket, Settings, Sparkles, Upload, Zap,
@@ -95,7 +178,7 @@ const {
   Sun, Moon, Wind, Waves, Droplets, Flame, Factory, Battery, Atom, Car, Hammer,
   Shield, CircleDot, Cog, Leaf, FlaskConical, MapPin, Layers, Clock3,
   CalendarDays, Info, HelpCircle, Circle, Check, PanelLeftClose, PanelLeftOpen,
-  Ship,
+  Ship, BarChart3, GitBranch, Scale,
 } = LucideIcons;
 const SlidersHorizontal = Settings;
 
@@ -495,6 +578,35 @@ function AppInner() {
   const setActiveTab = () => {};
   const [aiOpen, setAiOpen] = useState(true);
   const [activeScenario, setActiveScenario] = useState("Base 2030");
+  const [nohmWorkspaceContext, setNohmWorkspaceContext] = useState(
+    () => {
+      const context = window.__NOHM_ATLAS_WORKSPACE_CONTEXT__
+        || readNohmAtlasWorkspaceContextFromLocation(window.location);
+      if (context) window.__NOHM_ATLAS_WORKSPACE_CONTEXT__ = context;
+      return context || null;
+    }
+  );
+  const [modelSceneStatus, setModelSceneStatus] = useState({ state: 'idle', meta: null, error: '' });
+  const boundModelGeography = useMemo(
+    () => modelGeographyPolicy(nohmWorkspaceContext, modelSceneStatus.meta),
+    [modelSceneStatus.meta, nohmWorkspaceContext],
+  );
+  const boundModelSceneRef = useRef(null);
+  const modelSceneLoadedSignatureRef = useRef('');
+  const [modelGeographyResolution, setModelGeographyResolution] = useState('native');
+  const [modelMixedResolutionStatus, setModelMixedResolutionStatus] = useState({ state: 'idle', preview: null, error: '' });
+  const [modelResultCatalogStatus, setModelResultCatalogStatus] = useState({ state: 'idle', catalog: null, error: '' });
+  const [modelResultSelection, setModelResultSelection] = useState(null);
+  const [modelResultStatus, setModelResultStatus] = useState({ state: 'idle', scene: null, error: '' });
+  const [nohmRunState, setNohmRunState] = useState(null);
+  const [builderDraftPreview, setBuilderDraftPreview] = useState(null);
+  const [builderDraftSceneStatus, setBuilderDraftSceneStatus] = useState({ state: 'idle', key: '', error: '' });
+  const builderDraftSceneAppliedRef = useRef('');
+  const modelResultRequestRef = useRef(null);
+  const [distillationCountries, setDistillationCountries] = useState([]);
+  const [distillationPreviewStatus, setDistillationPreviewStatus] = useState({ state: 'idle', preview: null, error: '' });
+  const [showDistillationContext, setShowDistillationContext] = useState(false);
+  const distillationPreviewRequestRef = useRef(null);
   const [viewMode, setViewMode] = useState('properties');
   const [lolaLiveUrl] = useState('https://joule-model.terajouleenergy.com/');
   const [assistantStatus, setAssistantStatus] = useState({
@@ -531,13 +643,20 @@ function AppInner() {
   const { compact: compactAtlasLayout, domainsCollapsed: mapControlsCollapsed, setDomainsCollapsed: setMapControlsCollapsed } = useAtlasWorkspaceLayout();
   const [atlasTheme, setAtlasTheme] = useState(() => {
     try {
+      if (ATLAS_IS_EMBEDDED) {
+        const hostRoot = window.parent.document.documentElement;
+        if (hostRoot.dataset.themeVariant === 'horizon') return 'horizon';
+        return normalizeAtlasTheme(hostRoot.dataset.theme);
+      }
       const stored = window.localStorage?.getItem('atlas_theme');
-      return stored === 'light' ? 'light' : 'dark';
+      return normalizeAtlasTheme(stored);
     } catch (_) { return 'dark'; }
   });
   useEffect(() => {
-    document.documentElement.dataset.theme = atlasTheme;
-    try { window.localStorage?.setItem('atlas_theme', atlasTheme); } catch (_) { /* storage unavailable */ }
+    applyAtlasTheme(atlasTheme);
+    if (!ATLAS_IS_EMBEDDED) {
+      try { window.localStorage?.setItem('atlas_theme', atlasTheme); } catch (_) { /* storage unavailable */ }
+    }
   }, [atlasTheme]);
   const [atlasAssetPopupOpen, setAtlasAssetPopupOpen] = useState(false);
   const [atlasPopupDismissRequest, setAtlasPopupDismissRequest] = useState(0);
@@ -802,6 +921,15 @@ function AppInner() {
   const [selectingAllCountries, setSelectingAllCountries] = useState(false);
   const [geographyDrilldown, setGeographyDrilldown] = useState('');
   const [geographyLoadError, setGeographyLoadError] = useState('');
+  const boundModelGeographyError = useCallback((operation) => {
+    try {
+      assertModelGeographyOperation(boundModelGeography, operation);
+      return null;
+    } catch (error) {
+      setGeographyLoadError(error.message);
+      return error;
+    }
+  }, [boundModelGeography]);
   const [pypsaGranularity, setPypsaGranularity] = useState('pypsa');
   const [planningHorizonYear, setPlanningHorizonYear] = useState(() => {
     try {
@@ -842,8 +970,48 @@ function AppInner() {
   }, [loadedPypsaNetworks, pypsaLoadedDomainsByNetwork, selectedPyPSACountryCode]);
   const [emilFocusLocation, setEmilFocusLocation] = useState(null);
   const [emilViewportCommand, setEmilViewportCommand] = useState(null);
+  const pendingNohmViewportActionRef = useRef(new Map());
+  const atlasViewRevisionRef = useRef(0);
+  const atlasViewStateRef = useRef(normalizeNohmAtlasViewState(null));
+  const atlasViewFingerprintRef = useRef('');
+  const updateNohmAtlasViewState = useCallback((patch) => {
+    const current = atlasViewStateRef.current;
+    const next = normalizeNohmAtlasViewState({
+      ...current,
+      ...patch,
+      layers: patch?.layers ? { ...current.layers, ...patch.layers } : current.layers,
+      viewport: patch?.viewport ? { ...current.viewport, ...patch.viewport } : current.viewport,
+    });
+    const fingerprint = JSON.stringify(next);
+    if (fingerprint === atlasViewFingerprintRef.current) {
+      return { revision: atlasViewRevisionRef.current, state: next };
+    }
+    atlasViewStateRef.current = next;
+    atlasViewFingerprintRef.current = fingerprint;
+    atlasViewRevisionRef.current += 1;
+    announceNohmAtlasViewState({ revision: atlasViewRevisionRef.current, state: next });
+    return { revision: atlasViewRevisionRef.current, state: next };
+  }, []);
   const handleViewportCommandApplied = useCallback((id) => {
     setEmilViewportCommand((pending) => clearAppliedViewportCommand(pending, id));
+    const receipt = pendingNohmViewportActionRef.current.get(id);
+    if (receipt) {
+      pendingNohmViewportActionRef.current.delete(id);
+      afterAtlasRender().then(() => {
+        const viewRevision = atlasViewRevisionRef.current;
+        acknowledgeNohmAtlasAction({
+          ...receipt,
+          status: 'applied',
+          observed: {
+            operation: receipt.operation,
+            steps: receipt.steps || null,
+            viewport: atlasViewStateRef.current.viewport,
+            viewRevision,
+          },
+          viewRevision,
+        });
+      });
+    }
   }, []);
   const handleFocusLocationApplied = useCallback((location) => {
     setEmilFocusLocation((pending) => pending === location ? null : pending);
@@ -1996,6 +2164,7 @@ function AppInner() {
       zoom: Number.isFinite(view.zoom) ? view.zoom : null,
     };
     mapViewRef.current = nextView;
+    updateNohmAtlasViewState({ viewport: nextView });
     if (!pypsaDeferredDetailLoad) return;
     setMapViewState((prev) => (
       prev.lat === nextView.lat && prev.lng === nextView.lng && prev.zoom === nextView.zoom
@@ -2058,7 +2227,7 @@ function AppInner() {
     if (!pypsaSettings.build_only && runMode === 'build_only') setRunMode('build_solve');
   }, [pypsaSettings.build_only, runMode]);
   const [pypsaSectionOpen, setPypsaSectionOpen] = useState({
-    geography: true,
+    geography: false,
     operations: false,
     filters: false,
     clusters: false,
@@ -2080,6 +2249,16 @@ function AppInner() {
   }, [compactAtlasLayout]);
   const openAtlasWorkspaceArea = useCallback((section) => {
     setActiveWorkspaceArea(section);
+    if (ATLAS_IS_EMBEDDED) {
+      setPypsaSectionOpen((previous) => ({
+        ...previous,
+        geography: false,
+        operations: false,
+        filters: false,
+        clusters: false,
+      }));
+      return;
+    }
     setPypsaSectionOpen((previous) => (
       compactAtlasLayout
         ? { ...previous, geography: section === 'geography', operations: section === 'operations', filters: section === 'filters', clusters: section === 'clusters' }
@@ -2096,6 +2275,486 @@ function AppInner() {
     window.addEventListener(NOHM_ATLAS_DOMAIN_EVENT, handleNohmAtlasDomain);
     return () => window.removeEventListener(NOHM_ATLAS_DOMAIN_EVENT, handleNohmAtlasDomain);
   }, [openAtlasWorkspaceArea, setMapControlsCollapsed]);
+  useEffect(() => {
+    const handleNohmAtlasTheme = (event) => {
+      setAtlasTheme(normalizeAtlasTheme(event?.detail?.theme));
+    };
+    window.addEventListener(NOHM_ATLAS_THEME_EVENT, handleNohmAtlasTheme);
+    return () => window.removeEventListener(NOHM_ATLAS_THEME_EVENT, handleNohmAtlasTheme);
+  }, [pypsaDeferredDetailLoad, updateNohmAtlasViewState]);
+  useEffect(() => {
+    const handleNohmAtlasWorkspaceContext = (event) => {
+      if (event?.detail?.context) {
+        setNohmRunState(null);
+        setBuilderDraftPreview(null);
+        setNohmWorkspaceContext(event.detail.context);
+      }
+    };
+    window.addEventListener(NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT, handleNohmAtlasWorkspaceContext);
+    return () => window.removeEventListener(NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT, handleNohmAtlasWorkspaceContext);
+  }, []);
+  useEffect(() => {
+    const handleNohmAtlasRunState = (event) => {
+      const next = event?.detail?.runState;
+      if (!next || next.projectId !== nohmWorkspaceContext?.projectId
+          || next.modelVersion !== nohmWorkspaceContext?.version) return;
+      setNohmRunState(next);
+    };
+    window.addEventListener(NOHM_ATLAS_RUN_STATE_EVENT, handleNohmAtlasRunState);
+    return () => window.removeEventListener(NOHM_ATLAS_RUN_STATE_EVENT, handleNohmAtlasRunState);
+  }, [nohmWorkspaceContext?.projectId, nohmWorkspaceContext?.version]);
+  useEffect(() => {
+    const handleNohmAtlasBuilderDraft = (event) => {
+      const preview = event?.detail?.preview || null;
+      if (preview && (preview.projectId !== nohmWorkspaceContext?.projectId
+          || preview.sourceVersion !== nohmWorkspaceContext?.version)) return;
+      setBuilderDraftPreview(preview);
+    };
+    window.addEventListener(NOHM_ATLAS_BUILDER_DRAFT_EVENT, handleNohmAtlasBuilderDraft);
+    return () => window.removeEventListener(NOHM_ATLAS_BUILDER_DRAFT_EVENT, handleNohmAtlasBuilderDraft);
+  }, [nohmWorkspaceContext?.projectId, nohmWorkspaceContext?.version]);
+
+  const publishBoundModelRecords = useCallback((modelScene, { focus = false } = {}) => {
+    const layers = Array.isArray(modelScene?.meta?.layers) ? modelScene.meta.layers : ['grid'];
+    const temporaryDraft = modelScene?.meta?.temporary === true;
+    const modelLabel = temporaryDraft
+      ? `${modelScene.meta.projectId} draft ${modelScene.meta.draftId}`
+      : `${modelScene.meta.projectId} model`;
+    const facilities = groupPypsaFacilities(modelScene.facilities);
+    pypsaFacilitiesDataRef.current = facilities;
+    pypsaConnectionsRef.current = modelScene.connections;
+    pypsaGeoJsonOverlaysRef.current = [];
+    setPypsaFacilitiesData(facilities);
+    setPypsaConnections(modelScene.connections);
+    setPypsaGeoJsonOverlays([]);
+    setPypsaDatasetMeta({
+      filename: `${modelScene.meta.projectId}@${modelScene.meta.version}`,
+      sourceBusCount: modelScene.meta.nodeCount,
+      source: temporaryDraft ? 'temporary_model_builder_assembly' : 'canonical_model_schema',
+    });
+    setLoadedPypsaNetworks([{
+      countryCode: '',
+      countryName: modelLabel,
+      filename: `model:${modelScene.meta.projectId}@${modelScene.meta.version}`,
+    }]);
+    setPypsaLoadedDomainsByNetwork({
+      [`model:${modelScene.meta.projectId}@${modelScene.meta.version}`]: {
+        Grid: true,
+        Supply: layers.includes('supply'),
+        Storage: layers.includes('storage'),
+        Demand: false,
+      },
+    });
+    setSelectedPyPSACountryCode('');
+    setSelectedPyPSAFile('');
+    setPypsaComponentScope(layers.length > 1 ? 'full' : 'grid');
+    setPypsaDeferredDetailLoad(false);
+    setAtlasNetworkCarrier('electricity');
+    setAtlasOverlayMode(false);
+    setHiddenCarriers(new Set());
+    setGeographyLoadError('');
+    if (focus && modelScene.focus) setEmilFocusLocation(modelScene.focus);
+  }, []);
+
+  useEffect(() => {
+    const canLoad = builderDraftPreview?.mode === 'assembled-summary'
+      && builderDraftPreview?.geometryStatus === 'resolved-preview'
+      && builderDraftPreview?.assembly?.sceneAvailable === true;
+    if (!canLoad) {
+      if (builderDraftSceneAppliedRef.current && boundModelSceneRef.current) {
+        publishBoundModelRecords(boundModelSceneRef.current, { focus: false });
+      }
+      builderDraftSceneAppliedRef.current = '';
+      setBuilderDraftSceneStatus({ state: 'idle', key: '', error: '' });
+      return undefined;
+    }
+    const sceneKey = [
+      builderDraftPreview.projectId,
+      builderDraftPreview.draftId,
+      builderDraftPreview.sourceVersion,
+      builderDraftPreview.revision,
+      builderDraftPreview.assembly.previewId,
+    ].join('|');
+    if (modelSceneStatus.state !== 'ready' || !boundModelSceneRef.current) {
+      builderDraftSceneAppliedRef.current = '';
+      setBuilderDraftSceneStatus({ state: 'waiting', key: sceneKey, error: '' });
+      return undefined;
+    }
+    if (builderDraftSceneAppliedRef.current === sceneKey) return undefined;
+    const controller = new AbortController();
+    setBuilderDraftSceneStatus({ state: 'loading', key: sceneKey, error: '' });
+    fetchBuilderAssemblyScene(builderDraftPreview, { signal: controller.signal })
+      .then((scene) => {
+        if (controller.signal.aborted) return;
+        publishBoundModelRecords(scene, { focus: false });
+        builderDraftSceneAppliedRef.current = sceneKey;
+        setBuilderDraftSceneStatus({ state: 'ready', key: sceneKey, error: '' });
+      })
+      .catch((error) => {
+        if (controller.signal.aborted || error?.name === 'AbortError') return;
+        if (builderDraftSceneAppliedRef.current && boundModelSceneRef.current) {
+          publishBoundModelRecords(boundModelSceneRef.current, { focus: false });
+        }
+        builderDraftSceneAppliedRef.current = '';
+        setBuilderDraftSceneStatus({
+          state: 'error', key: sceneKey,
+          error: error?.message || 'The temporary assembly map could not be loaded.',
+        });
+      });
+    return () => controller.abort();
+  }, [builderDraftPreview, modelSceneStatus.state, publishBoundModelRecords]);
+
+  const applyBoundModelScene = useCallback((modelScene, layers) => {
+    boundModelSceneRef.current = modelScene;
+    setModelGeographyResolution('native');
+    setModelMixedResolutionStatus({ state: 'idle', preview: null, error: '' });
+    publishBoundModelRecords(modelScene, { focus: true });
+    setNohmWorkspaceContext((previous) => (
+      previous?.projectId === modelScene.meta.projectId
+        ? { ...previous, version: modelScene.meta.version }
+        : previous
+    ));
+    if (window.__NOHM_ATLAS_WORKSPACE_CONTEXT__?.projectId === modelScene.meta.projectId) {
+      window.__NOHM_ATLAS_WORKSPACE_CONTEXT__ = {
+        ...window.__NOHM_ATLAS_WORKSPACE_CONTEXT__,
+        version: modelScene.meta.version,
+      };
+    }
+    announceNohmModelScene(modelScene.meta);
+    modelSceneLoadedSignatureRef.current = [
+      modelScene.meta.projectId,
+      modelScene.meta.version,
+      modelScene.meta.selectedYear,
+      layers.join(','),
+    ].join('|');
+    setModelSceneStatus({ state: 'ready', meta: modelScene.meta, error: '' });
+    return modelScene;
+  }, [publishBoundModelRecords]);
+
+  const clearModelMixedResolutionPreview = useCallback(() => {
+    const sourceScene = boundModelSceneRef.current;
+    if (sourceScene) publishBoundModelRecords(sourceScene, { focus: false });
+    setModelGeographyResolution('native');
+    setModelMixedResolutionStatus({ state: 'idle', preview: null, error: '' });
+  }, [publishBoundModelRecords]);
+
+  const modelSceneRequestLayers = useMemo(() => [
+    'grid',
+    ...(atlasDomainVisibility.Supply ? ['supply'] : []),
+    ...(atlasDomainVisibility.Storage ? ['storage'] : []),
+  ], [atlasDomainVisibility.Supply, atlasDomainVisibility.Storage]);
+  const modelSceneRequestLayerKey = modelSceneRequestLayers.join(',');
+  const modelSceneRequestYear = useMemo(() => Number([
+    nohmWorkspaceContext?.scenario,
+    activeScenario,
+    planningHorizonYear,
+  ].map((value) => String(value || '').match(/\b(20\d{2})\b/)?.[1]).find(Boolean) || 2030), [
+    nohmWorkspaceContext?.scenario,
+    activeScenario,
+    planningHorizonYear,
+  ]);
+
+  const loadBoundModelScene = useCallback(async (layers, options = {}) => {
+    if (nohmWorkspaceContext?.mode !== 'model' || !nohmWorkspaceContext?.projectId) {
+      throw new Error('A bound model project is required to load an Atlas model scene.');
+    }
+    const requestedLayers = [...new Set((layers || ['grid']).map((layer) => String(layer).toLowerCase()))];
+    setModelSceneStatus((previous) => ({ ...previous, state: 'loading', error: '' }));
+    setPypsaLoading(true);
+    try {
+      const modelScene = await fetchModelScene(nohmWorkspaceContext, {
+        layers: requestedLayers,
+        year: modelSceneRequestYear,
+        signal: options.signal,
+      });
+      if (options.signal?.aborted) return null;
+      return applyBoundModelScene(modelScene, requestedLayers);
+    } catch (error) {
+      if (options.signal?.aborted || error?.name === 'AbortError') return null;
+      setModelSceneStatus({ state: 'error', meta: null, error: error?.message || 'The bound model could not be loaded.' });
+      throw error;
+    } finally {
+      if (!options.signal?.aborted) setPypsaLoading(false);
+    }
+  }, [applyBoundModelScene, modelSceneRequestYear, nohmWorkspaceContext]);
+
+  useEffect(() => {
+    if (nohmWorkspaceContext?.mode !== 'model' || !nohmWorkspaceContext?.projectId) {
+      modelSceneLoadedSignatureRef.current = '';
+      boundModelSceneRef.current = null;
+      setModelMixedResolutionStatus({ state: 'idle', preview: null, error: '' });
+      setModelSceneStatus({ state: 'idle', meta: null, error: '' });
+      return undefined;
+    }
+    const requestedSignature = [
+      nohmWorkspaceContext.projectId,
+      nohmWorkspaceContext.version,
+      modelSceneRequestYear,
+      modelSceneRequestLayerKey,
+    ].join('|');
+    if (modelSceneLoadedSignatureRef.current === requestedSignature) {
+      return undefined;
+    }
+    const controller = new AbortController();
+    loadBoundModelScene(modelSceneRequestLayers, { signal: controller.signal }).catch(() => {});
+    return () => controller.abort();
+  }, [
+    nohmWorkspaceContext?.mode,
+    nohmWorkspaceContext?.projectId,
+    modelSceneRequestLayerKey,
+    modelSceneRequestYear,
+    loadBoundModelScene,
+  ]);
+  useEffect(() => {
+    const projectId = nohmWorkspaceContext?.mode === 'model' ? nohmWorkspaceContext?.projectId : '';
+    const modelVersion = modelSceneStatus.meta?.version;
+    if (!projectId || !modelVersion) {
+      setModelResultCatalogStatus({ state: 'idle', catalog: null, error: '' });
+      setModelResultSelection(null);
+      setModelResultStatus({ state: 'idle', scene: null, error: '' });
+      modelResultRequestRef.current?.abort();
+      return undefined;
+    }
+    const controller = new AbortController();
+    setModelResultCatalogStatus({ state: 'loading', catalog: null, error: '' });
+    setModelResultStatus({ state: 'idle', scene: null, error: '' });
+    fetchModelResultCatalog(nohmWorkspaceContext, modelVersion, {
+      signal: controller.signal,
+      schemaCategories: modelSceneStatus.meta?.declaredCategories || {},
+      schemaCategoryObjects: modelSceneStatus.meta?.declaredCategoryObjects || {},
+    })
+      .then((catalog) => {
+        if (controller.signal.aborted) return;
+        setModelResultCatalogStatus({ state: 'ready', catalog, error: '' });
+        setModelResultSelection(defaultModelResultSelection(catalog));
+      })
+      .catch((error) => {
+        if (controller.signal.aborted || error?.name === 'AbortError') return;
+        setModelResultCatalogStatus({ state: 'error', catalog: null, error: error?.message || 'Model results could not be discovered.' });
+      });
+    return () => controller.abort();
+  }, [nohmWorkspaceContext?.mode, nohmWorkspaceContext?.projectId, modelSceneStatus.meta?.version, nohmRunState?.verifiedResultReceipt]);
+
+  const modelResultScopeOptions = useMemo(() => pypsaFacilitiesData
+    .filter(facility => String(facility?.component_type || '').toLowerCase() === 'bus')
+    .map(facility => ({
+      id: String(facility.id || ''),
+      label: `${facility.name || facility.id}${facility.country ? ` · ${facility.country}` : ''}`,
+    }))
+    .filter(option => option.id)
+    .sort((left, right) => left.label.localeCompare(right.label)), [pypsaFacilitiesData]);
+
+  const showSelectedModelResult = useCallback(async (selectionOverride = null) => {
+    const requestedSelection = selectionOverride?.runId ? selectionOverride : modelResultSelection;
+    if (!requestedSelection || !modelSceneStatus.meta?.version || nohmWorkspaceContext?.mode !== 'model') return;
+    clearModelMixedResolutionPreview();
+    distillationPreviewRequestRef.current?.abort();
+    setDistillationPreviewStatus({ state: 'idle', preview: null, error: '' });
+    modelResultRequestRef.current?.abort();
+    const controller = new AbortController();
+    modelResultRequestRef.current = controller;
+    setModelResultStatus((previous) => ({ ...previous, state: 'loading', error: '' }));
+    try {
+      const scene = await fetchModelResultScene(nohmWorkspaceContext, {
+        ...requestedSelection,
+        modelVersion: modelSceneStatus.meta.version,
+        carrier: 'electricity',
+      }, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      const mapTarget = scene.selection?.map_target;
+      const mapEntityIds = new Set((mapTarget === 'link'
+        ? pypsaConnectionsRef.current
+        : pypsaFacilitiesDataRef.current
+      ).map(record => String(record?.id || '')).filter(Boolean));
+      const values = scene.values.filter(row => mapEntityIds.has(String(row.entity_id || '')));
+      if (!values.length) {
+        setModelResultStatus({
+          state: 'error',
+          scene: null,
+          error: 'The Visualisation query returned values, but none match the nodes or links in the loaded model topology.',
+        });
+        return;
+      }
+      const mappedScene = {
+        ...scene,
+        values,
+        valueByEntityId: new Map(values.map(row => [String(row.entity_id || ''), row])),
+        selection: { ...scene.selection, scope_id: String(requestedSelection.scopeId || '').trim() },
+        coverage: {
+          ...scene.coverage,
+          mapped_row_count: values.length,
+          excluded_row_count: Math.max(0, scene.values.length - values.length),
+        },
+      };
+      if (mapTarget !== 'link') setShowMapNodes(true);
+      setModelResultStatus({ state: 'ready', scene: mappedScene, error: '' });
+    } catch (error) {
+      if (controller.signal.aborted || error?.name === 'AbortError') return;
+      setModelResultStatus((previous) => ({ ...previous, state: 'error', error: error?.message || 'The selected model result could not be shown.' }));
+    }
+  }, [clearModelMixedResolutionPreview, modelResultSelection, modelSceneStatus.meta?.version, nohmWorkspaceContext]);
+
+  const showLolaFlowOnMap = useCallback(() => {
+    const run = (modelResultCatalogStatus.catalog?.runs || []).find(item => item.compatible && item.quantities?.length);
+    const quantity = run?.quantities?.find(item => item.id === 'Line.Flow')
+      || run?.quantities?.find(item => item.class_name === 'Line');
+    if (!run || !quantity) return;
+    const selection = {
+      runId: run.run_id,
+      runLabel: run.label || run.run_id,
+      category: '',
+      categoryObjects: [],
+      quantityId: quantity.id,
+      reportFamily: quantity.report_family || '',
+      className: quantity.class_name,
+      propertyName: quantity.property_name,
+      unit: quantity.unit || '',
+      period: quantity.periods?.[0] || run.periods?.[0] || '',
+      scopeId: '',
+      supportsFlowMap: Boolean(quantity.supports_flow_map),
+    };
+    setModelResultSelection(selection);
+    showSelectedModelResult(selection);
+  }, [modelResultCatalogStatus.catalog, showSelectedModelResult]);
+
+  const clearModelResult = useCallback(() => {
+    modelResultRequestRef.current?.abort();
+    setModelResultStatus({ state: 'idle', scene: null, error: '' });
+  }, []);
+
+  useEffect(() => () => modelResultRequestRef.current?.abort(), []);
+
+  const clearDistillationPreview = useCallback(() => {
+    distillationPreviewRequestRef.current?.abort();
+    setDistillationPreviewStatus({ state: 'idle', preview: null, error: '' });
+    setShowDistillationContext(false);
+  }, []);
+
+  const updateDistillationCountries = useCallback((countries) => {
+    distillationPreviewRequestRef.current?.abort();
+    setDistillationCountries(countries);
+    setDistillationPreviewStatus({ state: 'idle', preview: null, error: '' });
+    setShowDistillationContext(false);
+  }, []);
+
+  const runDistillationPreview = useCallback(async (countriesOverride = null) => {
+    const meta = modelSceneStatus.meta;
+    const requestedCountries = Array.isArray(countriesOverride) ? countriesOverride : distillationCountries;
+    if (!requestedCountries.length || !meta?.version || nohmWorkspaceContext?.mode !== 'model') return;
+    clearModelMixedResolutionPreview();
+    distillationPreviewRequestRef.current?.abort();
+    const controller = new AbortController();
+    distillationPreviewRequestRef.current = controller;
+    clearModelResult();
+    setDistillationPreviewStatus(previous => ({ ...previous, state: 'loading', error: '' }));
+    try {
+      const preview = await fetchDistillationPreview(nohmWorkspaceContext, {
+        countries: requestedCountries,
+        carrier: 'electricity',
+        modelVersion: meta.version,
+        year: meta.selectedYear,
+        layers: meta.layers,
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      setDistillationPreviewStatus({ state: 'ready', preview, error: '' });
+    } catch (error) {
+      if (controller.signal.aborted || error?.name === 'AbortError') return;
+      setDistillationPreviewStatus(previous => ({ ...previous, state: 'error', error: error?.message || 'The geographical subset could not be previewed.' }));
+    }
+  }, [clearModelMixedResolutionPreview, clearModelResult, distillationCountries, modelSceneStatus.meta, nohmWorkspaceContext]);
+
+  const selectBoundModelCountries = useCallback((countryCodes) => {
+    const available = new Set(boundModelGeography?.sourceCountries || []);
+    const normalized = [...new Set((countryCodes || [])
+      .map(code => String(code || '').trim().toUpperCase())
+      .filter(code => available.has(code)))].sort();
+    if (!normalized.length || normalized.length === available.size) {
+      setDistillationCountries([]);
+      clearDistillationPreview();
+      setEmilViewportCommand({ id: Date.now() + Math.random(), operation: 'fit_targets' });
+      return;
+    }
+    setDistillationCountries(normalized);
+    setEmilViewportCommand({
+      id: Date.now() + Math.random(),
+      operation: 'fit_targets',
+      countryCodes: normalized,
+    });
+    runDistillationPreview(normalized);
+  }, [boundModelGeography?.sourceCountries, clearDistillationPreview, runDistillationPreview]);
+
+  const applyBoundModelResolution = useCallback((resolution) => {
+    const normalized = resolution === 'country' ? 'country' : 'native';
+    const sourceScene = boundModelSceneRef.current;
+    if (!sourceScene) {
+      setModelMixedResolutionStatus({ state: 'error', preview: null, error: 'Load the project model before changing its map resolution.' });
+      return;
+    }
+    clearModelResult();
+    clearDistillationPreview();
+    setDistillationCountries([]);
+    if (normalized === 'native') {
+      publishBoundModelRecords(sourceScene, { focus: false });
+      setModelGeographyResolution('native');
+      setModelMixedResolutionStatus({ state: 'idle', preview: null, error: '' });
+      return;
+    }
+    setModelMixedResolutionStatus(previous => ({ ...previous, state: 'loading', error: '' }));
+    try {
+      const preview = buildModelUniformResolutionPreview(sourceScene, 'country');
+      publishBoundModelRecords(preview, { focus: false });
+      setModelGeographyResolution('country');
+      setModelMixedResolutionStatus({ state: 'ready', preview, error: '' });
+    } catch (error) {
+      publishBoundModelRecords(sourceScene, { focus: false });
+      setModelGeographyResolution('native');
+      setModelMixedResolutionStatus({ state: 'error', preview: null, error: error?.message || 'The country-level view could not be created.' });
+    }
+  }, [clearDistillationPreview, clearModelResult, publishBoundModelRecords]);
+
+  const applyModelMixedResolutionPreview = useCallback((focusCountry) => {
+    const sourceScene = boundModelSceneRef.current;
+    if (!sourceScene) {
+      setModelMixedResolutionStatus({ state: 'error', preview: null, error: 'Load the project model before applying a mixed-resolution view.' });
+      return;
+    }
+    setModelMixedResolutionStatus(previous => ({ ...previous, state: 'loading', error: '' }));
+    try {
+      clearModelResult();
+      clearDistillationPreview();
+      const preview = buildModelMixedResolutionPreview(sourceScene, {
+        focusCountry,
+        adjacentTier: 'native',
+        outerTier: 'country',
+      });
+      publishBoundModelRecords(preview, { focus: false });
+      setModelGeographyResolution('mixed');
+      setModelMixedResolutionStatus({ state: 'ready', preview, error: '' });
+    } catch (error) {
+      publishBoundModelRecords(sourceScene, { focus: false });
+      setModelGeographyResolution('native');
+      setModelMixedResolutionStatus({ state: 'error', preview: null, error: error?.message || 'The mixed-resolution view could not be created.' });
+    }
+  }, [clearDistillationPreview, clearModelResult, publishBoundModelRecords]);
+
+  useEffect(() => {
+    setDistillationCountries([]);
+    clearDistillationPreview();
+  }, [nohmWorkspaceContext?.projectId, clearDistillationPreview]);
+
+  const modelSceneLayerKey = (modelSceneStatus.meta?.layers || []).join(',');
+  useEffect(() => {
+    const preview = distillationPreviewStatus.preview;
+    if (!preview) return;
+    if (
+      preview.model_version !== modelSceneStatus.meta?.version
+      || (preview.layers || []).join(',') !== modelSceneLayerKey
+      || Number(preview.selected_year) !== Number(modelSceneStatus.meta?.selectedYear)
+    ) clearDistillationPreview();
+  }, [distillationPreviewStatus.preview, modelSceneStatus.meta?.version, modelSceneStatus.meta?.selectedYear, modelSceneLayerKey, clearDistillationPreview]);
+
+  useEffect(() => () => distillationPreviewRequestRef.current?.abort(), []);
   const [mapAgentInput, setMapAgentInput] = useState('');
   const [mapAgentBusy, setMapAgentBusy] = useState(false);
   const [mapAgentMessages, setMapAgentMessages] = useState([
@@ -3573,6 +4232,19 @@ function AppInner() {
 
   const handleAtlasDomainSelection = async (domain) => {
     if (pypsaBatchRef.current) return;
+    const domainName = String(domain || 'Grid');
+    if (nohmWorkspaceContext?.mode === 'model' && nohmWorkspaceContext?.projectId) {
+      if (!isModelSceneDomain(domainName)) {
+        setGeographyLoadError('Demand is not yet projected from the canonical model scene.');
+        return;
+      }
+      setGeographyLoadError('');
+      setAtlasDomainVisibility((previous) => ({
+        ...previous,
+        [domainName]: previous[domainName] === false,
+      }));
+      return;
+    }
     if (atlasOverlayMode) {
       try {
         await handleAtlasOverlayDomainSelection(domain);
@@ -3597,7 +4269,6 @@ function AppInner() {
       await handleLogisticsDomainSelection(domain);
       return;
     }
-    const domainName = String(domain || 'Grid');
     const networks = loadedPypsaNetworks.length
       ? loadedPypsaNetworks
       : (selectedPyPSAFile ? [{ filename: selectedPyPSAFile }] : []);
@@ -3687,6 +4358,7 @@ function AppInner() {
       BG: 'Bulgaria',
       BY: 'Belarus',
       CH: 'Switzerland',
+      CY: 'Cyprus',
       CZ: 'Czechia',
       DE: 'Germany',
       DK: 'Denmark',
@@ -4004,6 +4676,7 @@ function AppInner() {
   }, [cachedNetworkLevels.length, pypsaResolutionSwitching, selectedCachedNetworkIndex]);
 
   const loadCachedNetworkLevel = useCallback(async (index) => {
+    if (boundModelGeographyError('change-resolution')) return null;
     const level = cachedNetworkLevels[index];
     if (!level || pypsaLoading || pypsaResolutionSwitching) return;
 
@@ -4059,6 +4732,7 @@ function AppInner() {
     }
   }, [
     activePypsaCountryCode,
+    boundModelGeographyError,
     cachedNetworkLevels,
     countryCodeToName,
     loadPyPSAMapBatch,
@@ -4101,6 +4775,10 @@ function AppInner() {
   const addCountryNetwork = useCallback(async (countryCode) => {
     const normalizedCode = String(countryCode || '').trim().toUpperCase();
     if (!normalizedCode || pypsaLoading || pypsaBatchRef.current) return;
+    if (boundModelGeographyError('add-country-network')) {
+      setCountryDropdownValue('');
+      return;
+    }
     setGeographyLoadError('');
     setCountryDropdownValue(normalizedCode);
 
@@ -4161,6 +4839,7 @@ function AppInner() {
       setCountryDropdownValue('');
     }
   }, [
+    boundModelGeographyError,
     countryCodeToName,
     loadPyPSAMapBatch,
     atlasDomainVisibility,
@@ -4174,6 +4853,7 @@ function AppInner() {
 
   const removeCountryNetwork = useCallback((countryCode) => {
     if (pypsaBatchRef.current) return;
+    if (boundModelGeographyError('add-country-network')) return;
     setMixedGranularityPlan(null);
     const normalizedCode = String(countryCode || '').trim().toUpperCase();
     const nextNetworks = loadedPypsaNetworks.filter((network) => network.countryCode !== normalizedCode);
@@ -4224,10 +4904,11 @@ function AppInner() {
         ? nextNetworks.map((network) => network.countryName).join(' + ')
         : '',
     }));
-  }, [loadedPypsaNetworks]);
+  }, [boundModelGeographyError, loadedPypsaNetworks]);
 
   const activateCountryNetwork = useCallback((network) => {
     if (pypsaBatchRef.current) return;
+    if (boundModelGeographyError('add-country-network')) return;
     const countryCode = String(network?.countryCode || '').trim().toUpperCase();
     if (!countryCode) return;
     setSelectedPyPSACountryCode(countryCode);
@@ -4243,7 +4924,7 @@ function AppInner() {
       operation: 'fit_targets',
       countryCodes: [countryCode],
     });
-  }, [pypsaDeferredDetailLoad]);
+  }, [boundModelGeographyError, pypsaDeferredDetailLoad]);
 
   const findAtlasCountryNetworkEntry = useCallback((countryCode, resolutionKey = '') => {
     const normalizedCode = String(countryCode || '').trim().toUpperCase();
@@ -4266,7 +4947,33 @@ function AppInner() {
     mixedGranularityPlan ? 'mixed' : selectedCachedNetworkLevel ? atlasResolutionKeyForEntry(selectedCachedNetworkLevel) : ''
   ), [mixedGranularityPlan, selectedCachedNetworkLevel]);
 
+  useEffect(() => {
+    updateNohmAtlasViewState({
+      nodeMarkers: showMapNodes,
+      geographicBoundaries: showGeographicBoundaries,
+      generationMix: showGenerationMix,
+      networkResolution: currentAtlasResolutionKey,
+      layers: {
+        Grid: atlasDomainVisibility.Grid !== false,
+        Supply: atlasDomainVisibility.Supply !== false,
+        Storage: atlasDomainVisibility.Storage !== false,
+        Demand: atlasDomainVisibility.Demand !== false,
+        Access: Boolean(gridAccessOverlay.enabled),
+      },
+    });
+  }, [
+    atlasDomainVisibility,
+    currentAtlasResolutionKey,
+    gridAccessOverlay.enabled,
+    showGenerationMix,
+    showGeographicBoundaries,
+    showMapNodes,
+    updateNohmAtlasViewState,
+  ]);
+
   const applyMixedGranularityView = useCallback(async (focusCountryCode, levels = {}) => {
+    const restriction = boundModelGeographyError('mixed-resolution');
+    if (restriction) throw restriction;
     if (pypsaLoading || pypsaBatchRef.current) return null;
     const availableCodes = availablePypsaCountryOptions.map((option) => option.countryCode);
     const plan = buildMixedGranularityPlan(focusCountryCode, availableCodes, levels);
@@ -4300,6 +5007,7 @@ function AppInner() {
   }, [
     atlasDomainVisibility,
     availablePypsaCountryOptions,
+    boundModelGeographyError,
     countryCodeToName,
     findAtlasCountryNetworkEntry,
     loadPyPSAMapBatch,
@@ -4307,6 +5015,8 @@ function AppInner() {
   ]);
 
   const setAtlasResolutionFromAgent = useCallback(async (resolutionKey) => {
+    const restriction = boundModelGeographyError('change-resolution');
+    if (restriction) throw restriction;
     const normalized = String(resolutionKey || '').trim().toLowerCase();
     const targetIndex = cachedNetworkLevels.findIndex((level) => (
       level.isFullNodal ? normalized === 'full' : level.geographicLevel === normalized
@@ -4319,9 +5029,11 @@ function AppInner() {
       : loadedPypsaNetworks.map((network) => ({ filename: network.filename }));
     if (!entries) throw new Error(`Could not switch to ${ATLAS_RESOLUTION_LABELS[normalized] || normalized}.`);
     return { ...cachedNetworkLevels[targetIndex], entries };
-  }, [cachedNetworkLevels, loadCachedNetworkLevel, loadedPypsaNetworks, selectedCachedNetworkIndex]);
+  }, [boundModelGeographyError, cachedNetworkLevels, loadCachedNetworkLevel, loadedPypsaNetworks, selectedCachedNetworkIndex]);
 
   const stepAtlasResolutionFromAgent = useCallback(async (direction) => {
+    const restriction = boundModelGeographyError('change-resolution');
+    if (restriction) throw restriction;
     if (!cachedNetworkLevels.length) throw new Error('Load a country network first.');
     const delta = Number(direction) < 0 ? -1 : 1;
     const targetIndex = Math.max(
@@ -4340,9 +5052,11 @@ function AppInner() {
     const entries = await loadCachedNetworkLevel(targetIndex);
     if (!entries) throw new Error(`Could not switch to ${cachedNetworkLevels[targetIndex].label}.`);
     return { changed: true, level: { ...cachedNetworkLevels[targetIndex], entries } };
-  }, [cachedNetworkLevels, loadCachedNetworkLevel, loadedPypsaNetworks, selectedCachedNetworkIndex]);
+  }, [boundModelGeographyError, cachedNetworkLevels, loadCachedNetworkLevel, loadedPypsaNetworks, selectedCachedNetworkIndex]);
 
   const loadAtlasCountriesFromAgent = useCallback(async (countryCodes, options = {}) => {
+    const restriction = boundModelGeographyError('add-country-network');
+    if (restriction) throw restriction;
     const codes = [...new Set((countryCodes || []).map((code) => String(code || '').trim().toUpperCase()).filter(Boolean))];
     if (!codes.length) throw new Error('No country was provided.');
     const mode = options.mode === 'add' ? 'add' : 'replace';
@@ -4389,6 +5103,7 @@ function AppInner() {
     }));
     return { entries, resolutionKey };
   }, [
+    boundModelGeographyError,
     countryCodeToName,
     currentAtlasResolutionKey,
     mixedGranularityPlan,
@@ -4401,6 +5116,7 @@ function AppInner() {
   ]);
 
   const selectAllCountryNetworks = useCallback(async () => {
+    if (boundModelGeographyError('select-all-country-networks')) return;
     if (pypsaLoading || pypsaBatchRef.current || !availablePypsaCountryOptions.length
         || allPypsaCountriesSelected) return;
     const countryCodes = availablePypsaCountryOptions.map((option) => option.countryCode);
@@ -4424,6 +5140,7 @@ function AppInner() {
   }, [
     allPypsaCountriesSelected,
     availablePypsaCountryOptions,
+    boundModelGeographyError,
     currentAtlasResolutionKey,
     loadAtlasCountriesFromAgent,
     mixedGranularityPlan,
@@ -4484,6 +5201,15 @@ function AppInner() {
       const selected = await setLogisticsDomainsFromAgent(requested, mode);
       return [...selected, ...(accessRequested ? ['Access'] : [])];
     }
+    if (nohmWorkspaceContext?.mode === 'model') {
+      const modelSelection = resolveModelSceneDomains(atlasDomainVisibility, requested, mode);
+      await loadBoundModelScene(modelSelection.layers);
+      setAtlasDomainVisibility(ATLAS_MAP_DOMAINS.reduce((next, domain) => ({
+        ...next,
+        [domain]: Boolean(modelSelection.visibility[domain]),
+      }), {}));
+      return [...requested, ...(accessRequested ? ['Access'] : [])];
+    }
     const hasNetworkOverride = Array.isArray(networkOverride) && networkOverride.length > 0;
     const networks = hasNetworkOverride
       ? networkOverride
@@ -4517,9 +5243,12 @@ function AppInner() {
     });
     return [...requested, ...(accessRequested ? ['Access'] : [])];
   }, [
+    atlasDomainVisibility,
     atlasNetworkCarrier,
     loadedPypsaNetworks,
+    loadBoundModelScene,
     loadPyPSAMapBatch,
+    nohmWorkspaceContext?.mode,
     pypsaGranularity,
     pypsaLoadedDomainsByNetwork,
     selectedPyPSAFile,
@@ -5173,6 +5902,10 @@ function AppInner() {
         return true;
       }
       case 'run_mode': {
+        if (distillationPreviewStatus.preview) {
+          pushReply('This geographical subset is a non-executable preview. Return to the full model before changing run mode.');
+          return true;
+        }
         if (isInfrastructureAction) {
           pushReply(`Build and solve modes apply to electricity. The ${infrastructureLabel} Atlas currently visualizes its local source database.`);
           return true;
@@ -5196,6 +5929,10 @@ function AppInner() {
         pushReply(`${action.visible ? 'Opened' : 'Collapsed'} domain controls.`);
         return true;
       case 'build_network':
+        if (distillationPreviewStatus.preview) {
+          pushReply('This geographical subset has not been sutured or materialised, so it cannot be built, run, or published. Return to the full model first.');
+          return true;
+        }
         if (isInfrastructureAction) {
           pushReply(`The ${infrastructureLabel} Atlas is loaded from a local source database and cannot run the electricity Build Network workflow.`);
           return true;
@@ -5240,7 +5977,106 @@ function AppInner() {
     updateLandOverlay,
     waterFacilitiesData,
     liquidsCountryFilter,
+    distillationPreviewStatus.preview,
   ]);
+
+  useEffect(() => {
+    const handleNohmAtlasAction = async (event) => {
+      const requestId = String(event?.detail?.requestId || '').trim();
+      const actionId = String(event?.detail?.actionId || '').trim();
+      if (!requestId || !actionId) return;
+
+      const expectedRevision = Number(event?.detail?.expectedRevision);
+      const hasExpectedRevision = Number.isInteger(expectedRevision) && expectedRevision >= 1;
+      if (hasExpectedRevision && expectedRevision !== atlasViewRevisionRef.current) {
+        const viewRevision = atlasViewRevisionRef.current;
+        acknowledgeNohmAtlasAction({
+          requestId,
+          actionId,
+          status: 'rejected',
+          summary: 'Atlas changed while that plan was running, so the remaining view change was cancelled.',
+          observed: {
+            ...atlasViewStateRef.current,
+            stalePlan: true,
+            expectedRevision,
+            viewRevision,
+          },
+          viewRevision,
+        });
+        return;
+      }
+
+      let summary = '';
+      let observed = null;
+      try {
+        const viewport = NOHM_ATLAS_VIEWPORT_ACTIONS[actionId];
+        const display = NOHM_ATLAS_DISPLAY_ACTIONS[actionId];
+        const direct = NOHM_ATLAS_DIRECT_ACTIONS[actionId];
+
+        if (viewport) {
+          const command = { id: Date.now() + Math.random(), ...viewport };
+          summary = actionId === 'map.zoom-in'
+            ? 'Zoomed in one level.'
+            : actionId === 'map.zoom-out'
+              ? 'Zoomed out one level.'
+              : actionId === 'map.reset'
+                ? 'Reset the map to the European overview.'
+                : 'Fit the map to the visible network.';
+          pendingNohmViewportActionRef.current.set(command.id, {
+            requestId,
+            actionId,
+            summary,
+            operation: command.operation,
+            steps: command.steps,
+            expectedRevision: hasExpectedRevision ? expectedRevision : null,
+          });
+          setEmilViewportCommand(command);
+          return;
+        } else if (display) {
+          if (display.setting === 'nodeMarkers') setShowMapNodes(display.visible);
+          else setShowGeographicBoundaries(display.visible);
+          observed = { [display.setting]: display.visible };
+          summary = display.summary;
+        } else if (direct) {
+          const replies = [];
+          const handled = await executeAtlasDirectAction({ ...direct }, (reply) => {
+            if (reply) replies.push(String(reply));
+          });
+          if (!handled) throw new Error('Atlas did not accept this view action.');
+          summary = replies.filter(Boolean).join(' ') || 'Atlas view updated.';
+          observed = {
+            requestedAction: actionId,
+            layer: actionId.startsWith('layer.') ? direct.domains?.[0] || null : null,
+          };
+        } else {
+          throw new Error('This Atlas action is not supported by the current workspace.');
+        }
+
+        await afterAtlasRender();
+        const viewRevision = atlasViewRevisionRef.current;
+        acknowledgeNohmAtlasAction({
+          requestId,
+          actionId,
+          status: 'applied',
+          summary,
+          observed: { ...observed, ...atlasViewStateRef.current, viewRevision },
+          viewRevision,
+        });
+      } catch (error) {
+        const viewRevision = atlasViewRevisionRef.current;
+        acknowledgeNohmAtlasAction({
+          requestId,
+          actionId,
+          status: 'rejected',
+          summary: `Could not update Atlas: ${error?.message || 'Unknown error'}`,
+          observed: { ...observed, ...atlasViewStateRef.current, viewRevision },
+          viewRevision,
+        });
+      }
+    };
+    window.addEventListener(NOHM_ATLAS_ACTION_EVENT, handleNohmAtlasAction);
+    return () => window.removeEventListener(NOHM_ATLAS_ACTION_EVENT, handleNohmAtlasAction);
+  }, [executeAtlasDirectAction]);
 
   const handleSolveNetworkCommand = useCallback(async (
     query,
@@ -5248,6 +6084,9 @@ function AppInner() {
     granularityOverride = null,
     options = {}
   ) => {
+    if (distillationPreviewStatus.preview) {
+      throw new Error('This geographical subset is a non-executable preview. Return to the full model before building or solving.');
+    }
     const skipMapFocus = Boolean(options?.skipMapFocus);
     const normalizedQuery = (query || '').trim();
     if (!normalizedQuery) {
@@ -5398,9 +6237,13 @@ function AppInner() {
       fromExisting,
       existingMatch,
     };
-  }, [extractPypsaCountryCode, loadPyPSAFiles, loadPyPSANetworkFromFile, pypsaGranularity, planningHorizonYear, runMode]);
+  }, [distillationPreviewStatus.preview, extractPypsaCountryCode, loadPyPSAFiles, loadPyPSANetworkFromFile, pypsaGranularity, planningHorizonYear, runMode]);
 
   const submitSolveNetworkPrompt = useCallback(async () => {
+    if (distillationPreviewStatus.preview) {
+      setSolveNetworkStageMessage('This geographical subset is a non-executable preview. Return to the full model before building or solving.');
+      return;
+    }
     if (!solveNetworkSearch.trim() || solveNetworkStaging) return;
     const submittedPrompt = solveNetworkSearch.trim();
 
@@ -5528,6 +6371,7 @@ function AppInner() {
   }, [
     solveNetworkSearch, solveNetworkStaging, handleSolveNetworkCommand,
     selectedPyPSAFile, pypsaGranularity, extractPypsaCountryCode, planningHorizonYear,
+    distillationPreviewStatus.preview,
   ]);
 
   const updatePypsaSetting = useCallback((key, value) => {
@@ -5580,6 +6424,10 @@ function AppInner() {
   }, [useClusterDynamicArgs]);
 
   const runPypsaBuildFromSettings = useCallback(async () => {
+    if (distillationPreviewStatus.preview) {
+      setSolveNetworkStageMessage('This geographical subset is a non-executable preview. Return to the full model before building or solving.');
+      return;
+    }
     if (solveNetworkStaging || pypsaLoading) return;
     const prompt = buildPypsaPromptFromSettings(pypsaSettings);
     setSolveNetworkSearch(String(pypsaSettings.region || '').trim());
@@ -5643,6 +6491,7 @@ function AppInner() {
     runMode,
     extractPypsaCountryCode,
     loadPyPSANetworkFromFile,
+    distillationPreviewStatus.preview,
   ]);
 
   const openRegionPanelAt = useCallback((lat, lon) => {
@@ -5898,6 +6747,10 @@ function AppInner() {
   }, []);
 
   const solveRegion = useCallback(async (override = null) => {
+    if (distillationPreviewStatus.preview) {
+      setRegionError('This geographical subset is a non-executable preview. Return to the full model before solving.');
+      return;
+    }
     // Allow callers (e.g. the chatbot's combined select+solve intent) to pass
     // explicit lat/lon/radius so we don't depend on state having flushed yet.
     const effectiveLat = override?.lat ?? regionCenter?.lat;
@@ -5960,6 +6813,7 @@ function AppInner() {
     pypsaGranularity,
     extractRegionSourceDirname,
     loadRegionSavedRuns,
+    distillationPreviewStatus.preview,
   ]);
 
   useEffect(() => {
@@ -10157,6 +11011,22 @@ function AppInner() {
     hiddenCarriers, facilitiesData, selectedCountry, selectedCapacityType,
     connectionClassGroupFilter, connectionClassFilter, connectionCategoryFilter,
     connectionObjectFilter, connectionPropertyFilter, connections]);
+  const resultDecoratedMapFacilities = useMemo(() => {
+    const scene = modelResultStatus.scene;
+    if (!scene || nohmWorkspaceContext?.mode !== 'model') return visibleMapFacilities;
+    return mapSharedFacilityGroups(
+      visibleMapFacilities,
+      facility => decorateModelResultRecord(facility, scene),
+    );
+  }, [modelResultStatus.scene, nohmWorkspaceContext?.mode, visibleMapFacilities]);
+  const distillationDecoratedMapFacilities = useMemo(() => {
+    const preview = distillationPreviewStatus.preview;
+    if (!preview || nohmWorkspaceContext?.mode !== 'model') return resultDecoratedMapFacilities;
+    return mapSharedFacilityGroups(
+      resultDecoratedMapFacilities,
+      facility => decorateDistillationRecord(facility, preview, showDistillationContext),
+    );
+  }, [distillationPreviewStatus.preview, nohmWorkspaceContext?.mode, resultDecoratedMapFacilities, showDistillationContext]);
   const getFilteredFacilities = useCallback(() => visibleMapFacilities, [visibleMapFacilities]);
 
   // Human-readable connection title
@@ -10236,6 +11106,18 @@ function AppInner() {
     () => enrichConnectionsForMetrics(visibleMapConnections),
     [enrichConnectionsForMetrics, visibleMapConnections],
   );
+  const resultDecoratedMapConnections = useMemo(() => {
+    const scene = modelResultStatus.scene;
+    if (!scene || nohmWorkspaceContext?.mode !== 'model') return renderedMapConnections;
+    return renderedMapConnections.map(connection => decorateModelResultRecord(connection, scene));
+  }, [modelResultStatus.scene, nohmWorkspaceContext?.mode, renderedMapConnections]);
+  const distillationDecoratedMapConnections = useMemo(() => {
+    const preview = distillationPreviewStatus.preview;
+    if (!preview || nohmWorkspaceContext?.mode !== 'model') return resultDecoratedMapConnections;
+    return resultDecoratedMapConnections.map(connection => (
+      decorateDistillationRecord(connection, preview, showDistillationContext)
+    ));
+  }, [distillationPreviewStatus.preview, nohmWorkspaceContext?.mode, resultDecoratedMapConnections, showDistillationContext]);
   // Opaque and stable across unrelated shell/assistant renders. If a new data
   // or display snapshot replaces the map inputs after an exception, the map
   // boundary gets one automatic recovery attempt even when record counts match.
@@ -10243,8 +11125,8 @@ function AppInner() {
     atlasOverlayMode,
     atlasNetworkCarrier,
     currentAtlasResolutionKey,
-    visibleMapFacilities,
-    renderedMapConnections,
+    distillationDecoratedMapFacilities,
+    distillationDecoratedMapConnections,
     showMapNodes,
     showGeographicBoundaries,
   ]);
@@ -10730,32 +11612,47 @@ function AppInner() {
   // the compact map status aligned with that selection instead of continuing
   // to advertise Geography and Network Resolution in every workspace.
   const workspaceStatusCards = useMemo(() => {
-    const geographyValue = atlasOverlayMode
-      ? atlasOverlayCountrySummary
-      : atlasNetworkCarrier === 'gas'
-        ? (gasCountryFilter || 'All Europe')
-        : atlasNetworkCarrier === 'water'
-          ? (waterCountryFilter || 'All Europe')
-          : atlasNetworkCarrier === 'liquids'
-            ? (liquidsCountryFilter || 'All Europe')
-            : atlasNetworkCarrier === 'logistics'
-              ? (logisticsCountryFilter || 'All Europe')
-              : loadedCountrySummary;
-    const resolutionValue = atlasOverlayMode
-      ? 'Multi-network overlay'
-      : atlasNetworkCarrier === 'gas'
-        ? 'Transmission topology'
-        : atlasNetworkCarrier === 'water'
-          ? 'Mapped + reported topology'
-          : atlasNetworkCarrier === 'liquids'
-            ? 'Mapped source topology'
-            : atlasNetworkCarrier === 'logistics'
-              ? 'Ports + air-freight assets'
-              : selectedCachedNetworkLevel?.isFull || selectedCachedNetworkLevel?.isGeographic
-                ? selectedCachedNetworkLevel.label
-                : selectedCachedNetworkLevel
-                  ? `${selectedCachedNetworkLevel.accessNodes} access nodes`
-                  : 'No cache';
+    const modelSceneReady = nohmWorkspaceContext?.mode === 'model' && modelSceneStatus.state === 'ready';
+    const geographyValue = modelSceneReady
+      ? `${boundModelGeography?.nativeGeography || 'Model-native geography'} · ${modelSceneStatus.meta.countries.length} countries · ${modelSceneStatus.meta.selectedYear || 'model year'}`
+      : nohmWorkspaceContext?.mode === 'model' && modelSceneStatus.state === 'loading'
+        ? 'Loading bound model…'
+        : nohmWorkspaceContext?.mode === 'model' && modelSceneStatus.state === 'error'
+          ? 'Bound model unavailable'
+          : atlasOverlayMode
+            ? atlasOverlayCountrySummary
+            : atlasNetworkCarrier === 'gas'
+              ? (gasCountryFilter || 'All Europe')
+              : atlasNetworkCarrier === 'water'
+                ? (waterCountryFilter || 'All Europe')
+                : atlasNetworkCarrier === 'liquids'
+                  ? (liquidsCountryFilter || 'All Europe')
+                  : atlasNetworkCarrier === 'logistics'
+                    ? (logisticsCountryFilter || 'All Europe')
+                    : loadedCountrySummary;
+    const resolutionValue = modelSceneReady
+      ? modelGeographyResolution === 'country'
+        ? `${modelMixedResolutionStatus.preview?.meta?.preview?.counts?.projectedNodes || modelSceneStatus.meta.countries.length} country nodes · visual aggregation`
+        : modelGeographyResolution === 'mixed'
+          ? `${modelMixedResolutionStatus.preview?.meta?.preview?.counts?.projectedNodes || modelSceneStatus.meta.nodeCount} mixed-resolution nodes`
+          : `${modelSceneStatus.meta.nodeCount} bidding-zone nodes · ${modelSceneStatus.meta.linkCount} links`
+      : nohmWorkspaceContext?.mode === 'model' && modelSceneStatus.state === 'error'
+        ? modelSceneStatus.error
+        : atlasOverlayMode
+          ? 'Multi-network overlay'
+          : atlasNetworkCarrier === 'gas'
+            ? 'Transmission topology'
+            : atlasNetworkCarrier === 'water'
+              ? 'Mapped + reported topology'
+              : atlasNetworkCarrier === 'liquids'
+                ? 'Mapped source topology'
+                : atlasNetworkCarrier === 'logistics'
+                  ? 'Ports + air-freight assets'
+                  : selectedCachedNetworkLevel?.isFull || selectedCachedNetworkLevel?.isGeographic
+                    ? selectedCachedNetworkLevel.label
+                    : selectedCachedNetworkLevel
+                      ? `${selectedCachedNetworkLevel.accessNodes} access nodes`
+                      : 'No cache';
 
     if (!ATLAS_IS_EMBEDDED || activeWorkspaceArea === 'geography') {
       return [
@@ -10765,6 +11662,12 @@ function AppInner() {
     }
 
     if (activeWorkspaceArea === 'operations') {
+      if (nohmWorkspaceContext?.mode === 'model') {
+        return [
+          { label: 'Run status', value: nohmRunState ? (nohmRunState.latest?.label || 'No runs') : 'Checking run ledger…' },
+          { label: 'Model version', value: nohmRunState?.modelVersion || modelSceneStatus.meta?.version || nohmWorkspaceContext.version || 'Unresolved' },
+        ];
+      }
       return [
         {
           label: 'Run mode',
@@ -10811,9 +11714,12 @@ function AppInner() {
     ];
   }, [
     activeWorkspaceArea, atlasDomainVisibility, atlasNetworkCarrier, atlasOverlayCountrySummary,
-    atlasOverlayMode, gasCountryFilter, hiddenCarriers, liquidsCountryFilter, loadedCountrySummary,
-    logisticsCountryFilter, pypsaHasGenerationMixData, pypsaSettings.solver_method,
+    atlasOverlayMode, boundModelGeography, gasCountryFilter, hiddenCarriers, liquidsCountryFilter, loadedCountrySummary,
+    logisticsCountryFilter, modelSceneStatus, nohmWorkspaceContext?.mode,
+    modelGeographyResolution, modelMixedResolutionStatus.preview,
+    pypsaHasGenerationMixData, pypsaSettings.solver_method,
     regionalClusterOverlay, runMode, selectedCachedNetworkLevel, showGenerationMix, waterCountryFilter,
+    nohmRunState, nohmWorkspaceContext?.version,
   ]);
 
   return (
@@ -14251,13 +15157,35 @@ function AppInner() {
                               <p className="text-sm font-semibold tracking-[0.16em] text-tj-gold">ATLAS</p>
                               <span className="hidden sm:inline text-[10px] uppercase tracking-wider text-tj-slate">Network intelligence</span>
                             </div>
-                            <p className="text-[11px] text-white/75 truncate"><span className="sm:hidden">Nohm Flow</span><span className="hidden sm:inline">Nohm Flow · Atlas workspace</span></p>
+                            <p className="text-[11px] text-white/75 truncate">
+                              {nohmWorkspaceContext
+                                ? `${nohmWorkspaceContext.projectName}${nohmWorkspaceContext.version ? ` · ${nohmWorkspaceContext.version}` : ''}`
+                                : <><span className="sm:hidden">Nohm Flow</span><span className="hidden sm:inline">Nohm Flow · Reference Atlas</span></>}
+                            </p>
                           </div>
                         </div>
 
                         <div className="hidden md:flex items-center gap-2 min-w-0">
+                          {nohmWorkspaceContext && (
+                            <div className="atlas-status-card rounded-lg border border-tj-gold/25 bg-tj-gold/[0.06] px-2.5 py-1.5">
+                              <p className="text-[9px] uppercase tracking-wider text-tj-gold">
+                                {nohmWorkspaceContext.mode === 'model' ? 'Model context' : 'Reference context'}
+                              </p>
+                              <p className="text-[11px] text-white max-w-[190px] truncate">
+                                {[nohmWorkspaceContext.modelId, nohmWorkspaceContext.scenario].filter(Boolean).join(' · ') || nohmWorkspaceContext.projectId || 'Reference Atlas'}
+                              </p>
+                            </div>
+                          )}
+                          {nohmWorkspaceContext && (
+                            <div className="atlas-status-card rounded-lg border border-white/10 bg-white/[0.035] px-2.5 py-1.5">
+                              <p className="text-[9px] uppercase tracking-wider text-tj-slate">Native geography</p>
+                              <p className="text-[11px] text-white max-w-[190px] truncate">
+                                {nohmWorkspaceContext.nativeGeography?.label || 'Model-native geography'}
+                              </p>
+                            </div>
+                          )}
                           {workspaceStatusCards.map((card) => (
-                            <div key={card.label} className="rounded-lg border border-white/10 bg-white/[0.035] px-2.5 py-1.5">
+                            <div key={card.label} className="atlas-status-card rounded-lg border border-white/10 bg-white/[0.035] px-2.5 py-1.5">
                               <p className="text-[9px] uppercase tracking-wider text-tj-slate">{card.label}</p>
                               <p className="text-[11px] text-white max-w-[190px] truncate">{card.value}</p>
                             </div>
@@ -14265,22 +15193,24 @@ function AppInner() {
                         </div>
 
                         <div className="shrink-0 flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setAtlasTheme((previous) => previous === 'dark' ? 'light' : 'dark')}
-                          className="atlas-theme-toggle h-9 w-9 rounded-lg flex items-center justify-center"
-                          aria-label={`Switch to ${atlasTheme === 'dark' ? 'light' : 'dark'} theme`}
-                          title={`Switch to ${atlasTheme === 'dark' ? 'light' : 'dark'} theme`}
-                        >
-                          {atlasTheme === 'dark' ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-                        </button>
+                        {!ATLAS_IS_EMBEDDED && (
+                          <button
+                            type="button"
+                            onClick={() => setAtlasTheme((previous) => nextAtlasTheme(previous))}
+                            className="atlas-theme-toggle h-9 w-9 rounded-lg flex items-center justify-center"
+                            aria-label={`Change Atlas theme. Current theme: ${atlasTheme}`}
+                            title={`Theme: ${atlasTheme}. Switch to ${nextAtlasTheme(atlasTheme)}`}
+                          >
+                            {atlasTheme === 'dark' ? <Sun className="h-3.5 w-3.5" /> : atlasTheme === 'light' ? <Sparkles className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+                          </button>
+                        )}
                         <label>
                           <span className="sr-only">Network carrier</span>
                           {atlasOverlayMode && <span className="block text-[9px] text-tj-slate">Workspace on exit</span>}
                           <select
                             value={atlasNetworkCarrier}
                             onChange={(event) => setAtlasNetworkCarrier(event.target.value)}
-                            className="max-w-[150px] rounded-lg border border-tj-gold/30 bg-[#081523] px-2.5 py-2 text-[11px] font-semibold text-white focus:outline-none focus:border-tj-gold/60"
+                            className="atlas-select max-w-[150px] rounded-lg border border-tj-gold/30 bg-[#081523] px-2.5 py-2 text-[11px] font-semibold text-white focus:outline-none focus:border-tj-gold/60"
                             aria-label="Network carrier"
                             title={atlasOverlayMode ? 'Workspace to open when overlay is turned off. Choose visible carriers in the overlay legend.' : 'Choose network workspace'}
                           >
@@ -14322,7 +15252,7 @@ function AppInner() {
                     </header>
 
                     {atlasOverlayMode && atlasOverlayPanelOpen && !atlasAssetPopupOpen && (
-                      <div className="absolute top-[76px] right-[140px] z-[526] w-[252px] rounded-xl border border-white/10 bg-[#071421]/94 p-2 shadow-2xl backdrop-blur-xl">
+                      <div className="atlas-floating-panel absolute top-[76px] right-[140px] z-[526] w-[252px] rounded-xl border border-white/10 bg-[#071421]/94 p-2 shadow-2xl backdrop-blur-xl">
                         <div className="flex items-center justify-between px-1 pb-1.5">
                           <div>
                             <p className="text-[9px] uppercase tracking-[0.14em] text-tj-gold">Network overlay</p>
@@ -14479,7 +15409,7 @@ function AppInner() {
                       className={`absolute top-[76px] left-3 z-[510] w-[320px] max-w-[calc(100vw-1.5rem)] transition-all duration-200 ${mapControlsCollapsed ? '-translate-x-[110%] opacity-0 pointer-events-none' : 'translate-x-0 opacity-100'}`}
                     >
                       <div className="atlas-domain-panel rounded-xl overflow-hidden max-h-[calc(100vh-7.25rem)] flex flex-col">
-                        <div className="shrink-0 px-3 py-2.5 border-b border-white/10 flex items-center justify-between">
+                        <div className="atlas-domain-panel__header shrink-0 px-3 py-2.5 border-b border-white/10 flex items-center justify-between">
                           <div>
                             <p className="text-[10px] uppercase tracking-[0.16em] text-tj-slate">Workspace</p>
                             <p className="text-sm font-semibold text-white">
@@ -14489,7 +15419,9 @@ function AppInner() {
                             </p>
                           </div>
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] px-2 py-1 rounded-full border border-emerald-500/25 bg-emerald-500/10 text-emerald-300">Local</span>
+                            <span className="text-[10px] px-2 py-1 rounded-full border border-emerald-500/25 bg-emerald-500/10 text-emerald-300">
+                              {boundModelGeography ? 'Model' : 'Local'}
+                            </span>
                             <button
                               type="button"
                               onClick={() => setMapControlsCollapsed(true)}
@@ -14503,7 +15435,10 @@ function AppInner() {
                         </div>
 
                         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden scrollbar-hidden">
-                        {(!ATLAS_IS_EMBEDDED || ['geography', 'operations'].includes(activeWorkspaceArea)) && (
+                        {(!ATLAS_IS_EMBEDDED || nohmWorkspaceContext?.mode !== 'model')
+                          && (!ATLAS_IS_EMBEDDED
+                            || activeWorkspaceArea === 'geography'
+                            || activeWorkspaceArea === 'operations') && (
                         <div className="px-3 py-3 border-b border-white/10">
                           {loadedPypsaNetworks.length > 1 && !solveNetworkStaging && !pypsaLoading && !pypsaResolutionSwitching ? (
                             <div className="flex items-center gap-2.5 rounded-lg border border-emerald-400/20 bg-emerald-400/[0.07] px-3 py-2.5">
@@ -14519,11 +15454,13 @@ function AppInner() {
                             <button
                               type="button"
                               onClick={runPypsaBuildFromSettings}
-                              disabled={solveNetworkStaging || pypsaLoading || pypsaResolutionSwitching}
-                              title="Build the selected country network"
-                              className="w-full text-xs font-semibold px-4 py-2.5 rounded-lg border border-tj-gold/40 bg-tj-gold text-tj-navy-dark transition hover:brightness-105 disabled:opacity-40 disabled:cursor-not-allowed"
+                              disabled={solveNetworkStaging || pypsaLoading || pypsaResolutionSwitching || Boolean(distillationPreviewStatus.preview)}
+                              title={distillationPreviewStatus.preview ? 'A distillation preview is non-executable. Return to the full model before running.' : 'Build the selected country network'}
+                              className="atlas-primary-action w-full text-xs font-semibold px-4 py-2.5 rounded-lg border border-tj-gold/40 bg-tj-gold text-tj-navy-dark transition hover:brightness-105 disabled:opacity-40 disabled:cursor-not-allowed"
                             >
-                              {solveNetworkStaging || pypsaLoading || pypsaResolutionSwitching
+                              {distillationPreviewStatus.preview
+                                ? 'Preview is not executable'
+                                : solveNetworkStaging || pypsaLoading || pypsaResolutionSwitching
                                 ? 'Working…'
                                 : ATLAS_IS_EMBEDDED && activeWorkspaceArea === 'operations'
                                   ? runMode === 'solve_existing' ? 'Solve Existing Network' : runMode === 'build_solve' ? 'Build + Solve Network' : 'Build Network'
@@ -14533,7 +15470,7 @@ function AppInner() {
                         </div>
                         )}
 
-                        {!ATLAS_IS_EMBEDDED && (
+                        {(!ATLAS_IS_EMBEDDED || nohmWorkspaceContext?.mode === 'model') && (
                           <AtlasWorkspaceRail
                             activeArea={activeWorkspaceArea}
                             onSelect={openAtlasWorkspaceArea}
@@ -14544,12 +15481,79 @@ function AppInner() {
                         <AtlasDomainSection
                           icon={MapPin}
                           title="Geography Domain"
-                          summary={`${loadedCountrySummary} · ${selectedCachedNetworkLevel?.isFull || selectedCachedNetworkLevel?.isGeographic ? selectedCachedNetworkLevel.label : selectedCachedNetworkLevel ? `${selectedCachedNetworkLevel.label} nodes` : 'No cache'}`}
+                          summary={boundModelGeography
+                            ? `${boundModelGeography.projectName} · ${boundModelGeography.nativeGeography}`
+                            : `${loadedCountrySummary} · ${selectedCachedNetworkLevel?.isFull || selectedCachedNetworkLevel?.isGeographic ? selectedCachedNetworkLevel.label : selectedCachedNetworkLevel ? `${selectedCachedNetworkLevel.label} nodes` : 'No cache'}`}
                           open={pypsaSectionOpen.geography}
                           onToggle={() => togglePypsaDomainSection('geography')}
-                          compact={compactAtlasLayout || ATLAS_IS_EMBEDDED}
+                          compact={compactAtlasLayout && !ATLAS_IS_EMBEDDED}
                         >
                           <div className="space-y-2.5">
+                            {boundModelGeography ? (
+                              <>
+                              <div aria-label="Loaded model geography" className="rounded-xl border border-cyan-300/20 bg-cyan-300/[0.06] p-3">
+                                <span className="block text-[10px] uppercase tracking-wider text-cyan-100/70">Loaded model</span>
+                                <strong className="mt-1 block text-sm text-white">{boundModelGeography.projectName}</strong>
+                                <span className="mt-0.5 block text-[10px] text-tj-slate">
+                                  {[boundModelGeography.modelVersion, boundModelGeography.nativeGeography].filter(Boolean).join(' · ')}
+                                </span>
+                                <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]">
+                                  <span className="rounded-lg border border-white/10 bg-black/15 px-2 py-1.5 text-tj-slate">
+                                    <b className="block text-white">{modelSceneStatus.meta?.nodeCount ?? '—'}</b> existing nodes
+                                  </span>
+                                  <span className="rounded-lg border border-white/10 bg-black/15 px-2 py-1.5 text-tj-slate">
+                                    <b className="block text-white">{boundModelGeography.sourceCountries.length}</b> source countries
+                                  </span>
+                                </div>
+                                <p className="mt-2 text-[10px] leading-4 text-tj-slate">
+                                  This project opens at its native bidding-zone topology. Countries are scope attributes inside the project, not separately loadable networks.
+                                </p>
+                                <p className="mt-1 text-[10px] leading-4 text-amber-100/80">
+                                  Expanding a country to a finer topology requires the future governed split workflow; Atlas will not substitute an unrelated full-granularity cache.
+                                </p>
+                              </div>
+                              <label className="block rounded-xl border border-white/10 bg-black/20 p-3">
+                                <span className="mb-1 block text-[9px] uppercase tracking-wider text-tj-slate">Network geography</span>
+                                <select
+                                  value={modelGeographyResolution}
+                                  onChange={(event) => applyBoundModelResolution(event.target.value)}
+                                  disabled={modelMixedResolutionStatus.state === 'loading' || distillationPreviewStatus.state === 'loading'}
+                                  className="w-full rounded-lg border border-white/10 bg-[#081523] px-2 py-2 text-[10px] text-white disabled:opacity-50"
+                                  aria-label="Model network geography"
+                                >
+                                  <option value="native">{boundModelGeography.nativeGeography} (native)</option>
+                                  <option value="country">Country aggregation</option>
+                                  {modelGeographyResolution === 'mixed' && <option value="mixed" disabled>Mixed TSO view</option>}
+                                </select>
+                                <span className="mt-1.5 block text-[9px] leading-3.5 text-tj-slate">
+                                  Atlas can aggregate the existing bidding zones to countries. It cannot split them to a finer topology yet.
+                                </span>
+                                {modelMixedResolutionStatus.state === 'error' && (
+                                  <span role="alert" className="mt-1.5 block text-[9px] leading-3.5 text-red-200">{modelMixedResolutionStatus.error}</span>
+                                )}
+                              </label>
+                              <ModelCountryScopeControls
+                                availableCountries={boundModelGeography.sourceCountries}
+                                selectedCountries={distillationCountries}
+                                busy={distillationPreviewStatus.state === 'loading'}
+                                disabled={modelGeographyResolution !== 'native'}
+                                countryName={countryCodeToName}
+                                onSelect={selectBoundModelCountries}
+                                onSelectAll={() => selectBoundModelCountries([])}
+                              />
+                              {modelSceneStatus.state === 'ready' && boundModelGeography.sourceCountries.length > 1 && (
+                                <ModelMixedResolutionControls
+                                  countries={boundModelGeography.sourceCountries}
+                                  nativeLabel={boundModelGeography.nativeGeography}
+                                  status={modelMixedResolutionStatus}
+                                  onApply={applyModelMixedResolutionPreview}
+                                  onClear={clearModelMixedResolutionPreview}
+                                  countryName={countryCodeToName}
+                                />
+                              )}
+                              </>
+                            ) : (
+                            <>
                             <div className="block">
                               <span className="block mb-1 text-[10px] uppercase tracking-wider text-tj-slate">{atlasOverlayMode ? 'Countries · all overlay carriers' : 'Countries'}</span>
                               <div className="flex items-stretch gap-2">
@@ -14720,20 +15724,138 @@ function AppInner() {
                                 onApply={applyMixedGranularityView}
                               />
                             </div>
+                            </>
+                            )}
                           </div>
                         </AtlasDomainSection>
                         )}
 
-                        {atlasWorkspaceAreaIsVisible('operations', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
+                        {nohmWorkspaceContext?.mode === 'model'
+                          && atlasWorkspaceAreaIsVisible('geography', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
+                          <ModelWorkspaceSection
+                            title="Distil geography"
+                            summary="Preview a reconciled schema subset without mutation"
+                            Icon={Layers}
+                          >
+                            <ModelDistillationControls
+                              availableCountries={modelSceneStatus.meta?.countries || []}
+                              selectedCountries={distillationCountries}
+                              onSelectionChange={updateDistillationCountries}
+                              previewStatus={distillationPreviewStatus}
+                              showContext={showDistillationContext}
+                              onShowContextChange={setShowDistillationContext}
+                              onPreview={runDistillationPreview}
+                              onClear={clearDistillationPreview}
+                              countryName={countryCodeToName}
+                            />
+                          </ModelWorkspaceSection>
+                        )}
+
+                        {nohmWorkspaceContext?.mode === 'model'
+                          && atlasWorkspaceAreaIsVisible('geography', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
+                          <ModelWorkspaceSection
+                            title="Project workspaces"
+                            summary="Open linked evidence beside the live map"
+                            Icon={PanelLeftOpen}
+                          >
+                            <ModelPortalControls
+                              embedded={ATLAS_IS_EMBEDDED}
+                              onOpen={requestNohmAtlasPortal}
+                              targets={['explore-model', 'demand', 'climate', 'commodity']}
+                            />
+                          </ModelWorkspaceSection>
+                        )}
+
+                        {nohmWorkspaceContext?.mode === 'model'
+                          && ATLAS_IS_EMBEDDED
+                          && atlasWorkspaceAreaIsVisible('filters', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
+                          <>
+                            <ModelWorkspaceSection
+                              title="Results"
+                              summary="Map solved quantities by category and node or region"
+                              Icon={BarChart3}
+                            >
+                              <ModelResultsControls
+                                catalogStatus={modelResultCatalogStatus}
+                                selection={modelResultSelection}
+                                resultStatus={modelResultStatus}
+                                scopeOptions={modelResultScopeOptions}
+                                onSelectionChange={setModelResultSelection}
+                                onShow={showSelectedModelResult}
+                                onClear={clearModelResult}
+                              />
+                            </ModelWorkspaceSection>
+                            <ModelWorkspaceSection
+                              title="Lola Flow"
+                              summary="Render solved transmission flow directly on Atlas"
+                              Icon={GitBranch}
+                            >
+                              <div className="space-y-2.5">
+                                <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] px-3 py-2 text-[10px] leading-4 text-tj-slate">
+                                  Uses the compatible labelled solution run and maps line-flow values onto the loaded topology. No external portal is opened.
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={showLolaFlowOnMap}
+                                  disabled={modelResultCatalogStatus.state !== 'ready' || modelResultStatus.state === 'loading'}
+                                  className="atlas-primary-action w-full rounded-lg border border-tj-gold/40 bg-tj-gold px-3 py-2 text-[10px] font-semibold text-tj-navy-dark disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  {modelResultStatus.state === 'loading' ? 'Mapping flow…' : 'Map solved line flow'}
+                                </button>
+                              </div>
+                            </ModelWorkspaceSection>
+                            <ModelWorkspaceSection
+                              title="Cost-benefit analysis"
+                              summary="Native Atlas assessment workspace · planned"
+                              Icon={Scale}
+                              badge="Later"
+                            >
+                              <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.06] px-3 py-2 text-[10px] leading-4 text-tj-slate">
+                                CBA will be implemented here as an Atlas-native section against governed model and result versions. It is intentionally not linked to a portal yet.
+                              </div>
+                            </ModelWorkspaceSection>
+                          </>
+                        )}
+
+                        {nohmWorkspaceContext?.mode === 'model'
+                          && ATLAS_IS_EMBEDDED
+                          && atlasWorkspaceAreaIsVisible('operations', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
+                          <ModelWorkspaceSection
+                            title="Model operations"
+                            summary="Use Nohm's validated tools beside the live model"
+                            Icon={Cog}
+                          >
+                            <div className="mb-2.5 rounded-lg border border-emerald-300/20 bg-emerald-300/[0.06] px-3 py-2 text-[10px] leading-4 text-tj-slate">
+                              Atlas supplies project and model-version context. Operations, confirmations and audit history remain governed by Nohm.
+                            </div>
+                            <ModelRunStatus
+                              runState={nohmRunState}
+                              onOpen={() => requestNohmAtlasPortal('model-runs')}
+                            />
+                            <ModelPortalControls
+                              embedded={ATLAS_IS_EMBEDDED}
+                              onOpen={requestNohmAtlasPortal}
+                              targets={['model-operations', 'model-runs']}
+                            />
+                          </ModelWorkspaceSection>
+                        )}
+
+                        {(!ATLAS_IS_EMBEDDED || nohmWorkspaceContext?.mode !== 'model')
+                          && atlasWorkspaceAreaIsVisible('operations', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
                         <AtlasDomainSection
                           icon={Cog}
                           title={atlasOverlayMode ? 'Power Operations' : 'Operations Domain'}
                           summary={`${runMode === 'build_only' ? 'Build only' : runMode === 'solve_existing' ? 'Solve existing' : 'Build + solve'} · HiGHS ${pypsaSettings.solver_method}`}
                           open={pypsaSectionOpen.operations}
                           onToggle={() => togglePypsaDomainSection('operations')}
-                          compact={compactAtlasLayout || ATLAS_IS_EMBEDDED}
+                          compact={compactAtlasLayout && !ATLAS_IS_EMBEDDED}
                         >
-                          <div className="space-y-3">
+                          {distillationPreviewStatus.preview && (
+                            <div className="mb-3 rounded-lg border border-amber-300/25 bg-amber-300/[0.08] px-3 py-2.5 text-[10px] leading-4 text-white">
+                              This geographical subset is a read-only schema preview. Return to the full model before configuring or launching a run; suturing, datafiles, validation and publication have not occurred.
+                            </div>
+                          )}
+                          <fieldset disabled={Boolean(distillationPreviewStatus.preview)} className={`space-y-3 ${distillationPreviewStatus.preview ? 'opacity-40' : ''}`}>
                             <div>
                               <span className="block mb-1 text-[10px] uppercase tracking-wider text-tj-slate">Run mode</span>
                               <div className="space-y-1">
@@ -14789,7 +15911,7 @@ function AppInner() {
                                 onClose={closeRegionPanel}
                               />
                             )}
-                          </div>
+                          </fieldset>
                         </AtlasDomainSection>
                         )}
 
@@ -14800,7 +15922,7 @@ function AppInner() {
                           summary={pypsaFacilitiesData.length ? `${hiddenCarriers.size} carrier filters${showGenerationMix && pypsaHasGenerationMixData ? ' · Mix on' : ''}` : 'Carrier filters and map display'}
                           open={pypsaSectionOpen.filters}
                           onToggle={() => togglePypsaDomainSection('filters')}
-                          compact={compactAtlasLayout || ATLAS_IS_EMBEDDED}
+                          compact={compactAtlasLayout && !ATLAS_IS_EMBEDDED}
                         >
                           {pypsaFacilitiesData.length === 0 ? (
                             <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-tj-slate">Load a local network to enable domain filters.</div>
@@ -14895,7 +16017,7 @@ function AppInner() {
                             : 'Eurostat regional typology'}
                           open={pypsaSectionOpen.clusters}
                           onToggle={() => togglePypsaDomainSection('clusters')}
-                          compact={compactAtlasLayout || ATLAS_IS_EMBEDDED}
+                          compact={compactAtlasLayout && !ATLAS_IS_EMBEDDED}
                           retain
                         >
                           <RegionalClusteringControls
@@ -14907,7 +16029,7 @@ function AppInner() {
                         </div>
 
                         {(!ATLAS_IS_EMBEDDED || ['geography', 'operations'].includes(activeWorkspaceArea)) && (
-                        <div className="shrink-0 px-3 py-3 border-t border-white/10 bg-[#071421]/98">
+                        <div className="atlas-domain-panel__footer shrink-0 px-3 py-3 border-t border-white/10 bg-[#071421]/98">
                           <button
                             type="button"
                             onClick={() => setShowPypsaSettingsDialog(true)}
@@ -14957,6 +16079,7 @@ function AppInner() {
                       ));
                       const overlayAnyLoading = Boolean(pypsaDomainLoading || gasDomainLoading || waterDomainLoading || liquidsDomainLoading || logisticsDomainLoading);
                       const isInfrastructure = atlasOverlayMode || isGas || isWater || isLiquids || isLogistics;
+                      const isModelScene = nohmWorkspaceContext?.mode === 'model' && Boolean(nohmWorkspaceContext?.projectId);
                       const carrierFacilities = atlasOverlayMode
                         ? overlayAvailableCarriers.flatMap((carrier) => overlayFacilitiesByCarrier[carrier] || [])
                         : isGas ? gasFacilitiesData : isWater ? waterFacilitiesData : isLiquids ? liquidsFacilitiesData : isLogistics ? logisticsFacilitiesData : pypsaFacilitiesData;
@@ -14988,6 +16111,7 @@ function AppInner() {
                           <div className="pointer-events-auto max-w-full rounded-xl border border-white/10 bg-[#071421]/92 p-1.5 backdrop-blur-xl shadow-2xl">
                             <div role="group" aria-label="Map layers and display" className="flex flex-wrap items-stretch justify-center gap-1">
                               {ATLAS_MAP_DOMAINS.map((domain) => {
+                                const modelDomainSupported = !isModelScene || isModelSceneDomain(domain);
                                 const hasNetworks = isInfrastructure ? Boolean(infrastructureStatus?.available) : loadedPypsaNetworks.length > 0;
                                 const loaded = isInfrastructure
                                   ? Boolean(infrastructureLoadedDomains[domain])
@@ -14995,9 +16119,15 @@ function AppInner() {
                                     (network) => pypsaLoadedDomainsByNetwork[network.filename]?.[domain]
                                   );
                                 const visible = loaded && atlasDomainVisibility[domain] !== false;
-                                const loading = atlasOverlayMode ? overlayDomainLoading(domain) : (isInfrastructure ? infrastructureLoading : pypsaDomainLoading) === domain;
+                                const loading = isModelScene
+                                  ? modelSceneStatus.state === 'loading' && atlasDomainVisibility[domain] !== false
+                                  : atlasOverlayMode
+                                    ? overlayDomainLoading(domain)
+                                    : (isInfrastructure ? infrastructureLoading : pypsaDomainLoading) === domain;
                                 const status = loading
                                   ? 'Loading…'
+                                  : !modelDomainSupported
+                                    ? 'Not available'
                                   : loaded
                                     ? unavailableByDomain[domain].length === loadedPypsaNetworks.length && !isInfrastructure
                                       ? 'No data'
@@ -15010,7 +16140,13 @@ function AppInner() {
                                     key={domain}
                                     type="button"
                                     onClick={() => handleAtlasDomainSelection(domain)}
-                                    disabled={!hasNetworks || Boolean(atlasOverlayMode ? overlayAnyLoading : isInfrastructure ? infrastructureLoading : pypsaDomainLoading) || (!isInfrastructure && pypsaResolutionSwitching)}
+                                    disabled={!hasNetworks || !modelDomainSupported || Boolean(
+                                      isModelScene
+                                        ? modelSceneStatus.state === 'loading'
+                                        : atlasOverlayMode
+                                          ? overlayAnyLoading
+                                          : isInfrastructure ? infrastructureLoading : pypsaDomainLoading
+                                    ) || (!isInfrastructure && pypsaResolutionSwitching)}
                                     aria-pressed={visible}
                                     aria-label={`${domain} map layer`}
                                     title={loaded ? `${visible ? 'Hide' : 'Show'} ${domain.toLowerCase()} layer` : `Load ${domain.toLowerCase()} data`}
@@ -15183,8 +16319,10 @@ function AppInner() {
                     )}
                   </>
                 )}
+                <ModelBuilderDraftPreview preview={builderDraftPreview} sceneStatus={builderDraftSceneStatus} />
                 <MapWorkspaceBoundary resetKey={mapRecoveryKey}>
                 <EnhancedLeafletMapWithVoice
+                  atlasTheme={atlasTheme}
                   controlsHidden={compactAtlasLayout && (!mapControlsCollapsed || atlasAssetPopupOpen)}
                   panelsHidden={atlasAssetPopupOpen}
                   popupDismissRequest={atlasPopupDismissRequest}
@@ -15222,13 +16360,13 @@ function AppInner() {
                     countryCodes: activeLandCountryCodes,
                   }}
                   onGridAccessChange={updateGridAccessOverlay}
-                  facilities={visibleMapFacilities}
+                  facilities={distillationDecoratedMapFacilities}
                   selectedNode={selectedNode}
                   onNodeSelect={setSelectedNode}
                   mapLoaded={mapLoaded}
                   selectedNodes={selectedNodes}
                   onNodeSelection={handleNodeSelection}
-                  connections={renderedMapConnections}
+                  connections={distillationDecoratedMapConnections}
                   lineMetricEnabled={lineMetricEnabled}
                   onConnectionClick={(connection, position) => {
                     const connectionNetworkCarrier = atlasOverlayMode
@@ -15345,7 +16483,7 @@ function AppInner() {
                   }}
                   linePropertiesByChildName={linePropertiesByChildName}
                   activeDataLayer={activeDataLayer}
-                  showGenerationMix={!atlasOverlayMode && atlasNetworkCarrier === 'electricity' && showGenerationMix && pypsaHasGenerationMixData}
+                  showGenerationMix={!modelResultStatus.scene && !distillationPreviewStatus.preview && !atlasOverlayMode && atlasNetworkCarrier === 'electricity' && showGenerationMix && pypsaHasGenerationMixData}
                   mapViewMode={mapViewMode}
                   marketPrices={marketPrices}
                   generationMix={generationMix}
@@ -15364,6 +16502,8 @@ function AppInner() {
                   }}
                 />
                 </MapWorkspaceBoundary>
+                <ModelResultLegend scene={modelResultStatus.scene} onClear={clearModelResult} />
+                <ModelDistillationLegend preview={distillationPreviewStatus.preview} showContext={showDistillationContext} onClear={clearDistillationPreview} />
                 {/* Right-click context menu: single-action popover positioned at cursor. */}
                 {engine === 'PyPSA Engine' && !atlasOverlayMode && atlasNetworkCarrier === 'electricity' && selectedPyPSAFile && regionContextMenu && !regionPanelVisible && (
                   <div
@@ -15947,21 +17087,21 @@ function AppInner() {
             footer={(
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <button type="button" onClick={resetPypsaSettingsDefaults}
-                  className="min-h-[36px] rounded-lg border border-white/20 px-3 text-xs text-slate-200 hover:bg-white/10 hover:text-white">
+                  className="atlas-modal__secondary-action min-h-[36px] rounded-lg border px-3 text-xs">
                   Reset Defaults
                 </button>
                 <button type="button" onClick={exportPypsaSettingsJson}
-                  className="min-h-[36px] rounded-lg border border-white/20 px-3 text-xs text-slate-200 hover:bg-white/10 hover:text-white">
+                  className="atlas-modal__secondary-action min-h-[36px] rounded-lg border px-3 text-xs">
                   Export JSON
                 </button>
                 <button type="button" onClick={runPypsaBuildFromSettings} disabled={solveNetworkStaging || pypsaLoading}
-                  className="min-h-[36px] rounded-lg border border-tj-gold/40 px-3 text-xs text-tj-gold hover:bg-tj-gold/10 disabled:cursor-not-allowed disabled:opacity-40">
+                  className="atlas-modal__primary-action min-h-[36px] rounded-lg border px-3 text-xs disabled:cursor-not-allowed disabled:opacity-40">
                   {solveNetworkStaging ? 'Building...' : 'Build Network'}
                 </button>
               </div>
             )}>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 lg:col-span-2">
+                  <div className="atlas-settings-card rounded-xl border p-3 lg:col-span-2">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-wider text-tj-gold">Map performance</div>
@@ -15969,7 +17109,7 @@ function AppInner() {
                           Adaptive protects interaction speed on dense maps and constrained devices. Quality and Speed are explicit overrides.
                         </p>
                       </div>
-                      <div className="grid min-w-[248px] grid-cols-3 gap-1 rounded-lg border border-white/10 bg-black/10 p-1" role="radiogroup" aria-label="Map performance">
+                      <div className="atlas-settings-segments grid min-w-[248px] grid-cols-3 gap-1 rounded-lg border p-1" role="radiogroup" aria-label="Map performance">
                         {[
                           [MAP_PERFORMANCE_PREFERENCES.AUTO, 'Adaptive'],
                           [MAP_PERFORMANCE_PREFERENCES.QUALITY, 'Quality'],
@@ -16001,7 +17141,7 @@ function AppInner() {
                     </p>
                   </div>
                   {pypsaSettingsSections.map((section) => (
-                    <div key={section.title} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                    <div key={section.title} className="atlas-settings-card rounded-xl border p-3">
                       <div className="text-xs font-semibold uppercase tracking-wider text-tj-gold mb-2">{section.title}</div>
                       <div className="space-y-2">
                         {section.fields.map((field) => {

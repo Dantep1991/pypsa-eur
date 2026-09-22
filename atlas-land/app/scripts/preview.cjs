@@ -91,9 +91,18 @@ function normalizeAllowedOrigins(values) {
   }));
 }
 
+function loopbackUpstream(value, label = 'Preview backend') {
+  const upstream = new URL(value);
+  if (upstream.protocol !== 'http:' || !['127.0.0.1', '[::1]', 'localhost'].includes(upstream.hostname)
+      || upstream.username || upstream.password || upstream.pathname !== '/' || upstream.search || upstream.hash) {
+    throw new Error(`${label} must be an HTTP loopback origin, without credentials or path.`);
+  }
+  return upstream;
+}
+
 function createPreviewServer({
   buildDir, mount = '/atlas', apiPrefix = '/atlas-api', backend = 'http://127.0.0.1:5003',
-  stripApiPrefix = true, allowedOrigins = [],
+  modelBackend = '', stripApiPrefix = true, allowedOrigins = [],
 }) {
   const root = fs.realpathSync(buildDir);
   if (!fs.statSync(path.join(root, 'index.html')).isFile()) throw new Error('Build has no index.html.');
@@ -103,11 +112,8 @@ function createPreviewServer({
       || (assetMount && proxyMount.startsWith(`${assetMount}/`))) {
     throw new Error('Asset and API mounts must not overlap.');
   }
-  const upstream = new URL(backend);
-  if (upstream.protocol !== 'http:' || !['127.0.0.1', '[::1]', 'localhost'].includes(upstream.hostname)
-      || upstream.username || upstream.password || upstream.pathname !== '/' || upstream.search || upstream.hash) {
-    throw new Error('Preview backend must be an HTTP loopback origin, without credentials or path.');
-  }
+  const upstream = loopbackUpstream(backend);
+  const modelUpstream = modelBackend ? loopbackUpstream(modelBackend, 'Preview model backend') : null;
   const configuredAllowedOrigins = normalizeAllowedOrigins(allowedOrigins);
   const frameAncestors = ["'self'", ...configuredAllowedOrigins].join(' ');
   const staticSecurityHeaders = Object.freeze({
@@ -194,12 +200,18 @@ function createPreviewServer({
       return endJson(res, 400, 'Invalid path.');
     }
     if (rawPathname === proxyMount || rawPathname.startsWith(`${proxyMount}/`)) {
+      const proxiedPath = stripApiPrefix ? (rawPathname.slice(proxyMount.length) || '/') : rawPathname;
+      const usesModelBackend = proxiedPath.startsWith('/api/atlas/projects')
+        || proxiedPath.startsWith('/api/solutions');
+      const selectedUpstream = modelUpstream && usesModelBackend
+        ? modelUpstream
+        : upstream;
       const headers = forwardedHeaders(req.headers);
-      headers.host = upstream.host;
+      headers.host = selectedUpstream.host;
       // Preserve browser Origin and cookies. Never substitute a permitted Origin.
-      const proxy = http.request(upstream, {
+      const proxy = http.request(selectedUpstream, {
         method: req.method,
-        path: `${stripApiPrefix ? (rawPathname.slice(proxyMount.length) || '/') : rawPathname}${query}`,
+        path: `${proxiedPath}${query}`,
         headers,
       }, response => {
         res.writeHead(response.statusCode, forwardedHeaders(response.headers));
@@ -274,6 +286,7 @@ if (require.main === module) {
   const server = createPreviewServer({
     buildDir: path.resolve(__dirname, '..', process.env.NOHM_ATLAS_PREVIEW_BUILD || 'build-preview'),
     mount, apiPrefix, backend: process.env.NOHM_ATLAS_PREVIEW_BACKEND || 'http://127.0.0.1:5003',
+    modelBackend: process.env.NOHM_ATLAS_PREVIEW_MODEL_BACKEND || '',
     allowedOrigins: String(process.env.NOHM_ATLAS_PREVIEW_ALLOWED_ORIGINS || '')
       .split(',').map(value => value.trim()).filter(Boolean),
   });

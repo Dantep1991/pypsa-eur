@@ -186,6 +186,8 @@ const MapViewBridge = ({ onViewChange }) => {
 
 // Standalone color resolver — used by both the map and the popup
 const getFacilityColor = (facility) => {
+  if (facility?.atlas_distillation_color) return facility.atlas_distillation_color;
+  if (facility?.atlas_result_color) return facility.atlas_result_color;
   if (facility?.carrier_color) return facility.carrier_color;
   const carrierColors = {
     'coal':       '#78716c', // warm stone
@@ -799,6 +801,7 @@ const RegionContextBridge = ({ onContextMenu }) => {
 };
 
 const EnhancedLeafletMapContent = ({
+  atlasTheme = 'dark',
   facilities = [],
   selectedNode,
   onNodeSelect,
@@ -1484,6 +1487,7 @@ const EnhancedLeafletMapContent = ({
   const visibleNodeIds = useMemo(() => {
     const ids = new Set();
     allNodes.forEach((node) => {
+      if (node?.atlas_distillation_hidden) return;
       const id = String(node?.id || '').toUpperCase().trim();
       const clusterId = String(node?.cluster_id || '').toUpperCase().trim();
       if (id) ids.add(id);
@@ -1494,6 +1498,7 @@ const EnhancedLeafletMapContent = ({
   const visibleLocationCounts = useMemo(() => {
     const counts = new Map();
     allNodes.forEach((node) => {
+      if (node?.atlas_distillation_hidden) return;
       if (node.locationKey) counts.set(node.locationKey, (counts.get(node.locationKey) || 0) + 1);
     });
     return counts;
@@ -1604,6 +1609,7 @@ const EnhancedLeafletMapContent = ({
     if (!Array.isArray(lineRenderEntries) || lineRenderEntries.length === 0) return [];
     return lineRenderEntries
       .map(({ connection, geometry }, index) => {
+        if (connection.atlas_distillation_hidden) return null;
         const { coordinates: lineCoordinates, fromLat, fromLng, toLat, toLng } = geometry;
         const labelPath = geometry.type === 'MultiLineString' ? lineCoordinates[0] : lineCoordinates;
         const midpoint = labelPath[Math.floor(labelPath.length / 2)]
@@ -1631,7 +1637,10 @@ const EnhancedLeafletMapContent = ({
         const overlayStyle = networkResolution === 'overlay'
           ? ATLAS_NETWORK_CARRIER_META[overlayCarrier]
           : null;
-        const color = overlayStyle?.color || (capacityRatio != null
+        const resultRatio = Number(connection.atlas_result_ratio);
+        const hasResult = Number.isFinite(resultRatio) && connection.atlas_result_color;
+        const hasDistillationStyle = Boolean(connection.atlas_distillation_color);
+        const color = hasDistillationStyle ? connection.atlas_distillation_color : hasResult ? connection.atlas_result_color : overlayStyle?.color || (capacityRatio != null
           ? capacityColor(capacityRatio)
           : (halo.dashOverride ? '#fbbf24' : (connection.color || '#38bdf8')));
         const sourceWeight = Number.isFinite(Number(connection.weight)) ? Number(connection.weight) : 0;
@@ -1643,11 +1652,17 @@ const EnhancedLeafletMapContent = ({
         const capacityWeight = capacityRatio == null
           ? topologyWeight
           : zoomLineWeight * (0.72 + (2.3 * Math.sqrt(capacityRatio)));
-        const weight = Math.max(overlayStyle ? 1.05 : 0.55, Math.min(6.5, capacityWeight));
+        const resultWeight = hasResult
+          ? zoomLineWeight * (0.9 + (2.5 * Math.sqrt(Math.max(0, Math.min(1, resultRatio)))))
+          : capacityWeight;
+        const weight = Math.max(overlayStyle ? 1.05 : 0.55, Math.min(6.5, resultWeight));
         // Dragging must not change the render key: dimming at movement start
         // and restoring on idle rebuilt the entire graph twice per gesture.
         const perfOpacityMul = performanceMode ? 0.8 : 1;
-        const opacity = baseOpacity * halo.opacityMul * regionFocusOpacity * perfOpacityMul;
+        const distillationOpacity = Number.isFinite(Number(connection.atlas_distillation_opacity))
+          ? Math.max(0, Math.min(1, Number(connection.atlas_distillation_opacity)))
+          : 1;
+        const opacity = baseOpacity * halo.opacityMul * regionFocusOpacity * perfOpacityMul * distillationOpacity;
 
         return {
           type: 'Feature',
@@ -1687,6 +1702,7 @@ const EnhancedLeafletMapContent = ({
 
   const geoJsonNodeFeatureCollection = useMemo(() => {
     const features = (lodNodes || []).filter((facility) => {
+      if (facility.atlas_distillation_hidden) return false;
       if (!showGenerationMix || facility.editable) return true;
       const componentType = String(facility?.component_type || facility?.type || '').toLowerCase();
       // The pie layer represents all generators at this bus. Hiding the
@@ -1730,7 +1746,11 @@ const EnhancedLeafletMapContent = ({
         ? Math.min(1, explicitMapScaleRatio)
         : demandSizeRatio;
       const isMagnitudeScaled = Number.isFinite(Number(magnitudeSizeRatio));
-      const extraOpacity = busHaloOpacity(facility.id);
+      const sourceExtraOpacity = busHaloOpacity(facility.id);
+      const distillationOpacity = Number(facility.atlas_distillation_opacity);
+      const extraOpacity = Number.isFinite(distillationOpacity)
+        ? Math.min(sourceExtraOpacity, Math.max(0, Math.min(1, distillationOpacity)))
+        : sourceExtraOpacity;
       const sourceNetworkFilename = String(facility?.sourceNetworkFilename || '');
       const nodeEmphasis = /_(?:bidding_zone|ehighway|nuts1)\.nc$/i.test(sourceNetworkFilename)
         ? 2
@@ -1903,7 +1923,7 @@ const EnhancedLeafletMapContent = ({
         preferCanvas={true}
         renderer={atlasRenderers.base}
         worldCopyJump={true}
-        style={{ height: '100%', width: '100%', minHeight: '400px', backgroundColor: '#202124' }}
+        style={{ height: '100%', width: '100%', minHeight: '400px', backgroundColor: 'var(--atlas-map-canvas)' }}
         className="z-0"
       >
         <MapInstanceBridge onReady={setMapInstance} />
@@ -1917,8 +1937,11 @@ const EnhancedLeafletMapContent = ({
         <Pane name="grid-access-sites" style={{ zIndex: 675 }} />
         <Pane name="region-overlay-pane" style={{ zIndex: 330 }} />
         <TileLayer
+          key={`atlas-base-${atlasTheme}`}
           attribution='Tiles &copy; <a href="https://www.esri.com/">Esri</a>'
-          url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+          url={atlasTheme === 'dark'
+            ? 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
+            : 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}'}
           maxZoom={16}
           updateWhenIdle={true}
           updateWhenZooming={false}
@@ -1951,8 +1974,11 @@ const EnhancedLeafletMapContent = ({
           </>
         )}
         <TileLayer
+          key={`atlas-labels-${atlasTheme}`}
           attribution='Labels &copy; Esri, HERE, Garmin, OpenStreetMap contributors'
-          url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}"
+          url={atlasTheme === 'dark'
+            ? 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}'
+            : 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}'}
           maxZoom={16}
           pane="overlayPane"
           updateWhenIdle={true}
@@ -2280,10 +2306,18 @@ const EnhancedLeafletMapContent = ({
                       const availableRow = capacity.available != null && Math.abs(capacity.available - capacity.value) > 0.01
                         ? `<div style="display:flex;justify-content:space-between;gap:18px;margin-top:4px;color:#cbd5e1;"><span>Available limit</span><strong style="color:#f8fafc;">${formatCapacity(capacity.available)} ${escapeHtml(capacity.availableUnits)}</strong></div>`
                         : '';
+                      const resultRow = Number.isFinite(Number(connection?.atlas_result_value))
+                        ? `<div style="display:flex;justify-content:space-between;gap:18px;margin-top:4px;color:#cbd5e1;"><span>${escapeHtml(connection.atlas_result_label || 'Result')}</span><strong style="color:#ffffff;">${formatCapacity(connection.atlas_result_value)} ${escapeHtml(connection.atlas_result_unit || '')}</strong></div><div style="margin-top:3px;color:#94a3b8;">${escapeHtml(connection.atlas_result_period || '')}</div>`
+                        : '';
+                      const distillationRow = connection?.atlas_distillation_status
+                        ? `<div style="margin-top:5px;padding-top:5px;border-top:1px solid rgba(148,163,184,.2);color:#cbd5e1;"><strong style="color:#ffffff;">Preview: ${escapeHtml(String(connection.atlas_distillation_status).replace('_', ' '))}</strong><div style="margin-top:2px;color:#94a3b8;">${escapeHtml(connection.atlas_distillation_reason || '')}</div></div>`
+                        : '';
                       return `<div style="min-width:176px;font-size:11px;line-height:1.35;color:#e2e8f0;">
                       <div style="font-weight:750;color:#ffffff;margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:250px;">${escapeHtml(title)}</div>
                       <div style="display:flex;justify-content:space-between;gap:18px;"><span>${escapeHtml(capacity.kind)}</span><strong style="color:#facc15;">${formatCapacity(capacity.value)} ${escapeHtml(capacity.units)}</strong></div>
                       ${availableRow}
+                      ${resultRow}
+                      ${distillationRow}
                     </div>`;
                     },
                     {
@@ -2293,6 +2327,16 @@ const EnhancedLeafletMapContent = ({
                       pane: 'line-capacity-tooltip-pane',
                       className: 'line-capacity-tooltip',
                     },
+                  );
+                } else if (connection?.atlas_distillation_status) {
+                  layer.bindTooltip(
+                    `Preview: ${escapeHtml(String(connection.atlas_distillation_status).replace('_', ' '))}${connection.atlas_distillation_reason ? ` · ${escapeHtml(connection.atlas_distillation_reason)}` : ''}`,
+                    { direction: 'top', opacity: 0.96, sticky: true, pane: 'line-capacity-tooltip-pane', className: 'line-capacity-tooltip' },
+                  );
+                } else if (Number.isFinite(Number(connection?.atlas_result_value))) {
+                  layer.bindTooltip(
+                    `${escapeHtml(connection.atlas_result_label || 'Result')}: ${formatCapacity(connection.atlas_result_value)}${connection.atlas_result_unit ? ` ${escapeHtml(connection.atlas_result_unit)}` : ''}`,
+                    { direction: 'top', opacity: 0.96, sticky: true, pane: 'line-capacity-tooltip-pane', className: 'line-capacity-tooltip' },
                   );
                 } else if (!performanceMode && lineMetricEnabled && Number.isFinite(connection?.metricValue)) {
                   layer.bindTooltip(
