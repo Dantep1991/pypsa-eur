@@ -11,6 +11,12 @@ export default function ModelBuilderDraftPreview({ preview }) {
     evidence.assetCarrierCount ? `${evidence.assetCarrierCount} asset carrier${evidence.assetCarrierCount === 1 ? '' : 's'}` : null,
     evidence.connectionGroupCount ? `${evidence.connectionGroupCount} connection group${evidence.connectionGroupCount === 1 ? '' : 's'}` : null,
   ].filter(Boolean);
+  const stageLabels = {
+    soul: 'Identity', dna: 'Demand Sectors', skeleton: 'Geography', organs: 'Assets',
+    cardio_system: 'Connections', blood: 'Archetypes', blood_chemistry: 'Attribute Rules',
+    circadian_system: 'Time', nervous_system: 'Rules', skin: 'Climate & Platform', muscles: 'Assembly',
+  };
+  const staleLabels = (preview.staleStageIds || []).map((stageId) => stageLabels[stageId]).filter(Boolean);
   return (
     <aside
       aria-label="Model Builder draft preview"
@@ -29,6 +35,11 @@ export default function ModelBuilderDraftPreview({ preview }) {
           </div>
           <p className="mt-1 text-[10px] leading-4 text-tj-slate">{preview.message}</p>
           {facts.length > 0 && <p className="mt-1.5 text-[9px] font-medium text-tj-gold">{facts.join(' · ')}</p>}
+          {staleLabels.length > 0 && (
+            <p className="mt-1.5 rounded-md border border-amber-300/25 bg-amber-300/10 px-2 py-1 text-[9px] leading-3.5 text-amber-100">
+              Needs review after upstream change: {staleLabels.join(', ')}
+            </p>
+          )}
           <p className="mt-1 text-[9px] leading-3.5 text-sky-200">Definitions only · published topology retained</p>
         </div>
       </div>

@@ -33,6 +33,10 @@ export const NOHM_ATLAS_PORTAL_TARGETS = Object.freeze([
   'cba',
   'economic-assessment',
 ]);
+const NOHM_BUILDER_STAGE_IDS = Object.freeze([
+  'soul', 'dna', 'skeleton', 'organs', 'cardio_system', 'blood', 'blood_chemistry',
+  'circadian_system', 'nervous_system', 'skin', 'muscles',
+]);
 export const NOHM_ATLAS_ACTIONS = Object.freeze([
   'map.zoom-in',
   'map.zoom-out',
@@ -176,6 +180,8 @@ export function normalizeNohmAtlasBuilderDraftPreview(value) {
   const stageIndex = Number(value.stageIndex);
   const stageCount = Number(value.stageCount);
   const sourceEvidence = value.evidence && typeof value.evidence === 'object' ? value.evidence : {};
+  const staleStageIds = [...new Set((Array.isArray(value.staleStageIds) ? value.staleStageIds : [])
+    .map(optionalText).filter((stageId) => NOHM_BUILDER_STAGE_IDS.includes(stageId)))];
   const evidence = Object.fromEntries([
     'carrierCount', 'countryCount', 'nodeDefinitionCount', 'assetCarrierCount', 'connectionGroupCount',
   ].map((key) => [key, Number(sourceEvidence[key])]));
@@ -197,6 +203,7 @@ export function normalizeNohmAtlasBuilderDraftPreview(value) {
     stageCount,
     mode: 'definitions-only',
     geometryStatus: value.geometryStatus,
+    staleStageIds,
     evidence,
     message: optionalText(value.message),
   };

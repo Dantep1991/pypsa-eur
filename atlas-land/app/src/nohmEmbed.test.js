@@ -52,6 +52,7 @@ test('Atlas accepts only a builder preview bound to the exact loaded model', () 
     projectId: 'TYNDP_2026', draftId: 'atlas-v3', sourceVersion: 'v3.0.0', revision: 3,
     stageId: 'skeleton', stageLabel: 'Geography', stageIndex: 3, stageCount: 11,
     mode: 'definitions-only', geometryStatus: 'not-ready',
+    staleStageIds: ['organs', 'invalid-stage', 'cardio_system', 'organs'],
     evidence: { carrierCount: 1, countryCount: 0, nodeDefinitionCount: 0, assetCarrierCount: 0, connectionGroupCount: 0 },
     message: 'Definitions only.',
   };
@@ -62,6 +63,7 @@ test('Atlas accepts only a builder preview bound to the exact loaded model', () 
     type: NOHM_ATLAS_BUILDER_DRAFT_EVENT,
     detail: { preview: normalizeNohmAtlasBuilderDraftPreview(preview) },
   });
+  expect(dispatched.at(-1).detail.preview.staleStageIds).toEqual(['organs', 'cardio_system']);
   const acceptedCount = dispatched.length;
   callbacks.get('message')({ source: parent, origin: target.location.origin, data: {
     type: NOHM_ATLAS_BUILDER_DRAFT_MESSAGE, protocolVersion: 1, source: 'nohm-shell',
