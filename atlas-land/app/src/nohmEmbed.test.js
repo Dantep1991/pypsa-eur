@@ -82,12 +82,26 @@ test('Atlas retains only a closed Model Assembly summary', () => {
     stageId: 'muscles', stageLabel: 'Assembly', stageIndex: 11, stageCount: 11,
     mode: 'assembled-summary', geometryStatus: 'assembled-no-geometry', staleStageIds: ['organs'],
     evidence: { carrierCount: 1, countryCount: 2, nodeDefinitionCount: 7, assetCarrierCount: 1, connectionGroupCount: 2 },
-    assembly: { previewId: 'abc', status: 'complete', phase: 'complete', completed: 4, total: 4, classCount: 5, objectCount: 105, membershipCount: 178, propertyRecordCount: 901 },
+    assembly: { previewId: 'abc', status: 'complete', phase: 'complete', completed: 4, total: 4, classCount: 5, objectCount: 105, membershipCount: 178, propertyRecordCount: 901, sceneAvailable: false, nodeCount: 0, mappedNodeCount: 0, linkCount: 0, assetCount: 0 },
     message: 'Temporary canonical objects assembled.', schemaPayload: { must: 'not cross' },
   });
   expect(preview.mode).toBe('assembled-summary');
   expect(preview.assembly.objectCount).toBe(105);
   expect(preview.schemaPayload).toBeUndefined();
+});
+
+test('Atlas accepts a closed mapped assembly reference without embedded geometry', () => {
+  const preview = normalizeNohmAtlasBuilderDraftPreview({
+    projectId: 'TYNDP_2026', draftId: 'atlas-v3', sourceVersion: 'v3.0.0', revision: 8,
+    stageId: 'muscles', stageLabel: 'Assembly', stageIndex: 11, stageCount: 11,
+    mode: 'assembled-summary', geometryStatus: 'resolved-preview', staleStageIds: [],
+    evidence: { carrierCount: 1, countryCount: 2, nodeDefinitionCount: 7, assetCarrierCount: 1, connectionGroupCount: 2 },
+    assembly: { previewId: 'a'.repeat(32), status: 'complete', phase: 'complete', completed: 4, total: 4, classCount: 5, objectCount: 105, membershipCount: 178, propertyRecordCount: 901, sceneAvailable: true, nodeCount: 7, mappedNodeCount: 6, linkCount: 8, assetCount: 9 },
+    rawScene: { must: 'not cross' },
+  });
+  expect(preview.geometryStatus).toBe('resolved-preview');
+  expect(preview.assembly.mappedNodeCount).toBe(6);
+  expect(preview.rawScene).toBeUndefined();
 });
 
 test('Atlas accepts run state only for the exact bound project and model version', () => {

@@ -183,11 +183,12 @@ export function normalizeNohmAtlasBuilderDraftPreview(value) {
   const staleStageIds = [...new Set((Array.isArray(value.staleStageIds) ? value.staleStageIds : [])
     .map(optionalText).filter((stageId) => NOHM_BUILDER_STAGE_IDS.includes(stageId)))];
   const allowedModes = ['definitions-only', 'assembly-progress', 'assembled-summary'];
-  const allowedGeometry = ['not-ready', 'identifiers-selected', 'assembled-no-geometry'];
+  const allowedGeometry = ['not-ready', 'identifiers-selected', 'assembled-no-geometry', 'resolved-preview'];
   const mode = allowedModes.includes(value.mode) ? value.mode : null;
   const sourceAssembly = value.assembly && typeof value.assembly === 'object' ? value.assembly : null;
   const assemblyCounts = sourceAssembly ? Object.fromEntries([
     'completed', 'total', 'classCount', 'objectCount', 'membershipCount', 'propertyRecordCount',
+    'nodeCount', 'mappedNodeCount', 'linkCount', 'assetCount',
   ].map((key) => [key, Number(sourceAssembly[key])])) : null;
   const assemblyStatus = ['queued', 'running', 'finalising', 'complete', 'error'].includes(sourceAssembly?.status)
     ? sourceAssembly.status
@@ -199,6 +200,7 @@ export function normalizeNohmAtlasBuilderDraftPreview(value) {
       previewId: optionalText(sourceAssembly.previewId),
       status: assemblyStatus,
       phase: optionalText(sourceAssembly.phase),
+      sceneAvailable: sourceAssembly.sceneAvailable === true,
       ...assemblyCounts,
     }
     : null;
@@ -211,7 +213,12 @@ export function normalizeNohmAtlasBuilderDraftPreview(value) {
       || !Number.isSafeInteger(stageCount) || stageCount < stageIndex
       || !mode || !allowedGeometry.includes(value.geometryStatus)
       || (mode === 'definitions-only' ? assembly !== null : assembly === null)
-      || (mode === 'assembled-summary' && (assembly?.status !== 'complete' || value.geometryStatus !== 'assembled-no-geometry'))
+      || (mode === 'assembled-summary' && (
+        assembly?.status !== 'complete'
+        || !['assembled-no-geometry', 'resolved-preview'].includes(value.geometryStatus)
+      ))
+      || (value.geometryStatus === 'resolved-preview' && (mode !== 'assembled-summary' || !assembly?.sceneAvailable || assembly.mappedNodeCount < 1))
+      || (assembly?.sceneAvailable && value.geometryStatus !== 'resolved-preview')
       || Object.values(evidence).some((count) => !Number.isSafeInteger(count) || count < 0)) return null;
   return {
     projectId,

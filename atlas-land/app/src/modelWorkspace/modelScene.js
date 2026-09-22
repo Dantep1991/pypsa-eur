@@ -209,6 +209,11 @@ export function adaptModelScene(scene, expectedProjectId = '') {
     meta: {
       projectId: scene.project_id,
       version: scene.version,
+      temporary: scene.temporary === true,
+      draftId: text(scene.draft_id) || null,
+      sourceVersion: text(scene.source_version) || null,
+      draftRevision: Number.isSafeInteger(Number(scene.draft_revision)) ? Number(scene.draft_revision) : null,
+      previewId: text(scene.preview_id) || null,
       selectedYear: scene.selected_year,
       layers: Array.isArray(scene.layers) ? scene.layers : [],
       countries,

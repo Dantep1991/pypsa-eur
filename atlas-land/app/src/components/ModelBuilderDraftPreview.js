@@ -1,7 +1,7 @@
 import React from 'react';
 import { DraftingCompass } from 'lucide-react';
 
-export default function ModelBuilderDraftPreview({ preview }) {
+export default function ModelBuilderDraftPreview({ preview, sceneStatus = null }) {
   if (!preview) return null;
   const evidence = preview.evidence || {};
   const facts = [
@@ -23,6 +23,11 @@ export default function ModelBuilderDraftPreview({ preview }) {
     `${assembly.objectCount} objects`,
     `${assembly.membershipCount} memberships`,
     `${assembly.propertyRecordCount} properties`,
+  ] : [];
+  const sceneFacts = assembly?.sceneAvailable ? [
+    `${assembly.mappedNodeCount}/${assembly.nodeCount} mapped nodes`,
+    `${assembly.linkCount} links`,
+    `${assembly.assetCount} assets`,
   ] : [];
   return (
     <aside
@@ -47,6 +52,7 @@ export default function ModelBuilderDraftPreview({ preview }) {
               <span className="font-semibold capitalize">{assembly.status}</span>
               {' · '}{Math.min(assembly.completed, assembly.total)}/{assembly.total} phases
               {preview.mode === 'assembled-summary' && <span className="block text-cyan-100/80">{assemblyFacts.join(' · ')}</span>}
+              {sceneFacts.length > 0 && <span className="block text-emerald-100/90">Draft map · {sceneFacts.join(' · ')}</span>}
             </div>
           )}
           {staleLabels.length > 0 && (
@@ -55,8 +61,21 @@ export default function ModelBuilderDraftPreview({ preview }) {
             </p>
           )}
           <p className="mt-1 text-[9px] leading-3.5 text-sky-200">
-            {assembly ? 'Temporary assembly · published topology retained' : 'Definitions only · published topology retained'}
+            {assembly?.sceneAvailable
+              ? 'Temporary exact-coordinate scene · not published'
+              : assembly ? 'Temporary assembly · published topology retained' : 'Definitions only · published topology retained'}
           </p>
+          {assembly?.sceneAvailable && sceneStatus?.state === 'loading' && (
+            <p className="mt-1 text-[9px] text-emerald-100">Loading exact-coordinate temporary scene…</p>
+          )}
+          {assembly?.sceneAvailable && sceneStatus?.state === 'waiting' && (
+            <p className="mt-1 text-[9px] text-emerald-100">Waiting for the published context before applying the temporary scene…</p>
+          )}
+          {assembly?.sceneAvailable && sceneStatus?.state === 'error' && (
+            <p className="mt-1 rounded-md border border-rose-300/25 bg-rose-300/10 px-2 py-1 text-[9px] leading-3.5 text-rose-100">
+              Draft map unavailable: {sceneStatus.error}
+            </p>
+          )}
         </div>
       </div>
     </aside>

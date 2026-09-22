@@ -78,6 +78,7 @@ import { stitchElectricityCrossBorderConnections } from './crossBorderNetwork';
 import electricityCrossBorderTopology from './data/electricity-cross-border.json';
 import { clearPypsaCatalogueCache, readPypsaCatalogueCache, writePypsaCatalogueCache } from './pypsaCatalogueCache';
 import { fetchModelScene, isModelSceneDomain, resolveModelSceneDomains } from './modelWorkspace/modelScene';
+import { fetchBuilderAssemblyScene } from './modelWorkspace/builderAssemblyScene';
 import { assertModelGeographyOperation, modelGeographyPolicy } from './modelWorkspace/modelGeographyPolicy';
 import {
   decorateModelResultRecord,
@@ -587,6 +588,8 @@ function AppInner() {
   const [modelResultStatus, setModelResultStatus] = useState({ state: 'idle', scene: null, error: '' });
   const [nohmRunState, setNohmRunState] = useState(null);
   const [builderDraftPreview, setBuilderDraftPreview] = useState(null);
+  const [builderDraftSceneStatus, setBuilderDraftSceneStatus] = useState({ state: 'idle', key: '', error: '' });
+  const builderDraftSceneAppliedRef = useRef('');
   const modelResultRequestRef = useRef(null);
   const [distillationCountries, setDistillationCountries] = useState([]);
   const [distillationPreviewStatus, setDistillationPreviewStatus] = useState({ state: 'idle', preview: null, error: '' });
@@ -2291,6 +2294,10 @@ function AppInner() {
 
   const publishBoundModelRecords = useCallback((modelScene, { focus = false } = {}) => {
     const layers = Array.isArray(modelScene?.meta?.layers) ? modelScene.meta.layers : ['grid'];
+    const temporaryDraft = modelScene?.meta?.temporary === true;
+    const modelLabel = temporaryDraft
+      ? `${modelScene.meta.projectId} draft ${modelScene.meta.draftId}`
+      : `${modelScene.meta.projectId} model`;
     const facilities = groupPypsaFacilities(modelScene.facilities);
     pypsaFacilitiesDataRef.current = facilities;
     pypsaConnectionsRef.current = modelScene.connections;
@@ -2301,11 +2308,11 @@ function AppInner() {
     setPypsaDatasetMeta({
       filename: `${modelScene.meta.projectId}@${modelScene.meta.version}`,
       sourceBusCount: modelScene.meta.nodeCount,
-      source: 'canonical_model_schema',
+      source: temporaryDraft ? 'temporary_model_builder_assembly' : 'canonical_model_schema',
     });
     setLoadedPypsaNetworks([{
       countryCode: '',
-      countryName: `${modelScene.meta.projectId} model`,
+      countryName: modelLabel,
       filename: `model:${modelScene.meta.projectId}@${modelScene.meta.version}`,
     }]);
     setPypsaLoadedDomainsByNetwork({
@@ -2326,6 +2333,54 @@ function AppInner() {
     setGeographyLoadError('');
     if (focus && modelScene.focus) setEmilFocusLocation(modelScene.focus);
   }, []);
+
+  useEffect(() => {
+    const canLoad = builderDraftPreview?.mode === 'assembled-summary'
+      && builderDraftPreview?.geometryStatus === 'resolved-preview'
+      && builderDraftPreview?.assembly?.sceneAvailable === true;
+    if (!canLoad) {
+      if (builderDraftSceneAppliedRef.current && boundModelSceneRef.current) {
+        publishBoundModelRecords(boundModelSceneRef.current, { focus: false });
+      }
+      builderDraftSceneAppliedRef.current = '';
+      setBuilderDraftSceneStatus({ state: 'idle', key: '', error: '' });
+      return undefined;
+    }
+    const sceneKey = [
+      builderDraftPreview.projectId,
+      builderDraftPreview.draftId,
+      builderDraftPreview.sourceVersion,
+      builderDraftPreview.revision,
+      builderDraftPreview.assembly.previewId,
+    ].join('|');
+    if (modelSceneStatus.state !== 'ready' || !boundModelSceneRef.current) {
+      builderDraftSceneAppliedRef.current = '';
+      setBuilderDraftSceneStatus({ state: 'waiting', key: sceneKey, error: '' });
+      return undefined;
+    }
+    if (builderDraftSceneAppliedRef.current === sceneKey) return undefined;
+    const controller = new AbortController();
+    setBuilderDraftSceneStatus({ state: 'loading', key: sceneKey, error: '' });
+    fetchBuilderAssemblyScene(builderDraftPreview, { signal: controller.signal })
+      .then((scene) => {
+        if (controller.signal.aborted) return;
+        publishBoundModelRecords(scene, { focus: false });
+        builderDraftSceneAppliedRef.current = sceneKey;
+        setBuilderDraftSceneStatus({ state: 'ready', key: sceneKey, error: '' });
+      })
+      .catch((error) => {
+        if (controller.signal.aborted || error?.name === 'AbortError') return;
+        if (builderDraftSceneAppliedRef.current && boundModelSceneRef.current) {
+          publishBoundModelRecords(boundModelSceneRef.current, { focus: false });
+        }
+        builderDraftSceneAppliedRef.current = '';
+        setBuilderDraftSceneStatus({
+          state: 'error', key: sceneKey,
+          error: error?.message || 'The temporary assembly map could not be loaded.',
+        });
+      });
+    return () => controller.abort();
+  }, [builderDraftPreview, modelSceneStatus.state, publishBoundModelRecords]);
 
   const applyBoundModelScene = useCallback((modelScene, layers) => {
     boundModelSceneRef.current = modelScene;
@@ -16097,7 +16152,7 @@ function AppInner() {
                     )}
                   </>
                 )}
-                <ModelBuilderDraftPreview preview={builderDraftPreview} />
+                <ModelBuilderDraftPreview preview={builderDraftPreview} sceneStatus={builderDraftSceneStatus} />
                 <MapWorkspaceBoundary resetKey={mapRecoveryKey}>
                 <EnhancedLeafletMapWithVoice
                   atlasTheme={atlasTheme}
