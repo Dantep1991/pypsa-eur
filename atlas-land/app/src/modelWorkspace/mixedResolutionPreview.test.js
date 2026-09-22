@@ -1,6 +1,8 @@
 import {
   buildModelMixedResolutionPreview,
   buildModelResolutionProfile,
+  buildModelUniformResolutionPreview,
+  buildModelUniformResolutionProfile,
   deriveModelCountryAdjacency,
 } from './mixedResolutionPreview';
 
@@ -111,6 +113,18 @@ test('country-level assets retain source lineage and additive capacities', () =>
   const beAsset = preview.facilities.find(item => item.atlas_source_ids?.includes('GEN:BE:solar'));
   expect(beAsset).toMatchObject({ p_nom: 100, atlas_resolution_tier: 'country', atlas_source_count: 1 });
   expect(beAsset.bus).toBe('atlas-preview:country:BE');
+});
+
+test('uniform country resolution aggregates every model zone without inventing finer topology', () => {
+  const profile = buildModelUniformResolutionProfile(scene, 'country');
+  const preview = buildModelUniformResolutionPreview(scene, 'country');
+  const nodes = preview.facilities.filter(item => item.component_type === 'Bus');
+
+  expect(profile.tierByCountry).toEqual({ BE: 'country', DE: 'country', ES: 'country', FR: 'country', PT: 'country' });
+  expect(nodes).toHaveLength(5);
+  expect(nodes.map(item => item.country).sort()).toEqual(['BE', 'DE', 'ES', 'FR', 'PT']);
+  expect(preview.meta.preview.reconciliation.linkMWDelta).toBe(0);
+  expect(preview.meta.preview.capabilities.canDisaggregate).toBe(false);
 });
 
 test('preview refuses countries absent from the canonical model', () => {

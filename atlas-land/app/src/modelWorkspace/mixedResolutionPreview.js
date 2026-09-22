@@ -77,6 +77,26 @@ export function buildModelResolutionProfile(scene, options = {}) {
   };
 }
 
+export function buildModelUniformResolutionProfile(scene, tier = 'country') {
+  const normalizedTier = text(tier).toLowerCase();
+  if (!MODEL_MIXED_RESOLUTION_TIERS.includes(normalizedTier)) {
+    throw new Error('This model only supports its native topology and a country-level visual aggregation.');
+  }
+  const adjacency = deriveModelCountryAdjacency(scene);
+  const countries = [...adjacency.keys()].sort();
+  return {
+    focusCountry: '',
+    rings: { focus: [], adjacent: [], outer: [], other: countries },
+    tierByCountry: Object.fromEntries(countries.map(country => [country, normalizedTier])),
+    adjacency: Object.fromEntries([...adjacency.entries()]),
+    capabilities: {
+      supportedTiers: [...MODEL_MIXED_RESOLUTION_TIERS],
+      canAggregate: true,
+      canDisaggregate: false,
+    },
+  };
+}
+
 function slug(value) {
   return text(value).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
 }
@@ -287,11 +307,10 @@ function capacityTotal(records, field) {
   return (records || []).reduce((sum, record) => sum + (finite(record?.[field]) ?? 0), 0);
 }
 
-export function buildModelMixedResolutionPreview(scene, options = {}) {
+function buildModelResolutionPreview(scene, profile) {
   if (!scene?.meta?.projectId || !scene?.meta?.version) {
     throw new Error('A loaded, version-bound model scene is required.');
   }
-  const profile = buildModelResolutionProfile(scene, options);
   const { projectedNodes, nodeMap } = projectNodes(scene, profile);
   const projectedAssets = projectAssets(scene, profile, nodeMap, projectedNodes);
   const { projected: projectedConnections, internalized } = projectConnections(scene, nodeMap);
@@ -351,4 +370,12 @@ export function buildModelMixedResolutionPreview(scene, options = {}) {
       },
     },
   };
+}
+
+export function buildModelMixedResolutionPreview(scene, options = {}) {
+  return buildModelResolutionPreview(scene, buildModelResolutionProfile(scene, options));
+}
+
+export function buildModelUniformResolutionPreview(scene, tier = 'country') {
+  return buildModelResolutionPreview(scene, buildModelUniformResolutionProfile(scene, tier));
 }

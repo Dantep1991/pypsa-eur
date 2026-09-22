@@ -20,6 +20,7 @@ import ModelResultsControls from './components/ModelResultsControls';
 import ModelResultLegend from './components/ModelResultLegend';
 import ModelDistillationControls from './components/ModelDistillationControls';
 import ModelDistillationLegend from './components/ModelDistillationLegend';
+import ModelCountryScopeControls from './components/ModelCountryScopeControls';
 import ModelMixedResolutionControls from './components/ModelMixedResolutionControls';
 import ModelPortalControls from './components/ModelPortalControls';
 import ModelWorkspaceSection from './components/ModelWorkspaceSection';
@@ -64,6 +65,7 @@ import {
   announceNohmAtlasViewState,
   announceNohmModelScene,
   normalizeNohmAtlasViewState,
+  readNohmAtlasWorkspaceContextFromLocation,
   NOHM_ATLAS_ACTION_EVENT,
   NOHM_ATLAS_DOMAIN_EVENT,
   NOHM_ATLAS_RUN_STATE_EVENT,
@@ -91,7 +93,10 @@ import {
   decorateDistillationRecord,
   fetchDistillationPreview,
 } from './modelWorkspace/distillationPreview';
-import { buildModelMixedResolutionPreview } from './modelWorkspace/mixedResolutionPreview';
+import {
+  buildModelMixedResolutionPreview,
+  buildModelUniformResolutionPreview,
+} from './modelWorkspace/mixedResolutionPreview';
 import {
   ATLAS_NETWORK_CARRIER_META,
   ATLAS_NETWORK_CARRIER_ORDER,
@@ -574,7 +579,12 @@ function AppInner() {
   const [aiOpen, setAiOpen] = useState(true);
   const [activeScenario, setActiveScenario] = useState("Base 2030");
   const [nohmWorkspaceContext, setNohmWorkspaceContext] = useState(
-    () => window.__NOHM_ATLAS_WORKSPACE_CONTEXT__ || null
+    () => {
+      const context = window.__NOHM_ATLAS_WORKSPACE_CONTEXT__
+        || readNohmAtlasWorkspaceContextFromLocation(window.location);
+      if (context) window.__NOHM_ATLAS_WORKSPACE_CONTEXT__ = context;
+      return context || null;
+    }
   );
   const [modelSceneStatus, setModelSceneStatus] = useState({ state: 'idle', meta: null, error: '' });
   const boundModelGeography = useMemo(
@@ -583,6 +593,7 @@ function AppInner() {
   );
   const boundModelSceneRef = useRef(null);
   const modelSceneLoadedSignatureRef = useRef('');
+  const [modelGeographyResolution, setModelGeographyResolution] = useState('native');
   const [modelMixedResolutionStatus, setModelMixedResolutionStatus] = useState({ state: 'idle', preview: null, error: '' });
   const [modelResultCatalogStatus, setModelResultCatalogStatus] = useState({ state: 'idle', catalog: null, error: '' });
   const [modelResultSelection, setModelResultSelection] = useState(null);
@@ -2395,6 +2406,7 @@ function AppInner() {
 
   const applyBoundModelScene = useCallback((modelScene, layers) => {
     boundModelSceneRef.current = modelScene;
+    setModelGeographyResolution('native');
     setModelMixedResolutionStatus({ state: 'idle', preview: null, error: '' });
     publishBoundModelRecords(modelScene, { focus: true });
     setNohmWorkspaceContext((previous) => (
@@ -2422,6 +2434,7 @@ function AppInner() {
   const clearModelMixedResolutionPreview = useCallback(() => {
     const sourceScene = boundModelSceneRef.current;
     if (sourceScene) publishBoundModelRecords(sourceScene, { focus: false });
+    setModelGeographyResolution('native');
     setModelMixedResolutionStatus({ state: 'idle', preview: null, error: '' });
   }, [publishBoundModelRecords]);
 
@@ -2639,22 +2652,54 @@ function AppInner() {
     }
   }, [clearModelMixedResolutionPreview, clearModelResult, distillationCountries, modelSceneStatus.meta, nohmWorkspaceContext]);
 
-  const selectBoundModelCountry = useCallback((countryCode) => {
-    const normalized = String(countryCode || '').trim().toUpperCase();
-    if (!normalized) {
+  const selectBoundModelCountries = useCallback((countryCodes) => {
+    const available = new Set(boundModelGeography?.sourceCountries || []);
+    const normalized = [...new Set((countryCodes || [])
+      .map(code => String(code || '').trim().toUpperCase())
+      .filter(code => available.has(code)))].sort();
+    if (!normalized.length || normalized.length === available.size) {
       setDistillationCountries([]);
       clearDistillationPreview();
       setEmilViewportCommand({ id: Date.now() + Math.random(), operation: 'fit_targets' });
       return;
     }
-    setDistillationCountries([normalized]);
+    setDistillationCountries(normalized);
     setEmilViewportCommand({
       id: Date.now() + Math.random(),
       operation: 'fit_targets',
-      countryCodes: [normalized],
+      countryCodes: normalized,
     });
-    runDistillationPreview([normalized]);
-  }, [clearDistillationPreview, runDistillationPreview]);
+    runDistillationPreview(normalized);
+  }, [boundModelGeography?.sourceCountries, clearDistillationPreview, runDistillationPreview]);
+
+  const applyBoundModelResolution = useCallback((resolution) => {
+    const normalized = resolution === 'country' ? 'country' : 'native';
+    const sourceScene = boundModelSceneRef.current;
+    if (!sourceScene) {
+      setModelMixedResolutionStatus({ state: 'error', preview: null, error: 'Load the project model before changing its map resolution.' });
+      return;
+    }
+    clearModelResult();
+    clearDistillationPreview();
+    setDistillationCountries([]);
+    if (normalized === 'native') {
+      publishBoundModelRecords(sourceScene, { focus: false });
+      setModelGeographyResolution('native');
+      setModelMixedResolutionStatus({ state: 'idle', preview: null, error: '' });
+      return;
+    }
+    setModelMixedResolutionStatus(previous => ({ ...previous, state: 'loading', error: '' }));
+    try {
+      const preview = buildModelUniformResolutionPreview(sourceScene, 'country');
+      publishBoundModelRecords(preview, { focus: false });
+      setModelGeographyResolution('country');
+      setModelMixedResolutionStatus({ state: 'ready', preview, error: '' });
+    } catch (error) {
+      publishBoundModelRecords(sourceScene, { focus: false });
+      setModelGeographyResolution('native');
+      setModelMixedResolutionStatus({ state: 'error', preview: null, error: error?.message || 'The country-level view could not be created.' });
+    }
+  }, [clearDistillationPreview, clearModelResult, publishBoundModelRecords]);
 
   const applyModelMixedResolutionPreview = useCallback((focusCountry) => {
     const sourceScene = boundModelSceneRef.current;
@@ -2672,9 +2717,11 @@ function AppInner() {
         outerTier: 'country',
       });
       publishBoundModelRecords(preview, { focus: false });
+      setModelGeographyResolution('mixed');
       setModelMixedResolutionStatus({ state: 'ready', preview, error: '' });
     } catch (error) {
       publishBoundModelRecords(sourceScene, { focus: false });
+      setModelGeographyResolution('native');
       setModelMixedResolutionStatus({ state: 'error', preview: null, error: error?.message || 'The mixed-resolution view could not be created.' });
     }
   }, [clearDistillationPreview, clearModelResult, publishBoundModelRecords]);
@@ -11555,7 +11602,7 @@ function AppInner() {
   const workspaceStatusCards = useMemo(() => {
     const modelSceneReady = nohmWorkspaceContext?.mode === 'model' && modelSceneStatus.state === 'ready';
     const geographyValue = modelSceneReady
-      ? `${modelSceneStatus.meta.countries.length} countries · ${modelSceneStatus.meta.selectedYear || 'model year'}`
+      ? `${boundModelGeography?.nativeGeography || 'Model-native geography'} · ${modelSceneStatus.meta.countries.length} countries · ${modelSceneStatus.meta.selectedYear || 'model year'}`
       : nohmWorkspaceContext?.mode === 'model' && modelSceneStatus.state === 'loading'
         ? 'Loading bound model…'
         : nohmWorkspaceContext?.mode === 'model' && modelSceneStatus.state === 'error'
@@ -11572,7 +11619,11 @@ function AppInner() {
                     ? (logisticsCountryFilter || 'All Europe')
                     : loadedCountrySummary;
     const resolutionValue = modelSceneReady
-      ? `${modelSceneStatus.meta.nodeCount} nodes · ${modelSceneStatus.meta.linkCount} links`
+      ? modelGeographyResolution === 'country'
+        ? `${modelMixedResolutionStatus.preview?.meta?.preview?.counts?.projectedNodes || modelSceneStatus.meta.countries.length} country nodes · visual aggregation`
+        : modelGeographyResolution === 'mixed'
+          ? `${modelMixedResolutionStatus.preview?.meta?.preview?.counts?.projectedNodes || modelSceneStatus.meta.nodeCount} mixed-resolution nodes`
+          : `${modelSceneStatus.meta.nodeCount} bidding-zone nodes · ${modelSceneStatus.meta.linkCount} links`
       : nohmWorkspaceContext?.mode === 'model' && modelSceneStatus.state === 'error'
         ? modelSceneStatus.error
         : atlasOverlayMode
@@ -11651,8 +11702,9 @@ function AppInner() {
     ];
   }, [
     activeWorkspaceArea, atlasDomainVisibility, atlasNetworkCarrier, atlasOverlayCountrySummary,
-    atlasOverlayMode, gasCountryFilter, hiddenCarriers, liquidsCountryFilter, loadedCountrySummary,
+    atlasOverlayMode, boundModelGeography, gasCountryFilter, hiddenCarriers, liquidsCountryFilter, loadedCountrySummary,
     logisticsCountryFilter, modelSceneStatus, nohmWorkspaceContext?.mode,
+    modelGeographyResolution, modelMixedResolutionStatus.preview,
     pypsaHasGenerationMixData, pypsaSettings.solver_method,
     regionalClusterOverlay, runMode, selectedCachedNetworkLevel, showGenerationMix, waterCountryFilter,
     nohmRunState, nohmWorkspaceContext?.version,
@@ -15442,30 +15494,41 @@ function AppInner() {
                                   </span>
                                 </div>
                                 <p className="mt-2 text-[10px] leading-4 text-tj-slate">
-                                  Countries are attributes inside this project, not separately loadable networks. Use Distil geography below to retain a subset of the existing schema.
+                                  This project opens at its native bidding-zone topology. Countries are scope attributes inside the project, not separately loadable networks.
                                 </p>
                                 <p className="mt-1 text-[10px] leading-4 text-amber-100/80">
                                   Expanding a country to a finer topology requires the future governed split workflow; Atlas will not substitute an unrelated full-granularity cache.
                                 </p>
                               </div>
                               <label className="block rounded-xl border border-white/10 bg-black/20 p-3">
-                                <span className="mb-1 block text-[9px] uppercase tracking-wider text-tj-slate">Country view</span>
+                                <span className="mb-1 block text-[9px] uppercase tracking-wider text-tj-slate">Network geography</span>
                                 <select
-                                  value={distillationCountries.length === 1 ? distillationCountries[0] : ''}
-                                  onChange={(event) => selectBoundModelCountry(event.target.value)}
-                                  disabled={distillationPreviewStatus.state === 'loading'}
+                                  value={modelGeographyResolution}
+                                  onChange={(event) => applyBoundModelResolution(event.target.value)}
+                                  disabled={modelMixedResolutionStatus.state === 'loading' || distillationPreviewStatus.state === 'loading'}
                                   className="w-full rounded-lg border border-white/10 bg-[#081523] px-2 py-2 text-[10px] text-white disabled:opacity-50"
-                                  aria-label="Select country from loaded model"
+                                  aria-label="Model network geography"
                                 >
-                                  <option value="">All project countries</option>
-                                  {boundModelGeography.sourceCountries.map((code) => (
-                                    <option key={code} value={code}>{countryCodeToName(code)} ({code})</option>
-                                  ))}
+                                  <option value="native">{boundModelGeography.nativeGeography} (native)</option>
+                                  <option value="country">Country aggregation</option>
+                                  {modelGeographyResolution === 'mixed' && <option value="mixed" disabled>Mixed TSO view</option>}
                                 </select>
                                 <span className="mt-1.5 block text-[9px] leading-3.5 text-tj-slate">
-                                  Filters the existing project schema. It never substitutes a finer external country network.
+                                  Atlas can aggregate the existing bidding zones to countries. It cannot split them to a finer topology yet.
                                 </span>
+                                {modelMixedResolutionStatus.state === 'error' && (
+                                  <span role="alert" className="mt-1.5 block text-[9px] leading-3.5 text-red-200">{modelMixedResolutionStatus.error}</span>
+                                )}
                               </label>
+                              <ModelCountryScopeControls
+                                availableCountries={boundModelGeography.sourceCountries}
+                                selectedCountries={distillationCountries}
+                                busy={distillationPreviewStatus.state === 'loading'}
+                                disabled={modelGeographyResolution !== 'native'}
+                                countryName={countryCodeToName}
+                                onSelect={selectBoundModelCountries}
+                                onSelectAll={() => selectBoundModelCountries([])}
+                              />
                               {modelSceneStatus.state === 'ready' && boundModelGeography.sourceCountries.length > 1 && (
                                 <ModelMixedResolutionControls
                                   countries={boundModelGeography.sourceCountries}

@@ -21,6 +21,7 @@ import {
   NOHM_ATLAS_MODEL_SCENE_MESSAGE,
   NOHM_ATLAS_PORTAL_REQUEST_MESSAGE,
   normalizeNohmAtlasWorkspaceContext,
+  readNohmAtlasWorkspaceContextFromLocation,
   normalizeNohmAtlasViewState,
   normalizeNohmAtlasRunState,
   normalizeNohmAtlasBuilderDraftPreview,
@@ -29,6 +30,21 @@ import {
   requestNohmAtlasPortal,
   startNohmEmbedBridge,
 } from './nohmEmbed';
+
+test('Atlas bootstraps a versioned model context from its embed URL', () => {
+  expect(readNohmAtlasWorkspaceContextFromLocation({
+    search: '?nohm-context=1&mode=model&project=TYNDP_2026&projectName=TYNDP+2026&version=v2.5.2&geography=bidding_zone&geographyLabel=Bidding+zones&geographyResolved=1',
+  })).toEqual({
+    mode: 'model',
+    projectId: 'TYNDP_2026',
+    projectName: 'TYNDP 2026',
+    modelId: null,
+    version: 'v2.5.2',
+    scenario: null,
+    nativeGeography: { id: 'bidding_zone', label: 'Bidding zones', resolved: true },
+  });
+  expect(readNohmAtlasWorkspaceContextFromLocation({ search: '?project=TYNDP_2026' })).toBeNull();
+});
 
 test('Atlas accepts only a builder preview bound to the exact loaded model', () => {
   const callbacks = new Map();

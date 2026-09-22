@@ -132,6 +132,26 @@ export function normalizeNohmAtlasWorkspaceContext(context) {
   };
 }
 
+export function readNohmAtlasWorkspaceContextFromLocation(location) {
+  const search = optionalText(location?.search);
+  if (!search) return null;
+  const params = new URLSearchParams(search);
+  if (params.get('nohm-context') !== '1') return null;
+  return normalizeNohmAtlasWorkspaceContext({
+    mode: params.get('mode'),
+    projectId: params.get('project'),
+    projectName: params.get('projectName'),
+    modelId: params.get('model'),
+    version: params.get('version'),
+    scenario: params.get('scenario'),
+    nativeGeography: {
+      id: params.get('geography'),
+      label: params.get('geographyLabel'),
+      resolved: params.get('geographyResolved') === '1',
+    },
+  });
+}
+
 export function normalizeNohmAtlasRunState(value) {
   const projectId = optionalText(value?.projectId);
   const modelVersion = optionalText(value?.modelVersion);
