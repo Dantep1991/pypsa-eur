@@ -2518,7 +2518,11 @@ function AppInner() {
     const controller = new AbortController();
     setModelResultCatalogStatus({ state: 'loading', catalog: null, error: '' });
     setModelResultStatus({ state: 'idle', scene: null, error: '' });
-    fetchModelResultCatalog(nohmWorkspaceContext, modelVersion, { signal: controller.signal })
+    fetchModelResultCatalog(nohmWorkspaceContext, modelVersion, {
+      signal: controller.signal,
+      schemaCategories: modelSceneStatus.meta?.declaredCategories || {},
+      schemaCategoryObjects: modelSceneStatus.meta?.declaredCategoryObjects || {},
+    })
       .then((catalog) => {
         if (controller.signal.aborted) return;
         setModelResultCatalogStatus({ state: 'ready', catalog, error: '' });
@@ -2599,6 +2603,7 @@ function AppInner() {
       runId: run.run_id,
       runLabel: run.label || run.run_id,
       category: '',
+      categoryObjects: [],
       quantityId: quantity.id,
       reportFamily: quantity.report_family || '',
       className: quantity.class_name,

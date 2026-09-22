@@ -13,6 +13,11 @@ const scene = {
   version: 'v3.0.0',
   carrier: 'electricity',
   selected_year: 2030,
+  manifest: {
+    declared_categories: { Node: ['eMarket'], Line: ['eMarket Reference'], Generator: ['Solar PV'] },
+    declared_category_counts: { Node: { eMarket: 3 }, Line: { 'eMarket Reference': 1 }, Generator: { 'Solar PV': 1 } },
+    declared_category_objects: { Node: { eMarket: ['BE00', 'FR00', 'XX00'] }, Line: { 'eMarket Reference': ['BE-FR'] }, Generator: { 'Solar PV': ['BE solar'] } },
+  },
   nodes: [
     { id: 'Node:BE00', source_id: 'Node:BE00', name: 'BE00', category: 'eMarket', country: 'BE', role: 'declared', position: { lat: 50.8, lon: 4 }, position_lineage: { source: 'catalog', method: 'exact' } },
     { id: 'Node:FR00', source_id: 'Node:FR00', name: 'FR00', category: 'eMarket', country: 'FR', role: 'declared', position: { lat: 46.2, lon: 2.2 }, position_lineage: { source: 'catalog', method: 'exact' } },
@@ -69,9 +74,11 @@ test('adaptModelScene retains canonical IDs and excludes only unmapped markers',
   ]);
   expect(result.connections[0]).toMatchObject({
     id: 'Line:BE-FR', from: 'Node:BE00', to: 'Node:FR00', p_nom: 4200, capacity_units: 'MW',
+    category: 'eMarket Reference', membership: { parentClass: 'Line', parentCategory: 'eMarket Reference' },
   });
   expect(result.meta).toMatchObject({
     projectId: 'TYNDP 2026', version: 'v3.0.0', nodeCount: 3, mappedNodeCount: 2, linkCount: 1, assetCount: 1,
+    declaredCategories: { Node: ['eMarket'], Line: ['eMarket Reference'], Generator: ['Solar PV'] },
   });
 });
 

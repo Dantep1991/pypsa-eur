@@ -14,7 +14,7 @@ const catalogStatus = {
       periods: ['2030'],
       period_granularity: 'annual',
       quantities: [
-        { id: 'Node.Price', report_family: 'ST', class_name: 'Node', property_name: 'Price', unit: 'EUR/MWh', periods: ['2030'], categories: ['eMarket', 'Offshore'] },
+        { id: 'Node.Price', report_family: 'ST', class_name: 'Node', property_name: 'Price', unit: 'EUR/MWh', periods: ['2030'], categories: ['eMarket', 'Offshore'], category_objects: { eMarket: ['BE00', 'FR00'], Offshore: ['BE01'] } },
         { id: 'Node.Load', report_family: 'ST', class_name: 'Node', property_name: 'Load', unit: 'GWh', periods: ['2030'], categories: ['eMarket'] },
         { id: 'Line.Flow', report_family: 'ST', class_name: 'Line', property_name: 'Flow', unit: 'GWh', periods: ['2030'], categories: ['eMarket Reference'], supports_flow_map: true },
       ],
@@ -51,5 +51,8 @@ test('keeps component classes separate from real Visualisation categories', () =
   }));
 
   fireEvent.change(screen.getByLabelText('Result category'), { target: { value: 'eMarket' } });
-  expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ category: 'eMarket' }));
+  expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({
+    category: 'eMarket',
+    categoryObjects: ['BE00', 'FR00'],
+  }));
 });

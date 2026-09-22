@@ -38,6 +38,9 @@ export default function ModelResultsControls({
       runId,
       runLabel: nextRun?.label || runId,
       category: nextQuantity?.categories?.includes(selection?.category) ? selection.category : '',
+      categoryObjects: nextQuantity?.categories?.includes(selection?.category)
+        ? (nextQuantity?.category_objects?.[selection.category] || [])
+        : [],
       quantityId: nextQuantity?.id || '',
       reportFamily: nextQuantity?.report_family || '',
       className: nextQuantity?.class_name || '',
@@ -57,6 +60,7 @@ export default function ModelResultsControls({
       runId: run?.run_id || '',
       runLabel: run?.label || run?.run_id || '',
       category: '',
+      categoryObjects: [],
       quantityId: next.id,
       reportFamily: next.report_family || '',
       className: next.class_name,
@@ -75,6 +79,9 @@ export default function ModelResultsControls({
       runId: run?.run_id || '',
       runLabel: run?.label || run?.run_id || '',
       category: next.categories?.includes(selection?.category) ? selection.category : '',
+      categoryObjects: next.categories?.includes(selection?.category)
+        ? (next.category_objects?.[selection.category] || [])
+        : [],
       quantityId: next.id,
       reportFamily: next.report_family || '',
       className: next.class_name,
@@ -124,7 +131,17 @@ export default function ModelResultsControls({
       </label>
       <label className="block">
         <span className="mb-1 block text-[9px] uppercase tracking-wider text-tj-slate">Category</span>
-        <select value={category} onChange={event => onSelectionChange({ ...selection, category: event.target.value })} disabled={busy || !categories.length} className="w-full rounded-lg border border-white/10 bg-[#081523] px-2 py-2 text-[10px] text-white disabled:opacity-50" aria-label="Result category">
+        <select
+          value={category}
+          onChange={event => onSelectionChange({
+            ...selection,
+            category: event.target.value,
+            categoryObjects: quantity?.category_objects?.[event.target.value] || [],
+          })}
+          disabled={busy || !categories.length}
+          className="w-full rounded-lg border border-white/10 bg-[#081523] px-2 py-2 text-[10px] text-white disabled:opacity-50"
+          aria-label="Result category"
+        >
           <option value="">All categories</option>
           {categories.map(item => <option key={item} value={item}>{item}</option>)}
         </select>

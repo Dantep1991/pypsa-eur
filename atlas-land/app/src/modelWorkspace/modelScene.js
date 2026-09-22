@@ -160,6 +160,7 @@ function modelConnection(link, scene) {
     type: 'line',
     component_type: 'Line',
     collection: 'Lines',
+    category: link.category || '',
     carrier: scene.carrier || 'electricity',
     atlas_domain: 'Grid',
     color: '#2dd4bf',
@@ -169,6 +170,13 @@ function modelConnection(link, scene) {
     is_reference_topology: true,
     source_model_project: scene.project_id,
     source_model_version: scene.version,
+    membership: {
+      collection: 'Canonical model schema',
+      parentClass: 'Line',
+      childClass: 'Node',
+      parentCategory: link.category || '',
+      childCategory: '',
+    },
     properties: [
       { Property: 'Source ID', Value: link.source_id || link.id, Units: '' },
       { Property: 'Model category', Value: link.category || '', Units: '' },
@@ -222,6 +230,9 @@ export function adaptModelScene(scene, expectedProjectId = '') {
       linkCount: Number(scene.coverage?.counts?.links || 0),
       assetCount: Number(scene.coverage?.counts?.assets || 0),
       warnings: Array.isArray(scene.coverage?.warnings) ? scene.coverage.warnings : [],
+      declaredCategories: scene.manifest?.declared_categories || {},
+      declaredCategoryCounts: scene.manifest?.declared_category_counts || {},
+      declaredCategoryObjects: scene.manifest?.declared_category_objects || {},
     },
   };
 }

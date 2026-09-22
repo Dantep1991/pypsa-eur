@@ -5,6 +5,7 @@ import {
   adaptVisualisationQuery,
   decorateModelResultRecord,
   defaultModelResultSelection,
+  fetchModelResultScene,
   modelResultCatalogRequestUrl,
   modelResultColor,
   modelResultSceneRequestUrl,
@@ -18,24 +19,53 @@ test('model result URLs use the existing same-origin Visualisation API', () => {
   expect(modelResultCatalogRequestUrl({ mode: 'reference', projectId: 'x' })).toBeNull();
 });
 
-test('hydrates Visualisation metrics with their real categories and prefers node price', () => {
+test('hydrates Visualisation metrics with canonical model_schema categories and prefers node price', () => {
   const catalog = adaptVisualisationCatalog({ runs: [{ run_id: 'run', display_name: 'Run 1', target_year: '2030' }] }, {
     project_id: 'TYNDP 2026',
     metrics: [
       { report_family: 'ST', class_name: 'Line', property_name: 'Flow', unit_name: 'GWh', dimension_set: 0, supports_flow_map: true },
       { report_family: 'ST', class_name: 'Node', property_name: 'Price', unit_name: 'EUR/MWh', dimension_set: 1 },
+      { report_family: 'ST', class_name: 'Charging Station', property_name: 'Load', unit_name: 'GWh', dimension_set: 2 },
     ],
     metric_dimension_sets: [
       { categories: ['eMarket Reference'], nodes: ['BE00', 'FR00'] },
       { categories: ['eMarket', 'Offshore'], nodes: ['BE00', 'FR00'] },
+      { categories: ['Passenger EV'], nodes: ['BE00'] },
     ],
-  }, 'TYNDP 2026', 'v3.0.0');
+  }, 'TYNDP 2026', 'v3.0.0', {
+    categories: { Node: ['DRES', 'eMarket'], Line: ['eMarket Reference'] },
+    categoryObjects: {
+      Node: { DRES: ['BE00 dres'], eMarket: ['BE00', 'FR00'] },
+      Line: { 'eMarket Reference': ['BE00-FR00'] },
+    },
+  });
 
-  expect(catalog.runs[0].quantities[1].categories).toEqual(['eMarket', 'Offshore']);
+  expect(catalog.runs[0].quantities[1].categories).toEqual(['DRES', 'eMarket']);
+  expect(catalog.runs[0].quantities[1].category_objects.eMarket).toEqual(['BE00', 'FR00']);
+  expect(catalog.runs[0].quantities[1].solution_categories).toEqual(['eMarket', 'Offshore']);
+  expect(catalog.runs[0].quantities.map(quantity => quantity.class_name)).toEqual(['Line', 'Node']);
   expect(defaultModelResultSelection(catalog)).toEqual({
-    runId: 'run', runLabel: 'Run 1', category: '', quantityId: 'Node.Price', reportFamily: 'ST',
+    runId: 'run', runLabel: 'Run 1', category: '', categoryObjects: [], quantityId: 'Node.Price', reportFamily: 'ST',
     className: 'Node', propertyName: 'Price', unit: 'EUR/MWh', period: '2030', scopeId: '', supportsFlowMap: false,
   });
+});
+
+test('schema category selections query their exact model objects, not solution-file category labels', async () => {
+  const fetchImpl = jest.fn(async (_url, options) => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ rows: [], summary: { row_count_before_limit: 0 } }),
+    requestBody: options?.body,
+  }));
+  await fetchModelResultScene(context, {
+    runId: 'run', modelVersion: 'v3.0.0', reportFamily: 'ST', className: 'Generator',
+    propertyName: 'Generation', category: 'Gas', categoryObjects: ['BE00 gas', 'FR00 gas'],
+    unit: 'GWh', period: '2030', supportsFlowMap: false,
+  }, {}, fetchImpl);
+  const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+  expect(body.categories).toEqual([]);
+  expect(body.entity_names).toEqual(['BE00 gas', 'FR00 gas']);
+  expect(body.group_by).toBe('node');
 });
 
 test('Visualisation query rows project onto exact canonical Atlas IDs', () => {

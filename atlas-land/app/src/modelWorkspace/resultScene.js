@@ -38,15 +38,22 @@ async function readJson(response, label) {
   return payload;
 }
 
-function hydrateMetric(metric, payload) {
+function hydrateMetric(metric, payload, schemaMetadata = {}) {
   const dimensions = payload?.metric_dimension_sets?.[metric?.dimension_set] || {};
+  const className = text(metric?.class_name);
+  const schemaCategories = schemaMetadata?.categories?.[className];
+  const schemaCategoryObjects = schemaMetadata?.categoryObjects?.[className];
   return {
-    id: `${text(metric?.class_name)}.${text(metric?.property_name)}`,
+    id: `${className}.${text(metric?.property_name)}`,
     report_family: text(metric?.report_family),
-    class_name: text(metric?.class_name),
+    class_name: className,
     property_name: text(metric?.property_name),
     unit: text(metric?.unit_name),
-    categories: unique(dimensions.categories),
+    categories: unique(Array.isArray(schemaCategories) ? schemaCategories : []),
+    category_objects: Object.fromEntries(
+      Object.entries(schemaCategoryObjects || {}).map(([category, objectNames]) => [text(category), unique(objectNames)]),
+    ),
+    solution_categories: unique(dimensions.categories),
     countries: unique(dimensions.countries),
     nodes: unique(dimensions.nodes),
     available_granularities: unique(metric?.available_granularities),
@@ -54,13 +61,22 @@ function hydrateMetric(metric, payload) {
   };
 }
 
-export function adaptVisualisationCatalog(runsPayload, metricPayload, expectedProjectId = '', modelVersion = '') {
+export function adaptVisualisationCatalog(
+  runsPayload,
+  metricPayload,
+  expectedProjectId = '',
+  modelVersion = '',
+  schemaMetadata = {},
+) {
   const projectId = text(metricPayload?.project_id || expectedProjectId);
   if (expectedProjectId && projectId !== expectedProjectId) {
     throw new Error(`Atlas requested ${expectedProjectId} but received results for ${projectId || 'another project'}.`);
   }
   const sourceRuns = Array.isArray(runsPayload?.runs) ? runsPayload.runs : [];
-  const quantities = (metricPayload?.metrics || []).map(metric => hydrateMetric(metric, metricPayload));
+  const declaredClasses = new Set(Object.keys(schemaMetadata?.categories || {}));
+  const quantities = (metricPayload?.metrics || [])
+    .filter(metric => !declaredClasses.size || declaredClasses.has(text(metric?.class_name)))
+    .map(metric => hydrateMetric(metric, metricPayload, schemaMetadata));
   const runs = sourceRuns.map(run => {
     const targetYear = text(run?.target_year);
     return {
@@ -143,7 +159,10 @@ export async function fetchModelResultCatalog(context, modelVersion, options = {
     'Atlas could not load the Visualisation catalog',
   );
   return adaptModelResultCatalog(
-    adaptVisualisationCatalog(runsPayload, metricPayload, context.projectId, modelVersion),
+    adaptVisualisationCatalog(runsPayload, metricPayload, context.projectId, modelVersion, {
+      categories: options.schemaCategories || {},
+      categoryObjects: options.schemaCategoryObjects || {},
+    }),
     context.projectId,
     modelVersion,
   );
@@ -157,6 +176,8 @@ function queryPayload(selection) {
   const lineTarget = Boolean(selection.supportsFlowMap)
     || (text(selection.className) === 'Line' && text(selection.propertyName) === 'Flow');
   const scopeNode = lineTarget ? '' : stripCanonicalPrefix(selection.scopeId);
+  const selectedCategory = text(selection.category);
+  const categoryObjects = unique(selection.categoryObjects);
   return {
     run_ids: [text(selection.runId)],
     report_family: text(selection.reportFamily),
@@ -166,8 +187,13 @@ function queryPayload(selection) {
     group_by: lineTarget ? 'line' : 'node',
     countries: [],
     nodes: scopeNode ? [scopeNode] : [],
-    categories: text(selection.category) ? [text(selection.category)] : [],
-    entity_names: [],
+    // Visualisation CSV categories are output dimensions, not the governed
+    // model_schema categories shown by Atlas.  Filter by the exact canonical
+    // model objects belonging to the selected schema category instead.
+    categories: [],
+    entity_names: selectedCategory
+      ? (categoryObjects.length ? categoryObjects : ['__atlas_no_schema_objects__'])
+      : [],
     aggregation_method: 'sum',
     use_cache: true,
     cache_mode: 'prefer',
@@ -314,6 +340,7 @@ export function defaultModelResultSelection(catalog) {
     runId: run.run_id,
     runLabel: run.label || run.run_id,
     category: '',
+    categoryObjects: [],
     quantityId: quantity.id,
     reportFamily: quantity.report_family,
     className: quantity.class_name,
