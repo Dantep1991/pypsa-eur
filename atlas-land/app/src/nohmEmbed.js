@@ -13,6 +13,8 @@ export const NOHM_ATLAS_ACTION_EVENT = 'nohm:atlas-action';
 export const NOHM_ATLAS_VIEW_STATE_MESSAGE = 'nohm.atlas.view-state.v1';
 export const NOHM_ATLAS_RUN_STATE_MESSAGE = 'nohm.atlas.run-state.v1';
 export const NOHM_ATLAS_RUN_STATE_EVENT = 'nohm:atlas-run-state';
+export const NOHM_ATLAS_BUILDER_DRAFT_MESSAGE = 'nohm.atlas.builder-draft.v1';
+export const NOHM_ATLAS_BUILDER_DRAFT_EVENT = 'nohm:atlas-builder-draft';
 export const NOHM_ATLAS_THEME_MESSAGE = 'nohm.atlas.theme.v1';
 export const NOHM_ATLAS_THEME_EVENT = 'nohm:atlas-theme';
 export const NOHM_ATLAS_DOMAINS = Object.freeze(['model', 'operate', 'visualise', 'explore']);
@@ -163,6 +165,43 @@ export function normalizeNohmAtlasRunState(value) {
   };
 }
 
+export function normalizeNohmAtlasBuilderDraftPreview(value) {
+  if (!value || typeof value !== 'object') return null;
+  const projectId = optionalText(value.projectId);
+  const draftId = optionalText(value.draftId);
+  const sourceVersion = optionalText(value.sourceVersion);
+  const stageId = optionalText(value.stageId);
+  const stageLabel = optionalText(value.stageLabel);
+  const revision = Number(value.revision);
+  const stageIndex = Number(value.stageIndex);
+  const stageCount = Number(value.stageCount);
+  const sourceEvidence = value.evidence && typeof value.evidence === 'object' ? value.evidence : {};
+  const evidence = Object.fromEntries([
+    'carrierCount', 'countryCount', 'nodeDefinitionCount', 'assetCarrierCount', 'connectionGroupCount',
+  ].map((key) => [key, Number(sourceEvidence[key])]));
+  if (!projectId || !draftId || !stageId || !stageLabel
+      || !Number.isSafeInteger(revision) || revision < 0
+      || !Number.isSafeInteger(stageIndex) || stageIndex < 1
+      || !Number.isSafeInteger(stageCount) || stageCount < stageIndex
+      || value.mode !== 'definitions-only'
+      || !['not-ready', 'identifiers-selected'].includes(value.geometryStatus)
+      || Object.values(evidence).some((count) => !Number.isSafeInteger(count) || count < 0)) return null;
+  return {
+    projectId,
+    draftId,
+    sourceVersion,
+    revision,
+    stageId,
+    stageLabel,
+    stageIndex,
+    stageCount,
+    mode: 'definitions-only',
+    geometryStatus: value.geometryStatus,
+    evidence,
+    message: optionalText(value.message),
+  };
+}
+
 export function announceNohmEmbedReady(targetWindow = window) {
   if (!targetWindow?.parent || targetWindow.parent === targetWindow) return false;
   targetWindow.parent.postMessage({
@@ -307,6 +346,21 @@ export function startNohmEmbedBridge(targetWindow = window, { onDomainChange, on
       if (typeof targetWindow.CustomEvent === 'function') {
         targetWindow.dispatchEvent(new targetWindow.CustomEvent(NOHM_ATLAS_RUN_STATE_EVENT, {
           detail: { runState },
+        }));
+      }
+      return;
+    }
+    if (event.data?.type === NOHM_ATLAS_BUILDER_DRAFT_MESSAGE) {
+      const preview = event.data?.preview === null
+        ? null
+        : normalizeNohmAtlasBuilderDraftPreview(event.data?.preview);
+      const context = targetWindow.__NOHM_ATLAS_WORKSPACE_CONTEXT__;
+      if (event.data?.preview !== null && (!preview || context?.mode !== 'model'
+          || preview.projectId !== context.projectId
+          || (context.version && preview.sourceVersion !== context.version))) return;
+      if (typeof targetWindow.CustomEvent === 'function') {
+        targetWindow.dispatchEvent(new targetWindow.CustomEvent(NOHM_ATLAS_BUILDER_DRAFT_EVENT, {
+          detail: { preview },
         }));
       }
       return;

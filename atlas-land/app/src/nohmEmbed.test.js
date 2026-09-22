@@ -16,16 +16,63 @@ import {
   NOHM_ATLAS_WORKSPACE_CONTEXT_MESSAGE,
   NOHM_ATLAS_RUN_STATE_EVENT,
   NOHM_ATLAS_RUN_STATE_MESSAGE,
+  NOHM_ATLAS_BUILDER_DRAFT_EVENT,
+  NOHM_ATLAS_BUILDER_DRAFT_MESSAGE,
   NOHM_ATLAS_MODEL_SCENE_MESSAGE,
   NOHM_ATLAS_PORTAL_REQUEST_MESSAGE,
   normalizeNohmAtlasWorkspaceContext,
   normalizeNohmAtlasViewState,
   normalizeNohmAtlasRunState,
+  normalizeNohmAtlasBuilderDraftPreview,
   acknowledgeNohmAtlasAction,
   scheduleNohmEmbedReady,
   requestNohmAtlasPortal,
   startNohmEmbedBridge,
 } from './nohmEmbed';
+
+test('Atlas accepts only a builder preview bound to the exact loaded model', () => {
+  const callbacks = new Map();
+  const dispatched = [];
+  const parent = { postMessage: jest.fn() };
+  const target = {
+    parent,
+    location: { origin: 'https://nohm.example.test' },
+    document: { documentElement: { setAttribute: jest.fn() } },
+    requestAnimationFrame: jest.fn(),
+    addEventListener: (name, callback) => callbacks.set(name, callback),
+    removeEventListener: jest.fn(),
+    CustomEvent: class CustomEvent {
+      constructor(type, options) { this.type = type; this.detail = options.detail; }
+    },
+    dispatchEvent: (event) => dispatched.push({ type: event.type, detail: event.detail }),
+    __NOHM_ATLAS_WORKSPACE_CONTEXT__: { mode: 'model', projectId: 'TYNDP_2026', version: 'v3.0.0' },
+  };
+  startNohmEmbedBridge(target);
+  const preview = {
+    projectId: 'TYNDP_2026', draftId: 'atlas-v3', sourceVersion: 'v3.0.0', revision: 3,
+    stageId: 'skeleton', stageLabel: 'Geography', stageIndex: 3, stageCount: 11,
+    mode: 'definitions-only', geometryStatus: 'not-ready',
+    evidence: { carrierCount: 1, countryCount: 0, nodeDefinitionCount: 0, assetCarrierCount: 0, connectionGroupCount: 0 },
+    message: 'Definitions only.',
+  };
+  callbacks.get('message')({ source: parent, origin: target.location.origin, data: {
+    type: NOHM_ATLAS_BUILDER_DRAFT_MESSAGE, protocolVersion: 1, source: 'nohm-shell', preview,
+  } });
+  expect(dispatched.at(-1)).toEqual({
+    type: NOHM_ATLAS_BUILDER_DRAFT_EVENT,
+    detail: { preview: normalizeNohmAtlasBuilderDraftPreview(preview) },
+  });
+  const acceptedCount = dispatched.length;
+  callbacks.get('message')({ source: parent, origin: target.location.origin, data: {
+    type: NOHM_ATLAS_BUILDER_DRAFT_MESSAGE, protocolVersion: 1, source: 'nohm-shell',
+    preview: { ...preview, sourceVersion: 'v4.0.0' },
+  } });
+  expect(dispatched).toHaveLength(acceptedCount);
+  callbacks.get('message')({ source: parent, origin: target.location.origin, data: {
+    type: NOHM_ATLAS_BUILDER_DRAFT_MESSAGE, protocolVersion: 1, source: 'nohm-shell', preview: null,
+  } });
+  expect(dispatched.at(-1)).toEqual({ type: NOHM_ATLAS_BUILDER_DRAFT_EVENT, detail: { preview: null } });
+});
 
 test('Atlas accepts run state only for the exact bound project and model version', () => {
   const callbacks = new Map();

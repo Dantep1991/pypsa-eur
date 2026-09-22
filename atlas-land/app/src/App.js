@@ -23,6 +23,7 @@ import ModelDistillationLegend from './components/ModelDistillationLegend';
 import ModelMixedResolutionControls from './components/ModelMixedResolutionControls';
 import ModelPortalControls from './components/ModelPortalControls';
 import ModelRunStatus from './components/ModelRunStatus';
+import ModelBuilderDraftPreview from './components/ModelBuilderDraftPreview';
 import { EMIL_VOICE_MODES } from './voice/emilVoiceState';
 import { buildAtlasTranscriptionContext } from './voice/atlasTranscriptionContext';
 import {
@@ -65,6 +66,7 @@ import {
   NOHM_ATLAS_ACTION_EVENT,
   NOHM_ATLAS_DOMAIN_EVENT,
   NOHM_ATLAS_RUN_STATE_EVENT,
+  NOHM_ATLAS_BUILDER_DRAFT_EVENT,
   NOHM_ATLAS_THEME_EVENT,
   NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT,
   requestNohmAtlasPortal,
@@ -584,6 +586,7 @@ function AppInner() {
   const [modelResultSelection, setModelResultSelection] = useState(null);
   const [modelResultStatus, setModelResultStatus] = useState({ state: 'idle', scene: null, error: '' });
   const [nohmRunState, setNohmRunState] = useState(null);
+  const [builderDraftPreview, setBuilderDraftPreview] = useState(null);
   const modelResultRequestRef = useRef(null);
   const [distillationCountries, setDistillationCountries] = useState([]);
   const [distillationPreviewStatus, setDistillationPreviewStatus] = useState({ state: 'idle', preview: null, error: '' });
@@ -2258,6 +2261,7 @@ function AppInner() {
     const handleNohmAtlasWorkspaceContext = (event) => {
       if (event?.detail?.context) {
         setNohmRunState(null);
+        setBuilderDraftPreview(null);
         setNohmWorkspaceContext(event.detail.context);
       }
     };
@@ -2273,6 +2277,16 @@ function AppInner() {
     };
     window.addEventListener(NOHM_ATLAS_RUN_STATE_EVENT, handleNohmAtlasRunState);
     return () => window.removeEventListener(NOHM_ATLAS_RUN_STATE_EVENT, handleNohmAtlasRunState);
+  }, [nohmWorkspaceContext?.projectId, nohmWorkspaceContext?.version]);
+  useEffect(() => {
+    const handleNohmAtlasBuilderDraft = (event) => {
+      const preview = event?.detail?.preview || null;
+      if (preview && (preview.projectId !== nohmWorkspaceContext?.projectId
+          || preview.sourceVersion !== nohmWorkspaceContext?.version)) return;
+      setBuilderDraftPreview(preview);
+    };
+    window.addEventListener(NOHM_ATLAS_BUILDER_DRAFT_EVENT, handleNohmAtlasBuilderDraft);
+    return () => window.removeEventListener(NOHM_ATLAS_BUILDER_DRAFT_EVENT, handleNohmAtlasBuilderDraft);
   }, [nohmWorkspaceContext?.projectId, nohmWorkspaceContext?.version]);
 
   const publishBoundModelRecords = useCallback((modelScene, { focus = false } = {}) => {
@@ -16083,6 +16097,7 @@ function AppInner() {
                     )}
                   </>
                 )}
+                <ModelBuilderDraftPreview preview={builderDraftPreview} />
                 <MapWorkspaceBoundary resetKey={mapRecoveryKey}>
                 <EnhancedLeafletMapWithVoice
                   atlasTheme={atlasTheme}
