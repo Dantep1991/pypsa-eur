@@ -201,7 +201,9 @@ function createPreviewServer({
     }
     if (rawPathname === proxyMount || rawPathname.startsWith(`${proxyMount}/`)) {
       const proxiedPath = stripApiPrefix ? (rawPathname.slice(proxyMount.length) || '/') : rawPathname;
-      const selectedUpstream = modelUpstream && proxiedPath.startsWith('/api/atlas/projects')
+      const usesModelBackend = proxiedPath.startsWith('/api/atlas/projects')
+        || proxiedPath.startsWith('/api/solutions');
+      const selectedUpstream = modelUpstream && usesModelBackend
         ? modelUpstream
         : upstream;
       const headers = forwardedHeaders(req.headers);

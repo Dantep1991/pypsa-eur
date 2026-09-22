@@ -169,6 +169,10 @@ test('project model requests can use Emil without redirecting ordinary Atlas API
     assert.deepEqual(await modelResponse.json(), { source: 'emil-model' });
     assert.equal(modelRequests.at(-1), '/api/atlas/projects/TYNDP/scene?layers=grid');
 
+    const solutionResponse = await fetch(`${splitOrigin}/atlas-api/api/solutions/TYNDP/runs`);
+    assert.deepEqual(await solutionResponse.json(), { source: 'emil-model' });
+    assert.equal(modelRequests.at(-1), '/api/solutions/TYNDP/runs');
+
     const ordinaryResponse = await fetch(`${splitOrigin}/atlas-api/api/atlas/land/status`);
     assert.deepEqual(await ordinaryResponse.json(), { source: 'candidate' });
     assert.equal(upstreamRequests.at(-1).url, '/api/atlas/land/status');

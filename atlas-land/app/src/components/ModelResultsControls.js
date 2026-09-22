@@ -16,46 +16,54 @@ export default function ModelResultsControls({
   const compatibleRuns = (catalog?.runs || []).filter(run => run.compatible && run.quantities?.length);
   const run = compatibleRuns.find(item => item.run_id === selection?.runId) || compatibleRuns[0];
   const allQuantities = run?.quantities || [];
-  const categories = [...new Set(allQuantities.map(item => item.class_name).filter(Boolean))];
-  const category = categories.includes(selection?.category)
-    ? selection.category
-    : (allQuantities.find(item => item.id === selection?.quantityId)?.class_name || categories[0] || '');
-  const quantities = allQuantities.filter(item => item.class_name === category);
+  const componentClasses = [...new Set(allQuantities.map(item => item.class_name).filter(Boolean))];
+  const componentClass = componentClasses.includes(selection?.className)
+    ? selection.className
+    : (allQuantities.find(item => item.id === selection?.quantityId)?.class_name || componentClasses[0] || '');
+  const quantities = allQuantities.filter(item => item.class_name === componentClass);
   const quantity = quantities.find(item => item.id === selection?.quantityId) || quantities[0];
+  const categories = quantity?.categories || [];
+  const category = categories.includes(selection?.category) ? selection.category : '';
   const periods = quantity?.periods?.length ? quantity.periods : (run?.periods || []);
   const busy = resultStatus?.state === 'loading';
 
   const selectRun = (runId) => {
     const nextRun = compatibleRuns.find(item => item.run_id === runId);
-    const preferredCategory = selection?.category || 'Node';
-    const nextQuantity = nextRun?.quantities?.find(item => item.class_name === preferredCategory && item.id === selection?.quantityId)
-      || nextRun?.quantities?.find(item => item.class_name === preferredCategory)
+    const preferredClass = selection?.className || 'Node';
+    const nextQuantity = nextRun?.quantities?.find(item => item.class_name === preferredClass && item.id === selection?.quantityId)
+      || nextRun?.quantities?.find(item => item.class_name === preferredClass)
       || nextRun?.quantities?.find(item => item.id === 'Node.Price')
       || nextRun?.quantities?.[0];
     onSelectionChange({
       runId,
-      category: nextQuantity?.class_name || '',
+      runLabel: nextRun?.label || runId,
+      category: nextQuantity?.categories?.includes(selection?.category) ? selection.category : '',
       quantityId: nextQuantity?.id || '',
+      reportFamily: nextQuantity?.report_family || '',
       className: nextQuantity?.class_name || '',
       propertyName: nextQuantity?.property_name || '',
       unit: nextQuantity?.unit || '',
       period: nextQuantity?.periods?.[0] || nextRun?.periods?.[0] || '',
       scopeId: selection?.scopeId || '',
+      supportsFlowMap: Boolean(nextQuantity?.supports_flow_map),
     });
   };
 
-  const selectCategory = (className) => {
+  const selectComponentClass = (className) => {
     const next = allQuantities.find(item => item.class_name === className);
     if (!next) return;
     onSelectionChange({
       ...selection,
       runId: run?.run_id || '',
-      category: className,
+      runLabel: run?.label || run?.run_id || '',
+      category: '',
       quantityId: next.id,
+      reportFamily: next.report_family || '',
       className: next.class_name,
       propertyName: next.property_name,
       unit: next.unit || '',
       period: next.periods?.[0] || run?.periods?.[0] || '',
+      supportsFlowMap: Boolean(next.supports_flow_map),
     });
   };
 
@@ -65,12 +73,15 @@ export default function ModelResultsControls({
     onSelectionChange({
       ...selection,
       runId: run?.run_id || '',
-      category: next.class_name,
+      runLabel: run?.label || run?.run_id || '',
+      category: next.categories?.includes(selection?.category) ? selection.category : '',
       quantityId: next.id,
+      reportFamily: next.report_family || '',
       className: next.class_name,
       propertyName: next.property_name,
       unit: next.unit || '',
       period: next.periods?.[0] || run?.periods?.[0] || '',
+      supportsFlowMap: Boolean(next.supports_flow_map),
     });
   };
 
@@ -90,7 +101,7 @@ export default function ModelResultsControls({
         <BarChart3 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-300" />
         <div>
           <p className="text-[10px] font-semibold text-white">Existing model results</p>
-          <p className="mt-0.5 text-[9px] leading-3.5 text-tj-slate">Read-only retained outputs, bound to {catalog.model_version}. No values are recalculated.</p>
+          <p className="mt-0.5 text-[9px] leading-3.5 text-tj-slate">Uses Emil's governed Visualisation catalog and queries, bound to {catalog.model_version}. No values are recalculated.</p>
         </div>
       </div>
       <label className="block">
@@ -100,15 +111,22 @@ export default function ModelResultsControls({
         </select>
       </label>
       <label className="block">
-        <span className="mb-1 block text-[9px] uppercase tracking-wider text-tj-slate">Category</span>
-        <select value={category} onChange={event => selectCategory(event.target.value)} disabled={busy} className="w-full rounded-lg border border-white/10 bg-[#081523] px-2 py-2 text-[10px] text-white disabled:opacity-50" aria-label="Result category">
-          {categories.map(item => <option key={item} value={item}>{item}</option>)}
+        <span className="mb-1 block text-[9px] uppercase tracking-wider text-tj-slate">Component</span>
+        <select value={componentClass} onChange={event => selectComponentClass(event.target.value)} disabled={busy} className="w-full rounded-lg border border-white/10 bg-[#081523] px-2 py-2 text-[10px] text-white disabled:opacity-50" aria-label="Result component">
+          {componentClasses.map(item => <option key={item} value={item}>{item}</option>)}
         </select>
       </label>
       <label className="block">
         <span className="mb-1 block text-[9px] uppercase tracking-wider text-tj-slate">Quantity</span>
         <select value={quantity?.id || ''} onChange={event => selectQuantity(event.target.value)} disabled={busy} className="w-full rounded-lg border border-white/10 bg-[#081523] px-2 py-2 text-[10px] text-white disabled:opacity-50">
           {quantities.map(item => <option key={`${item.id}:${item.unit || ''}`} value={item.id}>{quantityLabel(item)}</option>)}
+        </select>
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-[9px] uppercase tracking-wider text-tj-slate">Category</span>
+        <select value={category} onChange={event => onSelectionChange({ ...selection, category: event.target.value })} disabled={busy || !categories.length} className="w-full rounded-lg border border-white/10 bg-[#081523] px-2 py-2 text-[10px] text-white disabled:opacity-50" aria-label="Result category">
+          <option value="">All categories</option>
+          {categories.map(item => <option key={item} value={item}>{item}</option>)}
         </select>
       </label>
       <label className="block">
@@ -128,7 +146,7 @@ export default function ModelResultsControls({
       {resultStatus?.scene && (
         <div className="flex items-start gap-2 rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-[9px] leading-3.5 text-tj-slate">
           <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-300" />
-          <span><strong className="text-white">{resultStatus.scene.selection?.id}</strong> shown for {resultStatus.scene.selection?.period_label}. {Number(resultStatus.scene.coverage?.projected_row_count || 0).toLocaleString()} mapped objects.</span>
+          <span><strong className="text-white">{resultStatus.scene.selection?.id}</strong> shown for {resultStatus.scene.selection?.period_label}. {Number(resultStatus.scene.coverage?.mapped_row_count ?? resultStatus.scene.coverage?.projected_row_count ?? 0).toLocaleString()} mapped objects.</span>
         </div>
       )}
       <div className="flex gap-2">

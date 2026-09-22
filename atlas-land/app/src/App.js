@@ -2557,29 +2557,33 @@ function AppInner() {
         carrier: 'electricity',
       }, { signal: controller.signal });
       if (controller.signal.aborted) return;
-      const scopeId = String(requestedSelection.scopeId || '').trim();
-      if (!scopeId) {
-        setModelResultStatus({ state: 'ready', scene, error: '' });
+      const mapTarget = scene.selection?.map_target;
+      const mapEntityIds = new Set((mapTarget === 'link'
+        ? pypsaConnectionsRef.current
+        : pypsaFacilitiesDataRef.current
+      ).map(record => String(record?.id || '')).filter(Boolean));
+      const values = scene.values.filter(row => mapEntityIds.has(String(row.entity_id || '')));
+      if (!values.length) {
+        setModelResultStatus({
+          state: 'error',
+          scene: null,
+          error: 'The Visualisation query returned values, but none match the nodes or links in the loaded model topology.',
+        });
         return;
       }
-      const allowedEntityIds = new Set([scopeId]);
-      pypsaFacilitiesDataRef.current.forEach((facility) => {
-        if (facility?.id === scopeId || facility?.bus === scopeId) allowedEntityIds.add(String(facility.id || ''));
-      });
-      pypsaConnectionsRef.current.forEach((connection) => {
-        if ([connection?.from, connection?.to, connection?.fromNode, connection?.toNode].includes(scopeId)) {
-          allowedEntityIds.add(String(connection.id || ''));
-        }
-      });
-      const values = scene.values.filter(row => allowedEntityIds.has(String(row.entity_id || '')));
-      const scopedScene = {
+      const mappedScene = {
         ...scene,
         values,
         valueByEntityId: new Map(values.map(row => [String(row.entity_id || ''), row])),
-        selection: { ...scene.selection, scope_id: scopeId },
-        coverage: { ...scene.coverage, projected_row_count: values.length },
+        selection: { ...scene.selection, scope_id: String(requestedSelection.scopeId || '').trim() },
+        coverage: {
+          ...scene.coverage,
+          mapped_row_count: values.length,
+          excluded_row_count: Math.max(0, scene.values.length - values.length),
+        },
       };
-      setModelResultStatus({ state: 'ready', scene: scopedScene, error: '' });
+      if (mapTarget !== 'link') setShowMapNodes(true);
+      setModelResultStatus({ state: 'ready', scene: mappedScene, error: '' });
     } catch (error) {
       if (controller.signal.aborted || error?.name === 'AbortError') return;
       setModelResultStatus((previous) => ({ ...previous, state: 'error', error: error?.message || 'The selected model result could not be shown.' }));
@@ -2593,13 +2597,16 @@ function AppInner() {
     if (!run || !quantity) return;
     const selection = {
       runId: run.run_id,
-      category: quantity.class_name,
+      runLabel: run.label || run.run_id,
+      category: '',
       quantityId: quantity.id,
+      reportFamily: quantity.report_family || '',
       className: quantity.class_name,
       propertyName: quantity.property_name,
       unit: quantity.unit || '',
       period: quantity.periods?.[0] || run.periods?.[0] || '',
       scopeId: '',
+      supportsFlowMap: Boolean(quantity.supports_flow_map),
     };
     setModelResultSelection(selection);
     showSelectedModelResult(selection);

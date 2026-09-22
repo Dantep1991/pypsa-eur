@@ -31,7 +31,7 @@ export default function ModelResultLegend({ scene, onClear }) {
         <span>{formatValue(legend.minimum)} {legend.unit || ''}</span>
         <span>{formatValue(legend.maximum)} {legend.unit || ''}</span>
       </div>
-      <p className="mt-2 text-[9px] leading-3.5 text-slate-400">{Number(scene.coverage?.projected_row_count || 0).toLocaleString()} mapped · {Number(scene.coverage?.excluded_row_count || 0).toLocaleString()} outside this topology · {scene.model_version}</p>
+      <p className="mt-2 text-[9px] leading-3.5 text-slate-400">{Number(scene.coverage?.mapped_row_count ?? scene.coverage?.projected_row_count ?? 0).toLocaleString()} mapped · {Number(scene.coverage?.excluded_row_count || 0).toLocaleString()} outside this topology · {scene.model_version}</p>
     </aside>
   );
 }
