@@ -76,6 +76,20 @@ test('Atlas accepts only a builder preview bound to the exact loaded model', () 
   expect(dispatched.at(-1)).toEqual({ type: NOHM_ATLAS_BUILDER_DRAFT_EVENT, detail: { preview: null } });
 });
 
+test('Atlas retains only a closed Model Assembly summary', () => {
+  const preview = normalizeNohmAtlasBuilderDraftPreview({
+    projectId: 'TYNDP_2026', draftId: 'atlas-v3', sourceVersion: 'v3.0.0', revision: 8,
+    stageId: 'muscles', stageLabel: 'Assembly', stageIndex: 11, stageCount: 11,
+    mode: 'assembled-summary', geometryStatus: 'assembled-no-geometry', staleStageIds: ['organs'],
+    evidence: { carrierCount: 1, countryCount: 2, nodeDefinitionCount: 7, assetCarrierCount: 1, connectionGroupCount: 2 },
+    assembly: { previewId: 'abc', status: 'complete', phase: 'complete', completed: 4, total: 4, classCount: 5, objectCount: 105, membershipCount: 178, propertyRecordCount: 901 },
+    message: 'Temporary canonical objects assembled.', schemaPayload: { must: 'not cross' },
+  });
+  expect(preview.mode).toBe('assembled-summary');
+  expect(preview.assembly.objectCount).toBe(105);
+  expect(preview.schemaPayload).toBeUndefined();
+});
+
 test('Atlas accepts run state only for the exact bound project and model version', () => {
   const callbacks = new Map();
   const dispatched = [];

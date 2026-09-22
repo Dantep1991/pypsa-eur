@@ -17,6 +17,13 @@ export default function ModelBuilderDraftPreview({ preview }) {
     circadian_system: 'Time', nervous_system: 'Rules', skin: 'Climate & Platform', muscles: 'Assembly',
   };
   const staleLabels = (preview.staleStageIds || []).map((stageId) => stageLabels[stageId]).filter(Boolean);
+  const assembly = preview.assembly;
+  const assemblyFacts = assembly ? [
+    `${assembly.classCount} classes`,
+    `${assembly.objectCount} objects`,
+    `${assembly.membershipCount} memberships`,
+    `${assembly.propertyRecordCount} properties`,
+  ] : [];
   return (
     <aside
       aria-label="Model Builder draft preview"
@@ -35,12 +42,21 @@ export default function ModelBuilderDraftPreview({ preview }) {
           </div>
           <p className="mt-1 text-[10px] leading-4 text-tj-slate">{preview.message}</p>
           {facts.length > 0 && <p className="mt-1.5 text-[9px] font-medium text-tj-gold">{facts.join(' · ')}</p>}
+          {assembly && (
+            <div className="mt-1.5 rounded-md border border-cyan-300/20 bg-cyan-300/[0.07] px-2 py-1 text-[9px] leading-3.5 text-cyan-50">
+              <span className="font-semibold capitalize">{assembly.status}</span>
+              {' · '}{Math.min(assembly.completed, assembly.total)}/{assembly.total} phases
+              {preview.mode === 'assembled-summary' && <span className="block text-cyan-100/80">{assemblyFacts.join(' · ')}</span>}
+            </div>
+          )}
           {staleLabels.length > 0 && (
             <p className="mt-1.5 rounded-md border border-amber-300/25 bg-amber-300/10 px-2 py-1 text-[9px] leading-3.5 text-amber-100">
               Needs review after upstream change: {staleLabels.join(', ')}
             </p>
           )}
-          <p className="mt-1 text-[9px] leading-3.5 text-sky-200">Definitions only · published topology retained</p>
+          <p className="mt-1 text-[9px] leading-3.5 text-sky-200">
+            {assembly ? 'Temporary assembly · published topology retained' : 'Definitions only · published topology retained'}
+          </p>
         </div>
       </div>
     </aside>

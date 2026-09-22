@@ -182,6 +182,26 @@ export function normalizeNohmAtlasBuilderDraftPreview(value) {
   const sourceEvidence = value.evidence && typeof value.evidence === 'object' ? value.evidence : {};
   const staleStageIds = [...new Set((Array.isArray(value.staleStageIds) ? value.staleStageIds : [])
     .map(optionalText).filter((stageId) => NOHM_BUILDER_STAGE_IDS.includes(stageId)))];
+  const allowedModes = ['definitions-only', 'assembly-progress', 'assembled-summary'];
+  const allowedGeometry = ['not-ready', 'identifiers-selected', 'assembled-no-geometry'];
+  const mode = allowedModes.includes(value.mode) ? value.mode : null;
+  const sourceAssembly = value.assembly && typeof value.assembly === 'object' ? value.assembly : null;
+  const assemblyCounts = sourceAssembly ? Object.fromEntries([
+    'completed', 'total', 'classCount', 'objectCount', 'membershipCount', 'propertyRecordCount',
+  ].map((key) => [key, Number(sourceAssembly[key])])) : null;
+  const assemblyStatus = ['queued', 'running', 'finalising', 'complete', 'error'].includes(sourceAssembly?.status)
+    ? sourceAssembly.status
+    : null;
+  const assembly = sourceAssembly && assemblyStatus && assemblyCounts
+    && Object.values(assemblyCounts).every((count) => Number.isSafeInteger(count) && count >= 0)
+    && assemblyCounts.total >= 1 && assemblyCounts.completed <= assemblyCounts.total
+    ? {
+      previewId: optionalText(sourceAssembly.previewId),
+      status: assemblyStatus,
+      phase: optionalText(sourceAssembly.phase),
+      ...assemblyCounts,
+    }
+    : null;
   const evidence = Object.fromEntries([
     'carrierCount', 'countryCount', 'nodeDefinitionCount', 'assetCarrierCount', 'connectionGroupCount',
   ].map((key) => [key, Number(sourceEvidence[key])]));
@@ -189,8 +209,9 @@ export function normalizeNohmAtlasBuilderDraftPreview(value) {
       || !Number.isSafeInteger(revision) || revision < 0
       || !Number.isSafeInteger(stageIndex) || stageIndex < 1
       || !Number.isSafeInteger(stageCount) || stageCount < stageIndex
-      || value.mode !== 'definitions-only'
-      || !['not-ready', 'identifiers-selected'].includes(value.geometryStatus)
+      || !mode || !allowedGeometry.includes(value.geometryStatus)
+      || (mode === 'definitions-only' ? assembly !== null : assembly === null)
+      || (mode === 'assembled-summary' && (assembly?.status !== 'complete' || value.geometryStatus !== 'assembled-no-geometry'))
       || Object.values(evidence).some((count) => !Number.isSafeInteger(count) || count < 0)) return null;
   return {
     projectId,
@@ -201,9 +222,10 @@ export function normalizeNohmAtlasBuilderDraftPreview(value) {
     stageLabel,
     stageIndex,
     stageCount,
-    mode: 'definitions-only',
+    mode,
     geometryStatus: value.geometryStatus,
     staleStageIds,
+    assembly,
     evidence,
     message: optionalText(value.message),
   };
