@@ -22,6 +22,7 @@ import MapRenderDiagnostics, { mapDiagnosticsEnabled } from './MapRenderDiagnost
 import ConnectionCapacityLegend from './ConnectionCapacityLegend';
 import GridAccessLegend from './GridAccessLegend';
 import LandSampleSummary from './LandSampleSummary';
+import AtlasPresentation from './AtlasPresentation';
 import { getConnectionCapacity, connectionCapacityScales, capacityColor, formatCapacity } from '../connectionCapacity';
 import { createSpatialFeatureKey } from '../spatialFeatureKey';
 import { createAtlasCanvas } from '../atlasCanvas';
@@ -29,12 +30,21 @@ import { rankNetworkNodes } from '../networkNodeRanking';
 import { indexOverviewNodes, selectOverviewNodes } from '../overviewNodeSampling';
 import { atlasRecordCountryCodes } from '../atlasNetworkOverlay';
 import { networkFitPoints, countryFitFeatures } from '../networkFitExtent';
+import { regionBoundaryCollection, nodeHoverText } from '../regionBoundaries';
 import { landCountryScope } from '../landCountryScope';
 import { escapeMapText as escapeHtml, publishedNumber } from '../mapText';
 import { buildGridAccessPopupContent } from '../gridAccessPopup';
 import { bindMapHoverTooltip } from '../mapHoverTooltip';
 import { indexGenerationSites, selectGenerationSites, generationPieDiameter } from '../generationMapLayout';
 import { createGenerationMixResolver } from '../generationMix';
+import { directionalResultLines, resultCircleRadius, resultPieDiameter, resultLineWidth } from '../modelWorkspace/resultPresentation';
+import { useResultMarkerSize } from '../hooks/useResultMarkerSize';
+import ModelResultFlowLayer from './ModelResultFlowLayer';
+import LolaFlowMapLayer from './LolaFlowMapLayer';
+import ModelAssetsMapLayer from './ModelAssetsMapLayer';
+import NetworkLineSelectionBridge from './NetworkLineSelectionBridge';
+import { connectionTooltipContent } from '../connectionTooltipContent';
+import { buildGeoJsonPopupContent } from '../assetDetailContent';
 
 // Fix for default markers in React-Leaflet
 delete L.Icon.Default.prototype._getIconUrl;
@@ -330,456 +340,7 @@ const LandInspectBridge = ({ enabled, onInspect, countries = [] }) => {
 };
 
 
-let popupCardSequence = 0;
-export const buildGeoJsonPopupContent = (facility) => {
-  if (!facility) return '<div style="font-size:12px;color:#d1d5db;">No details</div>';
-  const toNumber = (v) => {
-    return publishedNumber(typeof v === 'string' ? v.replace(/,/g, '') : v);
-  };
-  const formatNum = (v, digits = 2) => {
-    const n = toNumber(v);
-    if (n == null) return '—';
-    return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: digits });
-  };
-  const getRows = (item) => Array.isArray(item?.properties) ? item.properties : [];
-  const findProp = (rows, keys = []) => {
-    for (const row of rows) {
-      const k = String(row?.Property || '').trim().toLowerCase();
-      if (!k) continue;
-      if (keys.some((key) => k === String(key).trim().toLowerCase())) return row;
-    }
-    return null;
-  };
-  const contextRows = (rows) => rows
-    .filter((r) => String(r?.Property || '').startsWith('[Context]'))
-    .map((r) => ({
-      key: String(r?.Property || '').replace('[Context] ', ''),
-      value: r?.Value,
-      units: r?.Units || '',
-    }))
-    .filter((r) => r.key && r.value !== '' && r.value != null);
-
-  const kpiCard = (label, value, unit, tone = 'blue') => {
-    const tones = {
-      blue: { ring: '#60a5fa', halo: 'rgba(59,130,246,0.16)', fg: '#dbeafe' },
-      amber: { ring: '#fbbf24', halo: 'rgba(245,158,11,0.16)', fg: '#fef3c7' },
-      emerald: { ring: '#34d399', halo: 'rgba(16,185,129,0.16)', fg: '#bbf7d0' },
-    };
-    const t = tones[tone] || tones.blue;
-    const txt = String(value == null ? '—' : value).trim();
-    return `
-      <div style="flex:1;min-width:0;padding:10px 5px;border:1px solid rgba(148,163,184,0.2);border-radius:8px;background:${t.halo};text-align:center;">
-        <div style="font-size:16px;font-weight:700;color:${t.fg};line-height:1.2;overflow-wrap:anywhere;">${escapeHtml(txt)}</div>
-        ${unit ? `<div style="font-size:10px;color:#cbd5e1;margin-top:3px;">${escapeHtml(unit)}</div>` : ''}
-        <div style="font-size:10px;color:#cbd5e1;margin-top:5px;">${escapeHtml(label)}</div>
-      </div>
-    `;
-  };
-
-  const barRow = (label, value, maxValue, color = '#38bdf8', suffix = '', digits = 1) => {
-    const safeVal = Number.isFinite(value) ? Math.max(0, value) : 0;
-    const safeMax = Number.isFinite(maxValue) && maxValue > 0 ? maxValue : 1;
-    const pct = Math.max(3, Math.min(100, (safeVal / safeMax) * 100));
-    return `
-      <div style="margin-top:4px;">
-        <div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#cbd5e1;">
-          <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:56%;">${escapeHtml(label)}</span>
-          <span>${escapeHtml(formatNum(safeVal, digits))}${suffix ? ` ${escapeHtml(suffix)}` : ''}</span>
-        </div>
-        <div style="margin-top:3px;height:5px;border-radius:999px;background:rgba(255,255,255,0.08);overflow:hidden;">
-          <div style="height:100%;width:${pct}%;background:${color};border-radius:999px;"></div>
-        </div>
-      </div>
-    `;
-  };
-
-  const formatDemandValue = (value, unit = '') => {
-    const numeric = toNumber(value);
-    if (numeric == null) return '—';
-    const magnitude = Math.abs(numeric);
-    const digits = magnitude >= 10 ? 2 : magnitude >= 0.1 ? 3 : magnitude >= 0.001 ? 4 : 6;
-    const rendered = numeric.toLocaleString(undefined, {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: digits,
-    });
-    return unit ? `${rendered} ${unit}` : rendered;
-  };
-
-  const renderDemandBreakdown = (item) => {
-    const sectors = Array.isArray(item?.demand_breakdown) ? item.demand_breakdown : [];
-    if (!sectors.length) return item?.provisional_demand
-      ? '<p style="margin-top:8px;color:#fde68a;font-size:11px;">Sector/subsector breakdown unavailable for this country. Provisional total demand is still shown.</p>'
-      : '';
-    const sectorColors = {
-      Residential: '#60a5fa',
-      Tertiary: '#a78bfa',
-      Industry: '#f97316',
-      Transport: '#34d399',
-    };
-    const explicitTotal = sectors.reduce((sum, sector) => sum + Math.max(0, Number(sector?.annual_energy_gwh) || 0), 0);
-    const total = Math.max(0, Number(item?.annual_energy_gwh) || explicitTotal) || 1;
-    return `
-      <div style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,0.08);">
-        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
-          <div style="font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;">Demand composition</div>
-          <div style="font-size:10px;color:#64748b;">${escapeHtml(item?.demand_scenario || '')}${item?.demand_year ? ` · ${escapeHtml(item.demand_year)}` : ''}</div>
-        </div>
-        ${sectors.map((sector) => {
-          const name = String(sector?.name || 'Other');
-          const sectorShare = Math.max(0, Number(sector?.share) || 0);
-          const annual = sector?.annual_energy_gwh != null
-            ? Math.max(0, Number(sector.annual_energy_gwh) || 0)
-            : total * sectorShare;
-          const share = sectorShare > 0 ? sectorShare * 100 : (total > 0 ? (annual / total) * 100 : 0);
-          const color = sectorColors[name] || '#94a3b8';
-          const subsectors = Array.isArray(sector?.subsectors) ? sector.subsectors : [];
-          return `
-            <details style="margin-top:6px;">
-              <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;font-size:11px;color:#dbeafe;">
-                <span style="width:8px;height:8px;border-radius:2px;background:${color};display:inline-block;"></span>
-                <span style="flex:1;">${escapeHtml(name)}</span>
-                <span style="color:#94a3b8;">${share.toFixed(1)}% · ${escapeHtml(formatDemandValue(annual, 'GWh'))}</span>
-              </summary>
-              ${subsectors.map((subsector) => {
-                const subsectionAnnual = subsector?.annual_energy_gwh != null
-                  ? Math.max(0, Number(subsector.annual_energy_gwh) || 0)
-                  : total * Math.max(0, Number(subsector?.share_of_total) || 0);
-                return `
-                <div style="display:flex;justify-content:space-between;gap:8px;margin:3px 0 0 14px;font-size:10px;color:#94a3b8;">
-                  <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:65%;">${escapeHtml(subsector?.name || 'Other')}</span>
-                  <span>${escapeHtml(formatDemandValue(subsectionAnnual, 'GWh'))}</span>
-                </div>
-              `;}).join('')}
-            </details>
-          `;
-        }).join('')}
-      </div>
-    `;
-  };
-
-  const renderOverview = (item, locationItems) => {
-    const rows = getRows(item);
-    const isDemand = String(item?.component_type || item?.type || '').toLowerCase() === 'load'
-      || Boolean(item?.provisional_demand);
-    const pNom = findProp(rows, ['P Nom', 'P Nom Optimal', 'E Nom']);
-    const marginal = findProp(rows, ['Marginal Cost', '[Context] Cost Marginal']);
-    const demandAvg = findProp(rows, ['[Context] Demand Avg', 'P Set']);
-    const annualDemand = findProp(rows, ['Annual allocation']);
-    const spatialWeight = findProp(rows, ['Spatial weight']);
-    // Prefer the unrounded payload fields. The generic property table stores
-    // P Set at two decimals, which turns many valid small allocations into 0.00.
-    const demandAvgValue = item?.p_set != null ? item.p_set : demandAvg?.Value;
-    const demandAvgUnit = item?.p_set != null ? 'MW' : (demandAvg?.Units || '');
-    const annualDemandValue = item?.annual_energy_gwh != null ? item.annual_energy_gwh : annualDemand?.Value;
-    const annualDemandUnit = item?.annual_energy_gwh != null ? 'GWh' : (annualDemand?.Units || '');
-    const spatialWeightValue = item?.spatial_weight != null
-      ? Number(item.spatial_weight) * 100
-      : spatialWeight?.Value;
-    const corePairs = [
-      ['Type', item.component_type || item.type || '—'],
-      ['Carrier', item.carrier_nice_name || item.carrier || '—'],
-      ['Bus', item.bus || '—'],
-      ['Country', item.country || '—'],
-    ];
-    const carrierCounts = {};
-    for (const x of locationItems) {
-      const ck = String(x?.carrier_nice_name || x?.carrier || x?.type || 'unknown');
-      carrierCounts[ck] = (carrierCounts[ck] || 0) + 1;
-    }
-    const mixRows = Object.entries(carrierCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
-    const mixMax = Math.max(1, ...mixRows.map(([, c]) => c));
-
-    const cbcCountries = {};
-    for (const row of rows) {
-      const key = String(row?.Property || '');
-      if (/^\[CBC \d+\] Foreign Country$/i.test(key) || /^\[Link \d+\] Foreign Country$/i.test(key)) {
-        const cc = String(row?.Value || '').trim();
-        if (cc) cbcCountries[cc] = (cbcCountries[cc] || 0) + 1;
-      }
-    }
-    const cbcRows = Object.entries(cbcCountries).sort((a, b) => b[1] - a[1]).slice(0, 4);
-    const cbcMax = Math.max(1, ...cbcRows.map(([, c]) => c));
-
-    return `
-      ${isDemand && item?.provisional_demand ? '<p style="margin:0 0 10px;padding:7px 9px;border:1px solid rgba(253,230,138,.3);border-radius:6px;color:#fde68a;font-size:11px;line-height:1.4;">Provisional estimate, not measured consumption. Flat 8,760-hour profile.</p>' : ''}
-      <div style="display:flex;gap:6px;margin-top:2px;">
-        ${isDemand
-          ? kpiCard('Annual demand', formatDemandValue(annualDemandValue), annualDemandUnit, 'blue')
-          : kpiCard('Capacity', pNom?.Value ?? '—', pNom?.Units || '', 'blue')}
-        ${kpiCard('Avg demand', isDemand ? formatDemandValue(demandAvgValue) : (demandAvg?.Value ?? '—'), demandAvgUnit, 'emerald')}
-        ${isDemand
-          ? kpiCard('Spatial share', formatDemandValue(spatialWeightValue), spatialWeightValue != null ? '%' : '', 'amber')
-          : kpiCard('Marginal', marginal?.Value ?? '—', marginal?.Units || '', 'amber')}
-      </div>
-
-      <div style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,0.08);">
-        ${corePairs.map(([k, v]) => `
-          <div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;color:#d1d5db;">
-            <span style="color:#9ca3af;">${escapeHtml(k)}</span><span style="text-align:right;">${escapeHtml(v)}</span>
-          </div>`).join('')}
-      </div>
-
-      ${mixRows.length > 0 ? `
-        <div style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,0.08);">
-          <div style="font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;">Carrier mix at location</div>
-          ${mixRows.map(([label, count]) => barRow(label, count, mixMax, '#60a5fa', 'comp')).join('')}
-        </div>
-      ` : ''}
-
-      ${isDemand ? renderDemandBreakdown(item) : ''}
-
-      ${cbcRows.length > 0 ? `
-        <div style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,0.08);">
-          <div style="font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;">Interconnectors</div>
-          ${cbcRows.map(([label, count]) => barRow(label, count, cbcMax, '#f59e0b', 'links')).join('')}
-        </div>
-      ` : ''}
-    `;
-  };
-
-  const renderCosts = (item) => {
-    const rows = getRows(item);
-    const contexts = contextRows(rows).filter((r) => /cost|technology|lifetime|efficiency/i.test(r.key));
-    const directRows = [
-      findProp(rows, ['Capital Cost']),
-      findProp(rows, ['Marginal Cost']),
-      findProp(rows, ['Efficiency']),
-      findProp(rows, ['Lifetime']),
-    ].filter(Boolean);
-    const csvSources = item?.csv_context_sources?.files || {};
-    const csvMatched = Array.isArray(item?.csv_context_sources?.matched) ? item.csv_context_sources.matched : [];
-    const merged = [
-      ...contexts.map((r) => ({ key: r.key, value: r.value, units: r.units })),
-      ...directRows.map((r) => ({ key: r.Property, value: r.Value, units: r.Units || '' })),
-    ];
-    if (!merged.length && !Object.keys(csvSources).length) {
-      return '<div style="font-size:12px;color:#94a3b8;">No cost context available for this component.</div>';
-    }
-    return `
-      <div>
-        ${merged.slice(0, 12).map((r) => `
-          <div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;color:#d1d5db;">
-            <span style="color:#9ca3af;">${escapeHtml(r.key)}</span>
-            <span style="text-align:right;">${escapeHtml(r.value)}${r.units ? ` ${escapeHtml(r.units)}` : ''}</span>
-          </div>
-        `).join('')}
-      </div>
-      ${Object.keys(csvSources).length > 0 ? `
-        <div style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,0.08);">
-          <div style="font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">Sources</div>
-          <div style="display:flex;flex-wrap:wrap;gap:4px;">
-            ${Object.entries(csvSources).map(([k, v]) => {
-              const matched = csvMatched.includes(k);
-              const fg = matched ? '#86efac' : '#94a3b8';
-              const bg = matched ? 'rgba(16,185,129,0.12)' : 'rgba(255,255,255,0.05)';
-              const br = matched ? 'rgba(16,185,129,0.45)' : 'rgba(255,255,255,0.18)';
-              return `<span title="${escapeHtml(v || '')}" style="font-size:10px;color:${fg};border:1px solid ${br};background:${bg};padding:2px 6px;border-radius:999px;">${escapeHtml(k)}</span>`;
-            }).join('')}
-          </div>
-        </div>
-      ` : ''}
-    `;
-  };
-
-  const renderTimeSeries = (item) => {
-    const rows = getRows(item);
-    const avg = findProp(rows, ['[Context] Demand Avg']);
-    const peak = findProp(rows, ['[Context] Demand Peak']);
-    const latest = findProp(rows, ['[Context] Demand Latest']);
-    const values = [
-      { label: 'Average', row: avg, color: '#34d399' },
-      { label: 'Peak', row: peak, color: '#f59e0b' },
-      { label: 'Latest', row: latest, color: '#60a5fa' },
-    ].filter((x) => x.row);
-    if (!values.length) {
-      const provisionalAverage = toNumber(item?.p_set);
-      if (Boolean(item?.provisional_demand) && provisionalAverage != null) {
-        return `
-          <div style="font-size:11px;color:#9ca3af;margin-bottom:5px;">Provisional flat profile</div>
-          ${barRow('Every hour', provisionalAverage, Math.max(provisionalAverage, 1e-9), '#34d399', 'MW', 6)}
-          <div style="margin-top:8px;font-size:10px;color:#9ca3af;">The current placeholder repeats this average value for all 8,760 hours. It will be replaced when the NUTS3 hourly demand input is connected.</div>
-        `;
-      }
-      return '<div style="font-size:12px;color:#94a3b8;">No demand time-series summary available for this component.</div>';
-    }
-    const maxVal = Math.max(1, ...values.map((x) => toNumber(x.row?.Value) || 0));
-    const unit = values[0]?.row?.Units || '';
-    return `
-      <div style="font-size:11px;color:#9ca3af;margin-bottom:5px;">Demand summary (${escapeHtml(unit || 'MW')})</div>
-      ${values.map((x) => barRow(x.label, toNumber(x.row?.Value) || 0, maxVal, x.color, unit)).join('')}
-      <div style="margin-top:8px;font-size:10px;color:#9ca3af;">Summary of the available demand context; this is not a full hourly profile.</div>
-    `;
-  };
-
-  const renderTabbedCard = (item, locationItems, includeTitle = true) => {
-    const name = escapeHtml(item.name || item.id || 'Component');
-    const tabs = ['overview', 'costs', 'time'];
-    const labels = { overview: 'Overview', costs: 'Costs', time: 'Time-series' };
-    const card = document.createElement('div');
-    card.style.minWidth = '0';
-    card.style.maxWidth = '100%';
-    card.style.lineHeight = '1.35';
-    if (includeTitle) {
-      const ttl = document.createElement('div');
-      ttl.style.fontWeight = '700';
-      ttl.style.fontSize = '13px';
-      ttl.style.color = '#f9fafb';
-      ttl.style.marginBottom = '6px';
-      ttl.textContent = name;
-      card.appendChild(ttl);
-    }
-
-    const chipWrap = document.createElement('div');
-    chipWrap.style.display = 'flex';
-    chipWrap.style.gap = '6px';
-    chipWrap.style.flexWrap = 'wrap';
-    chipWrap.style.marginBottom = '8px';
-    const mkChip = (txt, fg, bg, br) => `<span style="font-size:10px;color:${fg};background:${bg};border:1px solid ${br};padding:2px 6px;border-radius:999px;">${escapeHtml(txt)}</span>`;
-    chipWrap.innerHTML = [
-      mkChip(item.component_type || item.type || '—', '#dbeafe', 'rgba(59,130,246,0.15)', 'rgba(59,130,246,0.35)'),
-      mkChip(item.carrier_nice_name || item.carrier || '—', '#fef3c7', 'rgba(245,158,11,0.15)', 'rgba(245,158,11,0.35)'),
-      mkChip(item.country || '—', '#cbd5e1', 'rgba(148,163,184,0.15)', 'rgba(148,163,184,0.28)'),
-    ].join('');
-    card.appendChild(chipWrap);
-
-    const tabsWrap = document.createElement('div');
-    tabsWrap.style.display = 'grid';
-    tabsWrap.style.gridTemplateColumns = '1fr 1fr 1fr';
-    tabsWrap.style.gap = '4px';
-    tabsWrap.style.background = 'rgba(255,255,255,0.05)';
-    tabsWrap.style.padding = '3px';
-    tabsWrap.style.border = '1px solid rgba(255,255,255,0.12)';
-    tabsWrap.style.borderRadius = '10px';
-
-    const panel = document.createElement('div');
-    const cardId = `atlas-asset-card-${++popupCardSequence}`;
-    tabsWrap.setAttribute('role', 'tablist');
-    tabsWrap.setAttribute('aria-label', 'Component details');
-    panel.id = `${cardId}-panel`;
-    panel.setAttribute('role', 'tabpanel');
-    panel.tabIndex = 0;
-    panel.style.marginTop = '8px';
-    panel.style.border = '1px solid rgba(255,255,255,0.1)';
-    panel.style.borderRadius = '10px';
-    panel.style.padding = '8px';
-    panel.style.background = 'rgba(8,16,24,0.35)';
-
-    let active = 'overview';
-    const renderPanel = () => {
-      if (active === 'overview') panel.innerHTML = renderOverview(item, locationItems);
-      else if (active === 'costs') panel.innerHTML = renderCosts(item);
-      else panel.innerHTML = renderTimeSeries(item);
-      Array.from(tabsWrap.children).forEach((node) => {
-        const isActive = node.getAttribute('data-tab') === active;
-        node.setAttribute('aria-selected', String(isActive));
-        node.tabIndex = isActive ? 0 : -1;
-        if (isActive) panel.setAttribute('aria-labelledby', node.id);
-        node.style.background = isActive ? 'rgba(255,255,255,0.16)' : 'transparent';
-        node.style.color = isActive ? '#f9fafb' : '#9ca3af';
-        node.style.borderColor = isActive ? 'rgba(255,255,255,0.25)' : 'transparent';
-      });
-    };
-
-    tabs.forEach((t) => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.id = `${cardId}-${t}`;
-      btn.setAttribute('role', 'tab');
-      btn.setAttribute('aria-controls', panel.id);
-      btn.setAttribute('data-tab', t);
-      btn.style.fontSize = '11px';
-      btn.style.padding = '5px 0';
-      btn.style.borderRadius = '7px';
-      btn.style.border = '1px solid transparent';
-      btn.style.cursor = 'pointer';
-      btn.style.transition = 'all .12s ease';
-      btn.textContent = labels[t];
-      btn.addEventListener('click', () => {
-        active = t;
-        renderPanel();
-      });
-      btn.addEventListener('keydown', (event) => {
-        const index = tabs.indexOf(t);
-        const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length
-          : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length
-            : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : null;
-        if (next == null) return;
-        event.preventDefault();
-        event.stopPropagation(); // Navigation within the popup must not pan the map.
-        active = tabs[next];
-        renderPanel();
-        tabsWrap.children[next].focus();
-      });
-      tabsWrap.appendChild(btn);
-    });
-    card.appendChild(tabsWrap);
-    card.appendChild(panel);
-    renderPanel();
-    return card;
-  };
-
-  const sameLocation = Array.isArray(facility.sameLocationFacilities) ? facility.sameLocationFacilities : [];
-  const facilityId = String(facility?.id || '');
-  const locationItems = sameLocation.length > 0
-    ? [facility, ...sameLocation.filter((item) => String(item?.id || '') !== facilityId)]
-    : [facility];
-  if (typeof document === 'undefined') {
-    return `<div style="min-width:250px;line-height:1.35;">${escapeHtml(facility.name || facility.id || 'Component')}</div>`;
-  }
-
-  const root = document.createElement('div');
-  root.style.minWidth = '0';
-  root.style.width = 'min(350px, calc(100vw - 72px))';
-  root.style.maxWidth = '100%';
-  root.style.lineHeight = '1.35';
-
-  const heading = document.createElement('div');
-  heading.style.fontWeight = '700';
-  heading.style.fontSize = '14px';
-  heading.style.color = '#f9fafb';
-  heading.textContent = String(facility.bus || facility.name || facility.id || 'Location');
-  root.appendChild(heading);
-
-  const sub = document.createElement('div');
-  sub.style.fontSize = '11px';
-  sub.style.color = '#94a3b8';
-  sub.style.marginTop = '2px';
-  sub.textContent = `${locationItems.length} component${locationItems.length > 1 ? 's' : ''} at this location`;
-  root.appendChild(sub);
-
-  const select = document.createElement('select');
-  select.setAttribute('aria-label', 'Component at this location');
-  select.style.marginTop = '8px';
-  select.style.width = '100%';
-  select.style.padding = '6px 8px';
-  select.style.borderRadius = '8px';
-  select.style.border = '1px solid rgba(255,255,255,0.15)';
-  select.style.background = 'rgba(8,16,24,0.85)';
-  select.style.color = '#e5e7eb';
-  select.style.fontSize = '12px';
-  locationItems.forEach((item, idx) => {
-    const opt = document.createElement('option');
-    opt.value = String(idx);
-    opt.textContent = `${item.carrier_nice_name || item.carrier || item.type || 'Component'} • ${item.component_type || item.type || ''}`;
-    select.appendChild(opt);
-  });
-  if (locationItems.length > 1) root.appendChild(select);
-
-  const panelHolder = document.createElement('div');
-  panelHolder.style.marginTop = '8px';
-  root.appendChild(panelHolder);
-
-  const renderCurrent = () => {
-    panelHolder.innerHTML = '';
-    const idx = Math.max(0, Math.min(locationItems.length - 1, Number(select.value || 0)));
-    const selected = locationItems[idx];
-    panelHolder.appendChild(renderTabbedCard(selected, locationItems, false));
-  };
-  select.addEventListener('input', renderCurrent);
-  select.addEventListener('change', renderCurrent);
-  renderCurrent();
-  return root;
-};
+export { buildGeoJsonPopupContent } from "../assetDetailContent";
 
 
 // Forwards right-click (contextmenu) on the map with lat/lon + pixel coords
@@ -801,6 +362,19 @@ const RegionContextBridge = ({ onContextMenu }) => {
 };
 
 const EnhancedLeafletMapContent = ({
+  lolaFlowFrame = null,
+  modelAssetsFrame = null,
+  onModelAssetSelect,
+  onLolaFlowSelect,
+  presentationMode = false,
+  registerAgentController,
+  onOpenResultComparison,
+  presentationScope = 'studio',
+  onPresentationMode,
+  captureScene,
+  restoreScene,
+  agentActivity,
+  agentBusy = false,
   atlasTheme = 'dark',
   facilities = [],
   selectedNode,
@@ -823,6 +397,7 @@ const EnhancedLeafletMapContent = ({
   setEditableNodes = () => { },
   pypsaLoading = false,
   geoJsonOverlays = [],
+  aggregatedRegions = [],
   regionalClusterOverlay = null,
   activeCountryCode = '',
   activeCountryCodes = [],
@@ -833,6 +408,7 @@ const EnhancedLeafletMapContent = ({
   autoZoomEnabled = false,
   performanceMode = false,
   networkResolution = '',
+  resultMarkerScale = 1,
   showNodeMarkers = true,
   showGeographicBoundaries = true,
   onMapViewChange = null,
@@ -855,6 +431,9 @@ const EnhancedLeafletMapContent = ({
 }) => {
   const [zoomLevel, setZoomLevel] = useState(5); // matches immutable MapContainer initial zoom
   const [mapInstance, setMapInstance] = useState(null);
+  const [inspectMode, setInspectMode] = useState(false);
+  const [presentationSelection, setPresentationSelection] = useState(null);
+  useEffect(() => { setPresentationSelection(null); }, [facilities, connections]);
   // Own every vector renderer, including custom panes, so a queued redraw
   // cannot outlive the map. Keep their panes mounted across filter changes.
   const atlasRenderers = useMemo(() => ({
@@ -1124,6 +703,7 @@ const EnhancedLeafletMapContent = ({
     return features.length ? { type: 'FeatureCollection', features } : null;
   }, [europeGeoJson, loadedCountryCodeSet]);
   const countryOverview = zoomLevel <= 5;
+  const aggregatedBoundaries = useMemo(() => regionBoundaryCollection(europeGeoJson, aggregatedRegions), [europeGeoJson, aggregatedRegions]);
   const countryBoundaryStyle = useCallback((feature) => {
     const code = String(feature?.properties?.ISO2 || '').trim().toUpperCase();
     const active = code === String(activeCountryCode || '').trim().toUpperCase();
@@ -1330,7 +910,7 @@ const EnhancedLeafletMapContent = ({
     return icon;
   }, []);
 
-  const createGenerationMixIcon = useCallback((segments, extraOpacity = 1, sizeRatio = 1, aggregate = false) => {
+  const createGenerationMixIcon = useCallback((segments, extraOpacity = 1, sizeRatio = 1, aggregate = false, displayDiameter = null) => {
     const safeSegments = Array.isArray(segments) ? segments.filter((segment) => segment.share > 0) : [];
     let cursor = 0;
     const gradientStops = safeSegments.map((segment) => {
@@ -1340,7 +920,7 @@ const EnhancedLeafletMapContent = ({
     });
     // Diameter follows sqrt(capacity / largest capacity), so circle area is
     // proportional to installed MW. The bounds shrink sharply when zoomed out.
-    const size = generationPieDiameter(sizeRatio, zoomLevel, aggregate);
+    const size = displayDiameter ?? generationPieDiameter(sizeRatio, zoomLevel, aggregate);
     const signature = safeSegments
       .map((segment) => `${segment.key}:${segment.share.toFixed(4)}:${segment.color}`)
       .join('|');
@@ -1435,7 +1015,7 @@ const EnhancedLeafletMapContent = ({
   const allNodes = useMemo(() => [...facilities, ...editableNodes], [facilities, editableNodes]);
 
   const isAggregateCacheNode = useCallback((node) => (
-    /_(?:bidding_zone|ehighway|nuts[123]|c\d+)\.nc$/i.test(String(node?.sourceNetworkFilename || ''))
+    Boolean(node?.atlas_region_group_name) || /_(?:bidding_zone|ehighway|nuts[123]|c\d+)\.nc$/i.test(String(node?.sourceNetworkFilename || ''))
   ), []);
   const rankedDetailedNodes = useMemo(() => indexOverviewNodes(rankNetworkNodes(
     allNodes.filter(node => !isAggregateCacheNode(node) && !node?.editable), connections,
@@ -1638,6 +1218,7 @@ const EnhancedLeafletMapContent = ({
           ? ATLAS_NETWORK_CARRIER_META[overlayCarrier]
           : null;
         const resultRatio = Number(connection.atlas_result_ratio);
+        const resultMagnitude = Number(connection.atlas_result_magnitude_ratio);
         const hasResult = Number.isFinite(resultRatio) && connection.atlas_result_color;
         const hasDistillationStyle = Boolean(connection.atlas_distillation_color);
         const color = hasDistillationStyle ? connection.atlas_distillation_color : hasResult ? connection.atlas_result_color : overlayStyle?.color || (capacityRatio != null
@@ -1653,9 +1234,9 @@ const EnhancedLeafletMapContent = ({
           ? topologyWeight
           : zoomLineWeight * (0.72 + (2.3 * Math.sqrt(capacityRatio)));
         const resultWeight = hasResult
-          ? zoomLineWeight * (0.9 + (2.5 * Math.sqrt(Math.max(0, Math.min(1, resultRatio)))))
+          ? resultLineWidth(Number.isFinite(resultMagnitude) ? resultMagnitude : resultRatio)
           : capacityWeight;
-        const weight = Math.max(overlayStyle ? 1.05 : 0.55, Math.min(6.5, resultWeight));
+        const weight = Math.max(overlayStyle ? 1.05 : 0.55, Math.min(hasResult ? 8.5 : 6.5, resultWeight));
         // Dragging must not change the render key: dimming at movement start
         // and restoring on idle rebuilt the entire graph twice per gesture.
         const perfOpacityMul = performanceMode ? 0.8 : 1;
@@ -1703,6 +1284,7 @@ const EnhancedLeafletMapContent = ({
   const geoJsonNodeFeatureCollection = useMemo(() => {
     const features = (lodNodes || []).filter((facility) => {
       if (facility.atlas_distillation_hidden) return false;
+      if (facility.atlas_result_map_mode === 'mix' && facility.atlas_result_value > 0) return false;
       if (!showGenerationMix || facility.editable) return true;
       const componentType = String(facility?.component_type || facility?.type || '').toLowerCase();
       // The pie layer represents all generators at this bus. Hiding the
@@ -1725,7 +1307,7 @@ const EnhancedLeafletMapContent = ({
       const overlayStyle = networkResolution === 'overlay'
         ? ATLAS_NETWORK_CARRIER_META[overlayCarrier]
         : null;
-      const color = overlayStyle?.color || getFacilityColor(facility);
+      const color = facility.atlas_region_group_name ? '#0d9488' : overlayStyle?.color || getFacilityColor(facility);
       const shape = (() => {
         if (facility.is_virtual) return 'diamond';
         const t = String(facility.component_type || facility.type || '').toLowerCase();
@@ -1752,7 +1334,7 @@ const EnhancedLeafletMapContent = ({
         ? Math.min(sourceExtraOpacity, Math.max(0, Math.min(1, distillationOpacity)))
         : sourceExtraOpacity;
       const sourceNetworkFilename = String(facility?.sourceNetworkFilename || '');
-      const nodeEmphasis = /_(?:bidding_zone|ehighway|nuts1)\.nc$/i.test(sourceNetworkFilename)
+      const nodeEmphasis = facility.atlas_region_group_name || /_(?:bidding_zone|ehighway|nuts1)\.nc$/i.test(sourceNetworkFilename)
         ? 2
         : /_(?:nuts[23]|c\d+)\.nc$/i.test(sourceNetworkFilename)
           ? 1
@@ -1773,6 +1355,9 @@ const EnhancedLeafletMapContent = ({
           demandValueMw: Number.isFinite(demandValueMw) ? demandValueMw : null,
           demandSizeRatio: magnitudeSizeRatio,
           isMagnitudeScaled,
+          isResultBubble: facility.atlas_result_map_mode === 'bubbles',
+          isResultPoint: ['bubbles', 'colour'].includes(facility.atlas_result_map_mode) && Number.isFinite(facility.atlas_result_value),
+          resultMagnitudeRatio: facility.atlas_result_magnitude_ratio,
           nodeEmphasis,
           extraOpacity,
           popupContent: () => {
@@ -1850,6 +1435,28 @@ const EnhancedLeafletMapContent = ({
     spatialFeatureKey(`generation-mix-z${zoomLevel}`, generationMixFeatureCollection)
   ), [generationMixFeatureCollection, spatialFeatureKey, zoomLevel]);
 
+  const resultMixFeatureCollection = useMemo(() => ({
+    type: 'FeatureCollection',
+    features: allNodes.filter(facility => facility.atlas_result_map_mode === 'mix'
+      && facility.atlas_result_value > 0 && facility.atlas_result_segments?.length
+      && !facility.atlas_distillation_hidden).map(facility => ({
+      type: 'Feature', id: facility.id,
+      geometry: { type: 'Point', coordinates: [Number(facility.longitude), Number(facility.latitude)] },
+      properties: {
+        facility, segments: facility.atlas_result_segments,
+        sizeRatio: facility.atlas_result_magnitude_ratio,
+        aggregate: true,
+        tooltipContent: () => '<div class="atlas-result-mix-tooltip">'
+          + `<strong>${escapeHtml(facility.name || facility.id)}</strong>`
+          + `<div>${escapeHtml(facility.atlas_result_period)} · Generation energy</div>`
+          + facility.atlas_result_segments.map(segment => `<div><span style="color:${escapeHtml(segment.color)}">●</span> ${escapeHtml(segment.label)}: ${(segment.share * 100).toFixed(1)}% · ${formatCapacity(segment.value)} ${escapeHtml(facility.atlas_result_unit)}</div>`).join('')
+          + '</div>',
+        popupContent: () => buildGeoJsonPopupContent(facility),
+      },
+    })),
+  }), [allNodes]);
+  const resultMixKey = useMemo(() => spatialFeatureKey('result-energy-mix', resultMixFeatureCollection), [resultMixFeatureCollection, spatialFeatureKey]);
+
   const geoJsonLineFeatureCollection = useMemo(() => ({
     type: 'FeatureCollection',
     features: geoJsonConnectionFeatures,
@@ -1889,12 +1496,19 @@ const EnhancedLeafletMapContent = ({
   const overviewLines = managesNetworkLines && lineRenderProgress?.key === networkRenderKey && Boolean(lineRenderProgress?.overview);
   const displayedFrame = useCommittedMapFrame({
     nodes: geoJsonNodeFeatureCollection, nodeKey: geoJsonNodeLayerKey,
+    links: geoJsonLineFeatureCollection,
     mix: generationMixFeatureCollection, mixKey: generationMixLayerKey,
+    resultMix: resultMixFeatureCollection, resultMixKey,
     overlays: overlayFeatureCollections, countries: selectedCountryFeatureCollection,
     countryKey: [...loadedCountryCodeSet].sort().join('-'),
     capacityScales, capacityStylingEnabled,
+    hasResultLinks: geoJsonConnectionFeatures.some(feature => feature.properties.connection.atlas_result_map_mode),
   }, !renderingLinks && !renderError);
+  const resultFlowLines = useMemo(() => directionalResultLines(displayedFrame?.links), [displayedFrame?.links]);
   const nodeLayerRef = useRef(null);
+  const resultMixLayerRef = useRef(null);
+  useResultMarkerSize(nodeLayerRef, displayedFrame?.nodeKey, resultMixLayerRef,
+    displayedFrame?.resultMixKey, resultMarkerScale, createGenerationMixIcon);
   const makeSelectedNodeIcon = useCallback((p, selected) => createColoredIcon(
     p.color || '#3b82f6', selected, Boolean(p.isEditable), Boolean(p.hasMultipleObjects),
     p.objectCount || 1, p.shape || 'circle', p.extraOpacity ?? 1, zoomLevel,
@@ -1998,6 +1612,14 @@ const EnhancedLeafletMapContent = ({
               style={countryBoundaryStyle}
             />
           </>
+        )}
+
+        {showGeographicBoundaries && aggregatedBoundaries.features.length > 0 && (
+          <GeoJSON key={`aggregated-regions-${JSON.stringify(aggregatedRegions)}`}
+            data={aggregatedBoundaries} pane="network-boundaries" renderer={atlasRenderers.boundaries}
+            style={feature => ({ color: feature.properties.color, fillColor: feature.properties.color, weight: 2, opacity: 0.85, fillOpacity: 0.13 })}
+            onEachFeature={(feature, layer) => layer.bindTooltip(escapeHtml(`${feature.properties.name} · Countries: ${feature.properties.countries}`), { sticky: true })}
+          />
         )}
 
         {regionalClusterOverlay?.data?.features?.length > 0 && (
@@ -2259,8 +1881,11 @@ const EnhancedLeafletMapContent = ({
           </>
         )}
 
+        <NetworkLineSelectionBridge enabled={managesNetworkLines && !lolaFlowFrame && !landInspectMode}
+          data={displayedFrame?.links} onSelect={setPresentationSelection} />
+
         {/* Render connections as GeoJSON */}
-        {managesNetworkLines && (
+        {managesNetworkLines && !lolaFlowFrame && (
           <>
             <Pane name="line-capacity-tooltip-pane" style={{ zIndex: 735 }} />
             {useOverviewLineCanvas ? <OverviewNetworkCanvasLayer
@@ -2281,7 +1906,7 @@ const EnhancedLeafletMapContent = ({
                 const s = feature?.properties?.style || {};
                 return {
                   color: s.color || '#38bdf8',
-                  weight: s.weight ?? 1.8,
+                    weight: Math.max(feature?.properties?.connection?.is_reference_topology && !feature?.properties?.connection?.atlas_result_color ? 2.5 : 0, s.weight ?? 1.8),
                   opacity: s.opacity ?? 0.8,
                   dashArray: s.dashArray,
                 };
@@ -2290,59 +1915,14 @@ const EnhancedLeafletMapContent = ({
                 const props = feature?.properties || {};
                 const connection = props.connection;
                 layer.on('click', (e) => {
-                  const clickPos = e?.containerPoint
-                    ? { lat: props.midLat, lng: props.midLng, x: e.containerPoint.x, y: e.containerPoint.y }
-                    : { lat: props.midLat, lng: props.midLng };
-                  if (onConnectionClick && connection) onConnectionClick(connection, clickPos);
+                  if (e?.originalEvent) { e.originalEvent.atlasAssetSelected = true; L.DomEvent.stopPropagation(e.originalEvent); }
+                  if (connection) setPresentationSelection({ kind: 'link', record: connection });
                 });
-                const capacity = props.capacity;
-                if (capacity?.value) {
-                  // A layer may mount during a pan/zoom and survive after it
-                  // settles. Bind once regardless of that transient state;
-                  // generate content only on hover, including on slow hardware.
-                  layer.bindTooltip(
-                    () => {
-                      const title = connection?.name || `${connection?.fromNode || connection?.from || ''} – ${connection?.toNode || connection?.to || ''}`;
-                      const availableRow = capacity.available != null && Math.abs(capacity.available - capacity.value) > 0.01
-                        ? `<div style="display:flex;justify-content:space-between;gap:18px;margin-top:4px;color:#cbd5e1;"><span>Available limit</span><strong style="color:#f8fafc;">${formatCapacity(capacity.available)} ${escapeHtml(capacity.availableUnits)}</strong></div>`
-                        : '';
-                      const resultRow = Number.isFinite(Number(connection?.atlas_result_value))
-                        ? `<div style="display:flex;justify-content:space-between;gap:18px;margin-top:4px;color:#cbd5e1;"><span>${escapeHtml(connection.atlas_result_label || 'Result')}</span><strong style="color:#ffffff;">${formatCapacity(connection.atlas_result_value)} ${escapeHtml(connection.atlas_result_unit || '')}</strong></div><div style="margin-top:3px;color:#94a3b8;">${escapeHtml(connection.atlas_result_period || '')}</div>`
-                        : '';
-                      const distillationRow = connection?.atlas_distillation_status
-                        ? `<div style="margin-top:5px;padding-top:5px;border-top:1px solid rgba(148,163,184,.2);color:#cbd5e1;"><strong style="color:#ffffff;">Preview: ${escapeHtml(String(connection.atlas_distillation_status).replace('_', ' '))}</strong><div style="margin-top:2px;color:#94a3b8;">${escapeHtml(connection.atlas_distillation_reason || '')}</div></div>`
-                        : '';
-                      return `<div style="min-width:176px;font-size:11px;line-height:1.35;color:#e2e8f0;">
-                      <div style="font-weight:750;color:#ffffff;margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:250px;">${escapeHtml(title)}</div>
-                      <div style="display:flex;justify-content:space-between;gap:18px;"><span>${escapeHtml(capacity.kind)}</span><strong style="color:#facc15;">${formatCapacity(capacity.value)} ${escapeHtml(capacity.units)}</strong></div>
-                      ${availableRow}
-                      ${resultRow}
-                      ${distillationRow}
-                    </div>`;
-                    },
-                    {
-                      direction: 'top',
-                      opacity: 0.97,
-                      sticky: true,
-                      pane: 'line-capacity-tooltip-pane',
-                      className: 'line-capacity-tooltip',
-                    },
-                  );
-                } else if (connection?.atlas_distillation_status) {
-                  layer.bindTooltip(
-                    `Preview: ${escapeHtml(String(connection.atlas_distillation_status).replace('_', ' '))}${connection.atlas_distillation_reason ? ` · ${escapeHtml(connection.atlas_distillation_reason)}` : ''}`,
-                    { direction: 'top', opacity: 0.96, sticky: true, pane: 'line-capacity-tooltip-pane', className: 'line-capacity-tooltip' },
-                  );
-                } else if (Number.isFinite(Number(connection?.atlas_result_value))) {
-                  layer.bindTooltip(
-                    `${escapeHtml(connection.atlas_result_label || 'Result')}: ${formatCapacity(connection.atlas_result_value)}${connection.atlas_result_unit ? ` ${escapeHtml(connection.atlas_result_unit)}` : ''}`,
-                    { direction: 'top', opacity: 0.96, sticky: true, pane: 'line-capacity-tooltip-pane', className: 'line-capacity-tooltip' },
-                  );
-                } else if (!performanceMode && lineMetricEnabled && Number.isFinite(connection?.metricValue)) {
-                  layer.bindTooltip(
-                    `${connection.metricValue}${connection.metricUnits ? ` ${escapeHtml(connection.metricUnits)}` : ''}`,
-                    { permanent: true, direction: 'center', opacity: 0.9, className: 'line-metric-tooltip' },
-                  );
+                if (connection) {
+                  layer.bindTooltip(() => connectionTooltipContent(connection, props.capacity), {
+                    direction: 'top', opacity: 0.98, sticky: true,
+                    pane: 'line-capacity-tooltip-pane', className: 'line-capacity-tooltip',
+                  });
                 }
               }}
             />}
@@ -2359,6 +1939,14 @@ const EnhancedLeafletMapContent = ({
             renderer={atlasRenderers.nodes}
             pointToLayer={(feature, latlng) => {
               const p = feature?.properties || {};
+              if (p.isResultPoint) {
+                return L.circleMarker(latlng, {
+                  radius: resultCircleRadius(p.facility.atlas_result_map_mode, p.resultMagnitudeRatio, resultMarkerScale),
+                  color: p.color, fillColor: p.color, fillOpacity: p.isResultBubble && !(p.resultMagnitudeRatio > 0) ? 0 : 0.82,
+                  weight: p.isSelected ? 2.5 : 1.25,
+                  pane: 'network-nodes', renderer: atlasRenderers.nodes,
+                });
+              }
               if (p.nodeEmphasis >= 2) {
                 return L.circleMarker(latlng, {
                   radius: zoomLevel >= 8 ? 6 : 5.25,
@@ -2409,36 +1997,38 @@ const EnhancedLeafletMapContent = ({
             onEachFeature={(feature, layer) => {
               const p = feature?.properties || {};
               const facility = p.facility || {};
+              if (facility.atlas_region_group_name) {
+                layer.bindTooltip(escapeHtml(facility.atlas_region_group_name), { permanent: true, direction: 'top', opacity: 0.95 });
+              } else {
+                const result = Number.isFinite(facility.atlas_result_value)
+                  ? `<br/>${escapeHtml(facility.atlas_result_label)}: ${formatCapacity(facility.atlas_result_value)} ${escapeHtml(facility.atlas_result_unit)}<br/>${escapeHtml(facility.atlas_result_period)}` : '';
+                layer.bindTooltip(escapeHtml(nodeHoverText(facility)) + result, { direction: 'top', opacity: 0.95 });
+              }
               layer.on('click', (e) => {
                 if (e?.originalEvent) L.DomEvent.stopPropagation(e.originalEvent);
+                if (e?.originalEvent) e.originalEvent.atlasAssetSelected = true;
+                setPresentationSelection({ kind: 'node', record: facility });
                 if (mapViewMode === 'our-model') {
                   if (onNodeSelection) onNodeSelection(facility.id);
                 } else {
                   if (onNodeSelect) onNodeSelect(facility.id);
                 }
-                // bindPopup owns opening/closing. A deferred second open can
-                // outlive this layer and resets the popup's local tab state.
               });
-              if (p.popupContent) {
-                layer.bindPopup(p.popupContent, ATLAS_ASSET_POPUP_OPTIONS);
-                layer.on('popupopen', (ev) => {
-                  const popupEl = ev?.popup?.getElement?.();
-                  if (!popupEl) return;
-                  L.DomEvent.disableClickPropagation(popupEl);
-                  L.DomEvent.disableScrollPropagation(popupEl);
-                });
-              }
             }}
           />
         )}
 
-        {showNodeMarkers && showGenerationMix && displayedFrame?.mix.features.length > 0 && (
+        <ModelResultFlowLayer lines={resultFlowLines} />
+        <LolaFlowMapLayer frame={lolaFlowFrame} onSelect={onLolaFlowSelect} />
+        <ModelAssetsMapLayer frame={modelAssetsFrame} onSelect={onModelAssetSelect} />
+        {showNodeMarkers && (displayedFrame?.resultMix.features.length > 0 || (showGenerationMix && displayedFrame?.mix.features.length > 0)) && (
           <>
           <Pane name="generation-mix-tooltip-pane" style={{ zIndex: 720 }} />
           <Pane name="generation-mix-pane" style={{ zIndex: 650 }}>
             <GeoJSON
-              key={displayedFrame.mixKey}
-              data={displayedFrame.mix}
+              key={displayedFrame.resultMix.features.length ? displayedFrame.resultMixKey : displayedFrame.mixKey}
+              ref={resultMixLayerRef}
+              data={displayedFrame.resultMix.features.length ? displayedFrame.resultMix : displayedFrame.mix}
               pane="generation-mix-pane"
               pointToLayer={(feature, latlng) => {
                 const p = feature?.properties || {};
@@ -2447,6 +2037,7 @@ const EnhancedLeafletMapContent = ({
                   p.extraOpacity ?? 1,
                   p.sizeRatio ?? 1,
                   p.aggregate === true,
+                  p.facility?.atlas_result_map_mode === 'mix' ? resultPieDiameter(p.sizeRatio, resultMarkerScale) : null,
                 );
                 return L.marker(latlng, {
                   icon,
@@ -2467,19 +2058,11 @@ const EnhancedLeafletMapContent = ({
                     pane: 'generation-mix-tooltip-pane',
                   });
                 }
-                if (p.popupContent) {
-                  layer.bindPopup(p.popupContent, ATLAS_ASSET_POPUP_OPTIONS);
-                  layer.on('popupopen', (event) => {
-                    const popupElement = event?.popup?.getElement?.();
-                    if (!popupElement) return;
-                    L.DomEvent.disableClickPropagation(popupElement);
-                    L.DomEvent.disableScrollPropagation(popupElement);
-                  });
-                }
                 layer.on('click', (event) => {
                   if (event?.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
+                  if (event?.originalEvent) event.originalEvent.atlasAssetSelected = true;
+                  setPresentationSelection({ kind: 'node', record: facility });
                   if (onNodeSelection && facility.id) onNodeSelection(facility.id);
-                  if (p.popupContent && layer?.openPopup) layer.openPopup();
                 });
               }}
             />
@@ -2487,6 +2070,14 @@ const EnhancedLeafletMapContent = ({
           </>
         )}
       </MapContainer>
+      <AtlasPresentation key={presentationScope} map={mapInstance} facilities={facilities} connections={connections}
+        registerAgentController={registerAgentController}
+        onOpenResultComparison={onOpenResultComparison}
+        countries={activeCountryCodes} resolution={networkResolution} captureScene={captureScene} restoreScene={restoreScene}
+        presentationMode={presentationMode} onPresentationMode={onPresentationMode} busy={pypsaLoading || renderingLinks}
+        agentBusy={agentBusy} agentActivity={agentActivity} selection={presentationSelection} onSelect={setPresentationSelection}
+        inspectMode={inspectMode} onInspectMode={setInspectMode} onLandConstraintsChange={onLandConstraintsChange}
+        onGridAccessChange={onGridAccessChange} gridAccessData={gridAccessConfig.data} theme={atlasTheme} />
       <div style={controlsHidden || panelsHidden ? { display: 'none' } : undefined} className="absolute top-[148px] sm:top-24 right-[58px] z-[565] flex items-start gap-2">
         {landConfig.panelOpen && (
           <div role="region" aria-label="Land and Constraints controls" className="atlas-land-controls w-[250px] overflow-y-auto rounded-2xl border border-emerald-300/20 bg-[#071421]/96 p-3 text-[10px] text-slate-300 shadow-2xl backdrop-blur-xl">
@@ -2862,7 +2453,7 @@ const EnhancedLeafletMapContent = ({
           <span className="hidden sm:inline">Access</span>
         </button>
       </div>
-      {mapViewMode === 'our-model' && displayedFrame?.capacityStylingEnabled && (
+      {mapViewMode === 'our-model' && displayedFrame?.capacityStylingEnabled && !displayedFrame.hasResultLinks && (
         <ConnectionCapacityLegend scales={displayedFrame.capacityScales} />
       )}
       <div style={controlsHidden ? { display: 'none' } : undefined} className="absolute top-[148px] sm:top-24 right-3 sm:right-4 z-[560] flex flex-col gap-1.5">

@@ -65,6 +65,7 @@ test('construction is batched; one complete graph replaces another without blank
   const progress = jest.fn();
   const first = data(301);
   const view = render(<BatchedNetworkLayer data={first} dataKey="first" smoothFactor={2} onProgress={progress} />);
+  expect(L.canvas).toHaveBeenCalledWith(expect.objectContaining({ tolerance: 7 }));
   expect(visible()).toHaveLength(0);
   frame();
   expect(L.geoJSON.mock.results[0].value.features.length).toBeLessThan(301);

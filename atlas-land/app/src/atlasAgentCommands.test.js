@@ -1,11 +1,15 @@
 import {
   ATLAS_AGENT_PARAMETER_CATALOG,
+  checkAtlasInfrastructureActionState,
+  checkAtlasElectricityActionState,
   extractAtlasCountryCodes,
   extractAtlasCountryGroups,
   normalizeAtlasResolution,
   normalizeAtlasAgentSettingValue,
   normalizeAtlasModelPlan,
+  reconcileAtlasAnaphoricCarrierPlan,
   readAtlasModelCountries,
+  readAtlasCountryResolutionOverrides,
   parseAtlasAgentCommand,
   parseAtlasSettingIssues,
   parseAtlasSettingUpdates,
@@ -27,6 +31,102 @@ test.each([{ countries: [] }, { countries: 'BE, FR' }, { countries: ['BE', 'Atla
   });
 test('a city location still uses the existing place resolver', () => {
   expect(readAtlasModelCountries({ location: 'Paris, France' })).toEqual({ countries: [], place: 'Paris, France' });
+});
+
+test('reads individual and other-country resolution overrides', () => {
+  expect(readAtlasCountryResolutionOverrides({
+    resolutions_by_country: { France: 'NUTS2', ES: 'Full / Nodal / 220 kV' },
+    other_resolution: 'full',
+  })).toEqual({ resolutionsByCountry: { FR: 'nuts2', ES: 'full' }, otherResolution: 'full' });
+  expect(() => readAtlasCountryResolutionOverrides({ other_resolution: 'nuts9' })).toThrow(/Unknown resolution/);
+});
+
+test('folds an other-country Full instruction into one mixed add action', () => {
+  expect(normalizeAtlasModelPlan([
+    { intent: 'add_country', params: { countries: ['FR'], resolution: 'nuts2' } },
+    { intent: 'set_network_resolution', params: { resolution: 'full' } },
+  ])).toEqual([{ intent: 'add_country', params: {
+    countries: ['FR'], resolution: 'nuts2', other_resolution: 'full',
+  } }]);
+});
+
+test.each([true, false])('redundant global resolution cannot flash before country update (%s)', globalFirst => {
+  const global = { intent: 'set_network_resolution', params: { resolution: 'full' } };
+  const country = { intent: 'add_country', params: { countries: ['FR'], resolution: 'full' } };
+  expect(normalizeAtlasModelPlan(globalFirst ? [global, country] : [country, global])).toEqual([country]);
+});
+
+test('scoped slider request becomes a country-only atomic update', () => {
+  expect(normalizeAtlasModelPlan([{ intent: 'set_network_resolution', params: {
+    countries: ['FR'], resolution: 'full',
+  } }])).toEqual([{ intent: 'add_country', params: { countries: ['FR'], resolution: 'full' } }]);
+  expect(normalizeAtlasModelPlan([{ intent: 'set_network_resolution', params: { resolution: 'full' } }]))
+    .toEqual([{ intent: 'set_network_resolution', params: { resolution: 'full' } }]);
+});
+
+test('carrier switch and geography are normalized into one atomic country action', () => {
+  const plan = normalizeAtlasModelPlan([
+    { intent: 'set_network_carrier', params: { network_carrier: 'gas' } },
+    { intent: 'load_country', params: { countries: ['BA', 'AL'], layers: ['Grid'] } },
+  ]);
+  expect(plan).toEqual([{ intent: 'load_country', params: {
+    countries: ['BA', 'AL'], layers: ['Grid'], network_carrier: 'gas',
+  } }]);
+  expect(normalizeAtlasModelPlan([
+    { intent: 'set_network_carrier', params: { network_carrier: 'water' } },
+    { intent: 'load_country_groups', params: { groups: ['Balkans'] } },
+  ])).toEqual([{ intent: 'load_country_groups', params: { groups: ['Balkans'], network_carrier: 'water' } }]);
+  expect(normalizeAtlasModelPlan([
+    { intent: 'set_network_carrier', params: { network_carrier: 'gas' } },
+    { intent: 'load_country', params: { countries: ['BE'], network_carrier: 'water' } },
+  ])).toEqual([]);
+});
+
+test('local fallback checks a completed infrastructure country and layer change', () => {
+  const before = { networkCarrier: 'water', loadedCountryCodes: ['EE', 'LV', 'LT'], visibleMapLayers: ['Grid', 'Demand'] };
+  const after = { networkCarrier: 'water', activeNetwork: 'atlas_water.db', loadedCountryCodes: ['EE', 'LT', 'LV', 'PL'], visibleMapLayers: ['Grid', 'Demand'] };
+  const action = { intent: 'add_country', params: { countries: ['PL'], network_carrier: 'water' } };
+  expect(checkAtlasInfrastructureActionState(action, before, after)).toBe(true);
+  expect(checkAtlasInfrastructureActionState(action, before, { ...after, visibleMapLayers: ['Grid'] })).toBe(false);
+  expect(checkAtlasInfrastructureActionState(action, before, { ...after, loadedCountryCodes: ['PL'] })).toBe(false);
+});
+
+test('local fallback distinguishes all Europe from a Baltic subset', () => {
+  const before = { networkCarrier: 'water', visibleMapLayers: ['Grid'] };
+  const after = { networkCarrier: 'water', activeNetwork: 'atlas_water.db',
+    availableCountryCodes: ['EE', 'LT', 'LV', 'PL'], loadedCountryCodes: ['EE', 'LT', 'LV', 'PL'], visibleMapLayers: ['Grid'] };
+  expect(checkAtlasInfrastructureActionState({ intent: 'load_all_countries', params: { network_carrier: 'water' } }, before, after)).toBe(true);
+  expect(checkAtlasInfrastructureActionState({ intent: 'load_country_groups', params: { groups: ['Baltics'], network_carrier: 'water' } }, before, after)).toBe(false);
+  expect(checkAtlasInfrastructureActionState(
+    { intent: 'load_country_groups', params: { groups: ['Balkans'], network_carrier: 'gas' } },
+    { networkCarrier: 'gas', visibleMapLayers: ['Grid'] },
+    { networkCarrier: 'gas', activeNetwork: 'atlas_gas.db',
+      availableCountryCodes: ['AL', 'BG', 'HR', 'GR', 'MK', 'RO', 'RS', 'SI'],
+      loadedCountryCodes: ['AL', 'BG', 'HR', 'GR', 'MK', 'RO', 'RS', 'SI'], visibleMapLayers: ['Grid'] },
+  )).toBe(true);
+  expect(checkAtlasInfrastructureActionState({ intent: 'control_map_view', params: { operation: 'isolate' } }, before, after)).toBeNull();
+});
+
+test('same geography on electricity transfers the sole visible methane scope, not the exit workspace', () => {
+  const context = { networkCarrier: 'overlay', workspaceCarrier: 'gas', networkOverlayMode: true,
+    overlayNetworkCarriers: ['gas'], overlayCarrierScopes: { gas: { countries: ['FR'], domains: ['Grid'] } },
+    loadedCountryCodes: ['BE'], networkResolution: 'nuts3', visibleMapLayers: ['Grid'] };
+  const plan = [{ intent: 'set_network_carrier', params: { network_carrier: 'electricity' } }];
+  expect(reconcileAtlasAnaphoricCarrierPlan('show me this for electricity', plan, context)).toEqual([
+    { intent: 'load_country', params: { countries: ['FR'], network_carrier: 'electricity', resolution: 'nuts3', layers: ['Grid'] } },
+  ]);
+  expect(reconcileAtlasAnaphoricCarrierPlan('show electricity', plan, context)).toBe(plan);
+  expect(reconcileAtlasAnaphoricCarrierPlan('show me this for electricity', plan,
+    { ...context, overlayNetworkCarriers: ['gas', 'water'] })).toBe(plan);
+});
+
+test('local electricity verification rejects methane-only overlay even when power countries loaded', () => {
+  const action = { intent: 'load_country', params: { countries: ['FR'], network_carrier: 'electricity', resolution: 'nuts3', layers: ['Grid'] } };
+  const after = { networkCarrier: 'overlay', networkOverlayMode: true, overlayNetworkCarriers: ['gas'],
+    loadedCountryCodes: ['FR'], networkResolution: 'nuts3', visibleMapLayers: ['Grid'] };
+  expect(checkAtlasElectricityActionState(action, {}, after)).toBe(false);
+  expect(checkAtlasElectricityActionState(action, {}, { ...after, overlayNetworkCarriers: ['gas', 'electricity'] })).toBe(true);
+  expect(checkAtlasElectricityActionState(action, {}, { ...after, networkCarrier: 'electricity', networkOverlayMode: false })).toBe(true);
 });
 
 describe('Atlas agent command parser', () => {
@@ -54,12 +154,14 @@ describe('Atlas agent command parser', () => {
     });
   });
 
-  test('turns a mixed TSO request into one atomic three-ring action', () => {
+  test('turns a mixed TSO request into one atomic multi-focus action', () => {
     expect(parseAtlasAgentCommand('show Germany as a mixed granularity TSO view')).toEqual({
       type: 'mixed_granularity',
-      focusCountry: 'DE',
+      focusCountries: ['DE'],
       levels: { focus: 'full', adjacent: 'nuts3', outer: 'bidding_zone' },
     });
+    expect(parseAtlasAgentCommand('show France and Germany as a mixed TSO view across the full model'))
+      .toMatchObject({ type: 'mixed_granularity', focusCountries: ['DE', 'FR'], scope: 'full' });
     expect(normalizeAtlasModelPlan([
       { intent: 'set_mixed_granularity', params: { focus_country: 'DE' } },
       { intent: 'set_map_layers', params: { layers: ['Grid', 'Supply'], mode: 'replace' } },

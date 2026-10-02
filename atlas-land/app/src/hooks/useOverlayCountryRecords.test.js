@@ -115,3 +115,23 @@ test('asset-only source changes retain the selected tagged connection cache', ()
   expect(result.current.selectedConnections).toBe(before);
   expect(result.current.records.electricity.connections).toBe(scopedConnections);
 });
+
+test('methane may be scoped to France without changing electricity or other carriers', () => {
+  const sources = sourcesFor();
+  const { result, rerender } = renderHook(props => useOverlayCountryRecords(props), {
+    initialProps: {
+      sources, countries: ['FR', 'BE'], countriesByCarrier: { gas: ['FR'] },
+      carriers: ['electricity', 'gas', 'water'], enabled: true,
+    },
+  });
+  expect(result.current.records.electricity.facilities.map(item => item.id)).toEqual(['electricity-FR', 'electricity-BE']);
+  expect(result.current.records.gas.facilities.map(item => item.id)).toEqual(['gas-FR']);
+  expect(result.current.records.water.facilities.map(item => item.id)).toEqual(['water-FR', 'water-BE']);
+  const beforePower = result.current.records.electricity;
+  const beforeWater = result.current.records.water;
+  rerender({ sources, countries: ['FR', 'BE'], countriesByCarrier: { gas: ['BE'] },
+    carriers: ['electricity', 'gas', 'water'], enabled: true });
+  expect(result.current.records.gas.facilities.map(item => item.id)).toEqual(['gas-BE']);
+  expect(result.current.records.electricity).toBe(beforePower);
+  expect(result.current.records.water).toBe(beforeWater);
+});

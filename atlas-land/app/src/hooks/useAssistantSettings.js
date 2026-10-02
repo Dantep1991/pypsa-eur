@@ -6,7 +6,7 @@ export function useAssistantSettings() {
   const [short, setShort] = useState(() => (
     typeof window !== 'undefined' && Boolean(window.matchMedia?.(SHORT_ASSISTANT_QUERY).matches)
   ));
-  const [expanded, setExpanded] = useState(!short);
+  const [expanded, setExpanded] = useState(false);
   const toggleRef = useRef(null);
   const panelRef = useRef(null);
   const panelId = useId();

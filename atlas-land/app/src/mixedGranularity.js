@@ -2,7 +2,53 @@ export const MIXED_GRANULARITY_DEFAULTS = Object.freeze({
   focus: 'full',
   adjacent: 'nuts3',
   outer: 'bidding_zone',
+  periphery: 'bidding_zone',
+  remaining: 'bidding_zone',
 });
+
+export const MIXED_GRANULARITY_SCOPES = Object.freeze(['two_hops', 'three_hops', 'full']);
+
+export const ATLAS_COUNTRY_RESOLUTIONS = Object.freeze([
+  'bidding_zone', 'ehighway', 'nuts1', 'nuts2', 'nuts3', 'full',
+]);
+
+// An explicit resolution on "add France" belongs to France alone. Existing
+// countries retain their own cached topology unless the request also sets an
+// other-country resolution. Validate the entire plan before loading anything.
+export function planCountryResolutionUpdate({
+  existingNetworks = [], requestedCountryCodes = [], mode = 'replace',
+  resolution = '', otherResolution = '', resolutionsByCountry = {},
+  fallbackResolution = 'nuts3',
+}) {
+  const requested = [...new Set(requestedCountryCodes.map((code) => String(code || '').trim().toUpperCase()))]
+    .filter(Boolean);
+  if (!requested.length) throw new Error('No country was provided.');
+  const existing = new Map(existingNetworks.map((network) => [network.countryCode, network]));
+  const codes = mode === 'add'
+    ? [...new Set([...existing.keys(), ...requested])]
+    : requested;
+  const overrides = Object.fromEntries(Object.entries(resolutionsByCountry || {})
+    .map(([code, level]) => [String(code).trim().toUpperCase(), level]));
+  for (const code of Object.keys(overrides)) {
+    if (!codes.includes(code)) throw new Error(`Resolution override for ${code} is outside the selected countries.`);
+  }
+  const valid = (level) => !level || ATLAS_COUNTRY_RESOLUTIONS.includes(level);
+  if (![resolution, otherResolution, fallbackResolution, ...Object.values(overrides)].every(valid)) {
+    throw new Error('Choose Bidding zone, e-Highway, NUTS1, NUTS2, NUTS3, or Full / Nodal for each country.');
+  }
+  return codes.map((countryCode) => {
+    const prior = existing.get(countryCode);
+    const desired = overrides[countryCode]
+      || (requested.includes(countryCode) ? resolution : otherResolution)
+      || prior?.resolutionKey
+      || fallbackResolution;
+    return {
+      countryCode,
+      resolution: desired,
+      changed: !prior || prior.resolutionKey !== desired,
+    };
+  });
+}
 
 // The rings follow electrical interconnection rather than only land borders.
 // That makes the preset useful to island and coastal TSOs as well (for example,
@@ -54,34 +100,70 @@ const cleanCodes = (codes) => new Set((codes || [])
   .map((code) => String(code || '').trim().toUpperCase())
   .filter((code) => /^[A-Z]{2}$/.test(code)));
 
-export function buildMixedGranularityPlan(focusCountryCode, availableCountryCodes, levels = {}) {
-  const focusCode = String(focusCountryCode || '').trim().toUpperCase();
+export function buildMixedGranularityPlan(focusCountryCodes, availableCountryCodes, levels = {}, options = {}) {
+  const focusCodes = [...cleanCodes(Array.isArray(focusCountryCodes) ? focusCountryCodes : [focusCountryCodes])];
   const available = cleanCodes(availableCountryCodes);
-  if (!focusCode || !available.has(focusCode)) {
-    throw new Error('Choose a focus country with a local network cache.');
+  if (!focusCodes.length || focusCodes.some((code) => !available.has(code))) {
+    throw new Error('Choose focus countries with local network caches.');
   }
-
   const resolvedLevels = { ...MIXED_GRANULARITY_DEFAULTS, ...levels };
-  const adjacent = [...(TSO_INTERCONNECTION_GRAPH.get(focusCode) || [])]
-    .filter((code) => available.has(code))
-    .sort();
-  const occupied = new Set([focusCode, ...adjacent]);
-  const outer = [...new Set(adjacent.flatMap((code) => [
-    ...(TSO_INTERCONNECTION_GRAPH.get(code) || []),
-  ]))]
-    .filter((code) => available.has(code) && !occupied.has(code))
-    .sort();
-
-  const countries = [
-    { countryCode: focusCode, ring: 'focus', resolution: resolvedLevels.focus },
-    ...adjacent.map((countryCode) => ({ countryCode, ring: 'adjacent', resolution: resolvedLevels.adjacent })),
-    ...outer.map((countryCode) => ({ countryCode, ring: 'outer', resolution: resolvedLevels.outer })),
-  ];
+  if (Object.values(resolvedLevels).some((level) => !ATLAS_COUNTRY_RESOLUTIONS.includes(level))) {
+    throw new Error('Choose a cached network resolution for every TSO ring.');
+  }
+  const scope = options.scope || 'two_hops';
+  if (!MIXED_GRANULARITY_SCOPES.includes(scope)) throw new Error('Choose two rings, three rings, or the full model.');
+  const neighboursOf = (code) => [...(TSO_INTERCONNECTION_GRAPH.get(code === 'UK' ? 'GB' : code) || [])]
+    .map((neighbour) => neighbour === 'GB' && available.has('UK') && !available.has('GB') ? 'UK' : neighbour);
+  const distance = new Map(focusCodes.map((code) => [code, 0]));
+  const queue = [...focusCodes];
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const code = queue[cursor];
+    for (const neighbour of neighboursOf(code)) {
+      if (distance.has(neighbour)) continue;
+      distance.set(neighbour, distance.get(code) + 1);
+      queue.push(neighbour);
+    }
+  }
+  const ring = (depth) => [...distance.entries()]
+    .filter(([code, value]) => available.has(code) && value === depth).map(([code]) => code).sort();
+  const adjacent = ring(1);
+  const outer = ring(2);
+  const periphery = ring(3);
+  const remaining = [...available].filter((code) => !distance.has(code) || distance.get(code) > 3).sort();
+  const rings = { focus: focusCodes, adjacent, outer,
+    periphery: scope === 'two_hops' ? [] : periphery,
+    remaining: scope === 'full' ? remaining : [] };
+  const countries = Object.entries(rings).flatMap(([tier, codes]) => codes.map((countryCode) => ({
+    countryCode, ring: tier, resolution: resolvedLevels[tier],
+  })));
+  const included = new Set(countries.map(({ countryCode }) => countryCode));
+  const grouped = new Set();
+  const regions = (options.regions || []).map((region, index) => {
+    const name = String(region.name || '').trim();
+    const countryCodes = [...cleanCodes(region.countryCodes || [])].sort();
+    if (!name || countryCodes.length < 2 || countryCodes.some((code) => !included.has(code) || focusCodes.includes(code) || grouped.has(code))) {
+      throw new Error(`Region ${index + 1} needs a name and at least two non-focus countries in the selected scope; countries cannot belong to two regions.`);
+    }
+    countryCodes.forEach((code) => grouped.add(code));
+    return { id: `region-${index + 1}`, name, countryCodes };
+  });
+  const regionByCountry = new Map(regions.flatMap((region) => region.countryCodes.map((code) => [code, region])));
+  countries.forEach((country) => {
+    const region = regionByCountry.get(country.countryCode);
+    if (!region) return;
+    country.resolution = 'bidding_zone';
+    country.regionId = region.id;
+  });
   return {
-    focusCode,
+    focusCode: focusCodes[0],
+    focusCodes,
+    scope,
     levels: resolvedLevels,
     adjacent,
     outer,
+    periphery: rings.periphery,
+    remaining: rings.remaining,
+    regions,
     countries,
   };
 }

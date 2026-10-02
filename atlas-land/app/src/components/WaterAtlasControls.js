@@ -68,6 +68,7 @@ export default function WaterAtlasControls({
               aria-label="Water network country"
             >
               <option value="">All Europe overview</option>
+              {countryFilter?.includes(',') && <option value={countryFilter}>{countryFilter.split(',').join(' + ')}</option>}
               {countries.map((country) => <option key={country} value={country}>{country}</option>)}
             </select>
           </label>

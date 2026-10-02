@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, GitBranch, Loader2, RotateCcw } from 'lucide-react';
+import { GitBranch, Loader2, RotateCcw } from 'lucide-react';
+import ModelControlHelp from './ModelControlHelp';
 
 const count = value => Number(value || 0).toLocaleString();
 
@@ -25,12 +26,14 @@ export default function ModelMixedResolutionControls({
     <div className="space-y-2.5 rounded-xl border border-white/10 bg-black/20 p-3" aria-label="Mixed-resolution model view">
       <div className="flex items-start gap-2">
         <GitBranch className="mt-0.5 h-3.5 w-3.5 shrink-0 text-tj-gold" />
-        <div>
+        <div className="min-w-0 flex-1">
           <p className="text-[10px] font-semibold text-white">Mixed-resolution view</p>
-          <p className="mt-0.5 text-[9px] leading-3.5 text-tj-slate">
-            Keep the focus country and its connected neighbours at {nativeLabel || 'the model’s native topology'}, then aggregate more distant areas to country markers.
-          </p>
         </div>
+        <ModelControlHelp label="Mixed-resolution view">
+          <p>Keep the focus country and its connected neighbours at {nativeLabel || 'the model’s native topology'}, then aggregate more distant areas to country markers.</p>
+          <p>No synthetic detail is introduced: country selection never loads another network. Atlas only groups nodes already present in this project version; splitting below native resolution remains unavailable.</p>
+          <p>This is a visual aggregation only. It cannot be run or published as a derived model.</p>
+        </ModelControlHelp>
       </div>
 
       <label className="block">
@@ -46,10 +49,6 @@ export default function ModelMixedResolutionControls({
         </select>
       </label>
 
-      <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.06] px-2.5 py-2 text-[9px] leading-3.5 text-tj-slate">
-        <strong className="text-amber-100">No synthetic detail:</strong> country selection never loads another network. Atlas only groups nodes already present in this exact project version; splitting below native resolution remains unavailable.
-      </div>
-
       {status?.state === 'error' && (
         <div role="alert" className="rounded-lg border border-red-400/25 bg-red-500/10 px-2.5 py-2 text-[9px] leading-3.5 text-red-200">{status.error}</div>
       )}
@@ -64,10 +63,6 @@ export default function ModelMixedResolutionControls({
           <p className="text-[9px] leading-3.5 text-tj-slate">
             {count(counts?.sourceNodes)} mapped source nodes → {count(counts?.projectedNodes)} visible nodes · {count(counts?.sourceLinks)} source links → {count(counts?.projectedLinks)} visible interfaces
           </p>
-          <div className="flex items-start gap-2 rounded-lg border border-amber-300/25 bg-amber-300/[0.08] px-2.5 py-2 text-[9px] leading-3.5 text-white">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
-            <span>Visual aggregation only. It cannot be run or published as a derived model.</span>
-          </div>
         </>
       )}
 

@@ -111,6 +111,7 @@ function makeMap() {
     getMinZoom: () => 3,
     getMaxZoom: () => 16,
     getContainer: () => mockMapContainerElement,
+    addLayer: jest.fn(() => map),
     getPane: jest.fn((name) => name === 'land-constraints' ? mockLandPane : null),
     getBoundsZoom: jest.fn(() => 6),
     getBounds: () => L.latLngBounds([map.center.lat - 1, map.center.lng - 1], [map.center.lat + 1, map.center.lng + 1]),
@@ -179,6 +180,24 @@ const settle = async () => {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
   act(() => jest.advanceTimersByTime(200));
 };
+
+test('result size changes keep point layers, topology, source queries and camera stable', async () => {
+  const facilities = [{ ...defaults.facilities[0], latitude: 52, longitude: 8, atlas_result_map_mode: 'bubbles', atlas_result_value: 25, atlas_result_magnitude_ratio: 0.25 }];
+  const view = render(<EnhancedLeafletMapWithVoice {...defaults} facilities={facilities} resultMarkerScale={1} />);
+  await settle();
+  const first = mockPointLayerProps.pointToLayer(mockPointLayerProps.data.features[0], L.latLng(52, 8));
+  expect(first.getRadius()).toBe(18);
+  const mounts = mockPointMounts, calls = global.fetch.mock.calls.length, lineKey = mockPendingLineProps.dataKey;
+  mockMap.setView.mockClear(); mockMap.fitBounds.mockClear();
+  view.rerender(<EnhancedLeafletMapWithVoice {...defaults} facilities={facilities} resultMarkerScale={2} />);
+  await settle();
+  const larger = mockPointLayerProps.pointToLayer(mockPointLayerProps.data.features[0], L.latLng(52, 8));
+  expect(larger.getRadius()).toBe(36);
+  expect(mockPointMounts).toBe(mounts);
+  expect(mockPendingLineProps.dataKey).toBe(lineKey);
+  expect(global.fetch.mock.calls).toHaveLength(calls);
+  expect(mockMap.setView).not.toHaveBeenCalled(); expect(mockMap.fitBounds).not.toHaveBeenCalled();
+});
 
 test('names the interactive map and exposes its keyboard shortcuts without clobbering later owners', () => {
   const view = render(<EnhancedLeafletMapWithVoice {...defaults} />);
@@ -493,9 +512,9 @@ test('line metric unit text cannot create elements in a tooltip', async () => {
   const layer = { bindTooltip: jest.fn(), on: jest.fn() };
   mockPendingLineProps.onEachFeature(mockPendingLineProps.data.features[0], layer);
   const root = document.createElement('div');
-  root.innerHTML = layer.bindTooltip.mock.calls[0][0];
+  root.innerHTML = layer.bindTooltip.mock.calls[0][0]();
   expect(root.querySelector('img')).toBeNull();
-  expect(root.textContent).toBe(`12 ${units}`);
+  expect(root.textContent).toContain(`12 ${units}`);
 });
 
 test('drag start and settle do not rebuild unchanged lines', async () => {
@@ -1268,22 +1287,37 @@ test.each([false, true])('capacity tooltips survive layers created during moveme
   expect(content()).toContain('700');
 });
 
-test('asset popups reserve header space, scroll tall content and identify provisional demand', async () => {
+test('ordinary line clicks select the sidebar rather than the second legacy connection card', async () => {
+  const facilities = [{ id: 'one', latitude: 52, longitude: 8 }, { id: 'two', latitude: 52.5, longitude: 8.5 }];
+  const connection = { id: 'one-two', from: 'one', to: 'two', fromNode: 'one', toNode: 'two' };
+  const legacyClick = jest.fn();
+  const view = render(<EnhancedLeafletMapWithVoice {...defaults} mapViewMode="our-model" facilities={facilities} connections={[connection]} onConnectionClick={legacyClick} />);
+  await settle();
+  const layer = { on: jest.fn(), bindTooltip: jest.fn() };
+  mockLineLayerProps.onEachFeature(mockLineLayerProps.data.features[0], layer);
+  const click = layer.on.mock.calls.find(([name]) => name === 'click')[1];
+  act(() => click({ originalEvent: new MouseEvent('click'), containerPoint: { x: 20, y: 20 } }));
+  expect(legacyClick).not.toHaveBeenCalled();
+  expect(view.getAllByRole('region', { name: 'inspect panel' })).toHaveLength(1);
+  expect(view.getByRole('region', { name: 'inspect panel' }).textContent).toContain('one-two');
+});
+
+test('node selection uses the tabbed sidebar, never binds a duplicate asset popup, and retains provisional evidence', async () => {
   const facilities = [{ ...defaults.facilities[0], component_type: 'Load', type: 'Load', carrier: 'electricity',
     provisional_demand: true, annual_energy_gwh: 2.274, p_set: 0.26, spatial_weight: 0.02274 }];
-  render(<EnhancedLeafletMapWithVoice {...defaults} facilities={facilities} />);
+  const view = render(<EnhancedLeafletMapWithVoice {...defaults} facilities={facilities} />);
   act(() => mockMap.setView([48.85, 2.35], 10));
   await settle();
   const feature = mockPointLayerProps.data.features[0];
-  const layer = { on: jest.fn(), bindPopup: jest.fn() };
+  const layer = { on: jest.fn(), bindPopup: jest.fn(), bindTooltip: jest.fn() };
   mockPointLayerProps.onEachFeature(feature, layer);
-  const [content, options] = layer.bindPopup.mock.calls[0];
-  expect(options).toEqual({ className: 'atlas-asset-popup', maxWidth: 360, maxHeight: 420,
-    autoPanPaddingTopLeft: [12, 190], autoPanPaddingBottomRight: [12, 60] });
-  const popup = content();
-  expect(popup.textContent).toContain('Provisional estimate, not measured consumption');
-  expect(popup.textContent).toContain('2.274');
-  expect(popup.textContent).toContain('Sector/subsector breakdown unavailable');
+  expect(layer.bindPopup).not.toHaveBeenCalled();
+  const click = layer.on.mock.calls.find(([name]) => name === 'click')[1];
+  act(() => click({ originalEvent: new MouseEvent('click') }));
+  const sidebar = view.getByRole('region', { name: 'inspect panel' });
+  expect(sidebar.textContent).toContain('Provisional estimate, not measured consumption');
+  expect(sidebar.textContent).toContain('2.274');
+  expect(sidebar.textContent).toContain('Sector/subsector breakdown unavailable');
 });
 
 test('popup auto-pan does not re-cull its owning marker, but closing resumes clipping', async () => {

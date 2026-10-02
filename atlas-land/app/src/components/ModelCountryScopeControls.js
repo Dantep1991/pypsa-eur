@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Loader2, Plus, X } from 'lucide-react';
+import ModelControlHelp from './ModelControlHelp';
 
 export default function ModelCountryScopeControls({
   availableCountries,
@@ -41,14 +42,20 @@ export default function ModelCountryScopeControls({
             {selected.length ? `${selected.length} of ${available.length} countries selected` : `All ${available.length} project countries`}
           </span>
         </div>
-        <button
-          type="button"
-          onClick={onSelectAll}
-          disabled={controlsDisabled || !selected.length}
-          className="shrink-0 rounded-lg border border-tj-gold/30 bg-tj-gold/10 px-2 py-1 text-[9px] font-semibold text-tj-gold disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-tj-slate disabled:opacity-70"
-        >
-          {selected.length ? 'Select all' : 'All selected'}
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <ModelControlHelp label="Country scope">
+            <p>Filter the countries already in this project model. This previews a subset of its existing nodes and links; it does not load separate country networks.</p>
+            <p>Country selection is available at the native model geography. Switch back to that level before editing a selection.</p>
+          </ModelControlHelp>
+          <button
+            type="button"
+            onClick={onSelectAll}
+            disabled={controlsDisabled || !selected.length}
+            className="shrink-0 rounded-lg border border-tj-gold/30 bg-tj-gold/10 px-2 py-1 text-[9px] font-semibold text-tj-gold disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-tj-slate disabled:opacity-70"
+          >
+            {selected.length ? 'Select all' : 'All selected'}
+          </button>
+        </div>
       </div>
 
       <div className="mt-2 flex gap-1.5">
@@ -92,11 +99,6 @@ export default function ModelCountryScopeControls({
         )}
       </div>
 
-      {disabled && (
-        <span className="mt-2 block text-[9px] leading-3.5 text-amber-100/80">
-          Country filtering uses native model identities. Switch the network geography back to bidding zones first.
-        </span>
-      )}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { atlasApiUrl } from '../config/api';
+import { bindAggregationCatalog } from './modelAggregation';
 
 export const MODEL_SCENE_SCHEMA = 'nohm.atlas.model-scene.v1';
 export const MODEL_SCENE_DOMAINS = Object.freeze(['Grid', 'Supply', 'Storage']);
@@ -45,6 +46,7 @@ export function modelSceneRequestUrl(context, { layers = ['grid'], year = null }
     carrier: 'electricity',
     layers: [...new Set(layers.map((value) => text(value).toLowerCase()).filter(Boolean))].join(',') || 'grid',
   });
+  if (text(context.version)) query.set('version', text(context.version));
   if (text(year) && Number.isInteger(Number(year))) query.set('year', String(Number(year)));
   return `/api/atlas/projects/${encodeURIComponent(projectId)}/scene?${query.toString()}`;
 }
@@ -187,7 +189,7 @@ function modelConnection(link, scene) {
   };
 }
 
-export function adaptModelScene(scene, expectedProjectId = '') {
+export function adaptModelScene(scene, expectedProjectId = '', expectedVersion = '') {
   if (!scene || scene.schema !== MODEL_SCENE_SCHEMA) {
     throw new Error('Atlas received an unsupported model-scene response.');
   }
@@ -195,6 +197,13 @@ export function adaptModelScene(scene, expectedProjectId = '') {
     throw new Error(
       `Atlas requested ${expectedProjectId} but received model data for ${scene.project_id || 'another project'}.`,
     );
+  }
+  const version = text(expectedVersion);
+  const explicitAlias = scene.version_binding?.requested_version === version
+    && scene.version_binding?.schema_version === scene.version
+    && scene.version_binding?.source === 'project_meta/run_history.json';
+  if (version && version.toLowerCase() !== 'latest' && scene.version !== version && !explicitAlias) {
+    throw new Error(`Atlas requested model version ${version} but received ${scene.version || 'an unspecified version'}.`);
   }
   const nodeById = new Map((scene.nodes || []).map((node) => [node.id, node]));
   const nodeFacilities = (scene.nodes || []).map((node) => mappedNodeFacility(node, scene)).filter(Boolean);
@@ -251,5 +260,18 @@ export async function fetchModelScene(context, options = {}, fetchImpl = window.
     const detail = typeof payload?.detail === 'string' ? payload.detail : `HTTP ${response.status}`;
     throw new Error(`Atlas could not load the bound model: ${detail}`);
   }
-  return adaptModelScene(payload, context.projectId);
+  const scene = adaptModelScene(payload, context.projectId, context.version);
+  const catalogUrl = `/api/atlas/projects/${encodeURIComponent(context.projectId)}/aggregation-catalog?version=${encodeURIComponent(scene.meta.version)}`;
+  let catalog;
+  try {
+    const catalogResponse = await fetchImpl(atlasApiUrl(catalogUrl, options.apiBase), { signal: options.signal, credentials: 'same-origin' });
+    if (!catalogResponse.ok) throw new Error(`HTTP ${catalogResponse.status}`);
+    catalog = await catalogResponse.json();
+  } catch (error) {
+    if (options.signal?.aborted || error.name === 'AbortError') throw error;
+    // A missing crosswalk disables aggregation, never the source model itself.
+    return { ...scene, meta: { ...scene.meta, warnings: [...scene.meta.warnings,
+      `Geography aggregation unavailable: ${error.message}. Native topology retained.`] } };
+  }
+  return bindAggregationCatalog(scene, catalog);
 }

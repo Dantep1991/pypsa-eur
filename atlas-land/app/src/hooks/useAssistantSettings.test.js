@@ -24,9 +24,11 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); window.matchMedia = originalMatchMedia; });
 
-test('normal-height settings start open and collapse without losing their values', () => {
+test('normal-height settings start collapsed and retain their values when reopened', () => {
   const view = render(<Panel />);
   const button = view.getByRole('button', { name: 'Settings' });
+  expect(button.getAttribute('aria-expanded')).toBe('false');
+  fireEvent.click(button);
   const input = view.getByRole('textbox');
   fireEvent.change(input, { target: { value: 'External microphone' } });
   fireEvent.click(button);
@@ -52,6 +54,7 @@ test('short-height settings start collapsed and alternate with the conversation'
 
 test('height breakpoint moves focus out of collapsing settings and cleans up its listener', () => {
   const view = render(<Panel />);
+  fireEvent.click(view.getByRole('button', { name: 'Settings' }));
   view.getByRole('textbox').focus();
   act(() => { query.matches = true; listener(); });
   expect(document.activeElement).toBe(view.getByRole('button', { name: 'Settings' }));

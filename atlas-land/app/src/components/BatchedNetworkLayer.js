@@ -73,7 +73,8 @@ export default function BatchedNetworkLayer({ data, dataKey, sourceKey, style, s
       const setupStarted = diagnostics ? performance.now() : 0;
       let setupMs = 0;
       try {
-        entry.renderer = createAtlasCanvas({ pane: names[slot], padding: 0.1, deferDrawing: true });
+        // Grow the hit area without exaggerating the drawn capacity/flow width.
+        entry.renderer = createAtlasCanvas({ pane: names[slot], padding: 0.1, tolerance: 7, deferDrawing: true });
         entry.layer = L.geoJSON(undefined, {
           pane: names[slot], renderer: entry.renderer, style: snapshot.style,
           smoothFactor: snapshot.smoothFactor, onEachFeature: snapshot.onEachFeature,

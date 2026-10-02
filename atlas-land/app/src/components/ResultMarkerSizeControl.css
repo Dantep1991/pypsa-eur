@@ -1,0 +1,23 @@
+.atlas-result-marker-size { color: var(--text-primary); font: 400 0.8125rem/1.4 var(--font-sans); }
+.atlas-result-marker-size__heading { display: flex; align-items: center; gap: 0.75rem; }
+.atlas-result-marker-size__heading label { flex: 1; font-weight: 600; }
+.atlas-result-marker-size__heading output { font-variant-numeric: tabular-nums; }
+.atlas-result-marker-size__heading button {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--control-surface);
+  color: var(--text-secondary);
+  font: inherit;
+}
+.atlas-shell .atlas-result-marker-size input[type='range'] {
+  display: block;
+  width: 100%;
+  height: 2.75rem;
+  padding: 0;
+  border: 0;
+  accent-color: var(--accent-primary);
+  background: transparent !important;
+  cursor: pointer;
+}
+.atlas-result-marker-size :focus-visible { outline: 2px solid var(--accent-primary-ui); outline-offset: 2px; }

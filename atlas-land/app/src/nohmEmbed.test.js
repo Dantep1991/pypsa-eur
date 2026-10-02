@@ -3,6 +3,9 @@ import {
   announceNohmEmbedReady,
   announceNohmModelScene,
   NOHM_ATLAS_DOMAIN_MESSAGE,
+  NOHM_ATLAS_ASSISTANT_MODE_MESSAGE,
+  NOHM_ATLAS_ASSISTANT_DOCK_MESSAGE,
+  NOHM_ATLAS_ASSISTANT_MODE_EVENT,
   NOHM_ATLAS_ACTION_ACK_MESSAGE,
   NOHM_ATLAS_ACTION_EVENT,
   NOHM_ATLAS_ACTION_MESSAGE,
@@ -28,8 +31,72 @@ import {
   acknowledgeNohmAtlasAction,
   scheduleNohmEmbedReady,
   requestNohmAtlasPortal,
+  requestNohmAtlasAssistantMode,
   startNohmEmbedBridge,
 } from './nohmEmbed';
+
+test('Atlas assistant switch uses the authenticated parent bridge', () => {
+  const callbacks = new Map();
+  const events = [];
+  const parent = { postMessage: jest.fn() };
+  const target = {
+    parent,
+    location: { origin: 'https://nohm.example.test' },
+    document: { documentElement: { setAttribute: jest.fn() } },
+    requestAnimationFrame: jest.fn(),
+    addEventListener: (name, callback) => callbacks.set(name, callback),
+    removeEventListener: jest.fn(),
+    CustomEvent: class CustomEvent { constructor(type, options) { this.type = type; this.detail = options.detail; } },
+    dispatchEvent: (event) => events.push(event),
+  };
+  startNohmEmbedBridge(target);
+  expect(requestNohmAtlasAssistantMode('agent', target)).toBe(true);
+  expect(parent.postMessage).toHaveBeenCalledWith({
+    type: NOHM_ATLAS_ASSISTANT_MODE_MESSAGE, protocolVersion: 1,
+    source: 'nohm-atlas', mode: 'agent',
+  }, target.location.origin);
+  expect(requestNohmAtlasAssistantMode('invalid', target)).toBe(false);
+  callbacks.get('message')({ source: parent, origin: target.location.origin, data: {
+    type: NOHM_ATLAS_ASSISTANT_MODE_MESSAGE, protocolVersion: 1, source: 'nohm-shell', mode: 'atlas',
+  } });
+  expect(events.at(-1)).toEqual(expect.objectContaining({ type: NOHM_ATLAS_ASSISTANT_MODE_EVENT, detail: { mode: 'atlas' } }));
+  callbacks.get('message')({ source: parent, origin: 'https://other.test', data: {
+    type: NOHM_ATLAS_ASSISTANT_MODE_MESSAGE, protocolVersion: 1, source: 'nohm-shell', mode: 'agent',
+  } });
+  expect(events).toHaveLength(1);
+});
+
+test('Atlas accepts only bounded assistant dock coordinates from its Nohm parent', () => {
+  const callbacks = new Map();
+  const parent = { postMessage: jest.fn() };
+  const style = { setProperty: jest.fn() };
+  const target = {
+    parent,
+    location: { origin: 'https://nohm.example.test' },
+    document: { documentElement: { setAttribute: jest.fn(), style } },
+    requestAnimationFrame: jest.fn(),
+    addEventListener: (name, callback) => callbacks.set(name, callback),
+    removeEventListener: jest.fn(),
+  };
+  startNohmEmbedBridge(target);
+  const send = (bottomPx, rightPx, overrides = {}) => callbacks.get('message')({
+    source: parent,
+    origin: target.location.origin,
+    data: {
+      type: NOHM_ATLAS_ASSISTANT_DOCK_MESSAGE,
+      protocolVersion: 1,
+      source: 'nohm-shell',
+      bottomPx, rightPx,
+    },
+    ...overrides,
+  });
+  send(151, 7);
+  expect(style.setProperty).toHaveBeenCalledWith('--nohm-assistant-bottom', '151px');
+  expect(style.setProperty).toHaveBeenCalledWith('--nohm-assistant-right', '7px');
+  send(-1, 7);
+  send(151, 7, { origin: 'https://other.example.test' });
+  expect(style.setProperty).toHaveBeenCalledTimes(2);
+});
 
 test('Atlas bootstraps a versioned model context from its embed URL', () => {
   expect(readNohmAtlasWorkspaceContextFromLocation({
@@ -44,6 +111,15 @@ test('Atlas bootstraps a versioned model context from its embed URL', () => {
     nativeGeography: { id: 'bidding_zone', label: 'Bidding zones', resolved: true },
   });
   expect(readNohmAtlasWorkspaceContextFromLocation({ search: '?project=TYNDP_2026' })).toBeNull();
+});
+
+test('project identity keeps stale reference URLs and bridge contexts model-bound', () => {
+  expect(normalizeNohmAtlasWorkspaceContext({ mode: 'reference', projectId: 'DHEM_2026' }).mode).toBe('model');
+  expect(readNohmAtlasWorkspaceContextFromLocation({
+    search: '?nohm-context=1&mode=reference&project=DHEM_2026',
+  }).mode).toBe('model');
+  expect(normalizeNohmAtlasWorkspaceContext({ mode: 'reference' }).mode).toBe('reference');
+  expect(readNohmAtlasWorkspaceContextFromLocation({ search: '?nohm-context=1&mode=reference' }).projectId).toBeNull();
 });
 
 test('Atlas accepts only a builder preview bound to the exact loaded model', () => {
@@ -307,9 +383,11 @@ test('the embed bridge accepts only supported themes from the Nohm shell', () =>
   });
   send('horizon');
   expect(onThemeChange).toHaveBeenCalledWith('horizon');
+  send('meridian');
+  expect(onThemeChange).toHaveBeenCalledWith('meridian');
   send('system');
   send('light', { origin: 'https://other.example.test' });
-  expect(onThemeChange).toHaveBeenCalledTimes(1);
+  expect(onThemeChange).toHaveBeenCalledTimes(2);
 });
 
 test('the default theme bridge publishes a window event for the Atlas application', () => {
