@@ -52,7 +52,7 @@ function parsedNetwork(body) {
   };
 }
 
-const response = (data, ok = true) => ({ ok, status: ok ? 200 : 503, json: async () => data, text: async () => '' });
+const response = (data, ok = true) => ({ ok, status: ok ? 200 : 503, json: async () => data, text: async () => JSON.stringify(data) });
 const flush = async () => act(async () => { for (let i = 0; i < 30; i += 1) await Promise.resolve(); });
 const frame = () => mockMapFrames[mockMapFrames.length - 1];
 const geometry = (props = frame()) => ({
@@ -138,6 +138,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  catalogue.length = 12;
   global.fetch = originalFetch;
   jest.useRealTimers();
 });
@@ -145,6 +146,8 @@ afterEach(() => {
 async function loadCountries(countries = ['BE', 'FR']) {
   const view = render(<App />);
   await flush();
+  const geography = view.getByRole('button', { name: /Geography Domain/ });
+  if (geography.getAttribute('aria-expanded') === 'false') fireEvent.click(geography);
   for (const country of countries) {
     fireEvent.change(view.getByRole('combobox', { name: 'Add country network' }), { target: { value: country } });
     await flush();
@@ -157,6 +160,8 @@ async function loadCountries(countries = ['BE', 'FR']) {
 test('Select all loads every cached country as one parallel batch', async () => {
   const view = render(<App />);
   await flush();
+  const geography = view.getByRole('button', { name: /Geography Domain/ });
+  if (geography.getAttribute('aria-expanded') === 'false') fireEvent.click(geography);
   fireEvent.click(view.getByRole('button', { name: 'Select all country networks' }));
   await flush();
 
@@ -191,9 +196,46 @@ test('mixed TSO rings publish per-country resolutions as one complete map', asyn
   expect(frame().activeCountryCodes).toEqual(['BE', 'FR']);
   expect(frame().activeCountryCode).toBe('BE');
   expect(frame().networkResolution).toBe('mixed');
-  expect(view.getByText('Mixed TSO')).toBeDefined();
+  expect(view.getAllByText('Mixed TSO').length).toBeGreaterThan(0);
   expect(view.getByRole('button', { name: 'Belgium' }).getAttribute('title')).toContain('Nodal');
   expect(view.getByRole('button', { name: 'France' }).getAttribute('title')).toContain('NUTS3');
+});
+
+test('mixed TSO controls can place two countries in the focus tier', async () => {
+  const view = await loadCountries(['BE']);
+  parseRequests = [];
+  fireEvent.click(view.getByRole('button', { name: /mixed tso rings/i }));
+  fireEvent.click(view.getByRole('checkbox', { name: 'Focus France' }));
+  fireEvent.change(view.getByRole('combobox', { name: 'Mixed TSO extent' }), { target: { value: 'full' } });
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Build mixed view' })); });
+  await flush();
+  expect(parseRequests.map(({ filename }) => filename)).toEqual(['base_BE_full.nc', 'base_FR_full.nc']);
+  expect(frame().activeCountryCodes).toEqual(['BE', 'FR']);
+  expect(frame().networkResolution).toBe('mixed');
+});
+
+test('mixed TSO regions replace member-country markers only in the map projection', async () => {
+  catalogue.push(...['DE', 'NL'].flatMap((country) => levels.map((level) => ({
+    filename: `base_${country}_${level}.nc`,
+    ...(level === 'full'
+      ? { is_full_nodal_network: true, full_country: country }
+      : { is_geographic_cluster: true, geographic_country: country, geographic_level: level, geographic_clusters: 2 }),
+  }))));
+  const view = await loadCountries(['DE']);
+  fireEvent.click(view.getByRole('button', { name: /mixed tso rings/i }));
+  fireEvent.click(view.getByText('Aggregate countries into regions (0)'));
+  fireEvent.change(view.getByRole('textbox', { name: 'Region name' }), { target: { value: 'Lowlands' } });
+  fireEvent.click(view.getByRole('checkbox', { name: 'Add Belgium to region' }));
+  fireEvent.click(view.getByRole('checkbox', { name: 'Add Netherlands to region' }));
+  fireEvent.click(view.getByRole('button', { name: 'Add region' }));
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Build mixed view' })); });
+  await flush();
+  expect(frame().activeCountryCodes).toEqual(['DE', 'BE', 'FR', 'NL']);
+  expect(frame().facilities.some(({ id }) => id === 'atlas-region:region-1')).toBe(true);
+  expect(frame().facilities.some(({ id, sourceCountryCode, component_type }) => (
+    ['BE', 'NL'].includes(sourceCountryCode) && component_type === 'Bus'
+    && !String(id).startsWith('atlas-region:')
+  ))).toBe(false);
 });
 async function send(view, text) {
   if (!view.queryByRole('textbox', { name: 'Message EMIL' })) fireEvent.click(view.getByRole('button', { name: 'Open map assistant' }));
@@ -201,6 +243,107 @@ async function send(view, text) {
   fireEvent.click(view.getByRole('button', { name: 'Send assistant message' }));
   await flush();
 }
+
+test.each([
+  { network_carrier: 'gas' },
+  { network_carriers: ['electricity', 'gas'] },
+])('methane overlay inherits Belgium instead of remembered France: %j', async params => {
+  window.localStorage.setItem('atlas-network-overlay-carrier-filters', JSON.stringify({ gas: { countries: ['FR'], domains: ['Grid'] } }));
+  const requests = [];
+  mockOverlayDomainSource('gas', requests);
+  const view = await loadCountries(['BE']);
+  const power = geometry();
+  interpreterPlan = [{ intent: 'set_network_overlay', params: { visible: true, ...params } }];
+  await send(view, 'overlay the methane network');
+  act(() => jest.advanceTimersByTime(250));
+  await flush();
+  expect(frame().facilities.filter(asset => asset.atlas_network_carrier === 'gas').map(asset => asset.country_code)).toEqual(['BE']);
+  expect(frame().facilities.filter(asset => asset.atlas_network_carrier === 'electricity').map(asset => [asset.sourceCountryCode, asset.sourceNetworkFilename, asset.id])).toEqual(power.nodes);
+  const audits = global.fetch.mock.calls.filter(([url]) => String(url).endsWith('/api/map-agent/judge')).map(([, options]) => JSON.parse(options.body));
+  expect(audits[audits.length - 1].afterContext.overlayCarrierScopes.gas.countries).toEqual(['BE']);
+});
+
+test.each([false, true])('Portugal methane overlay preserves the mixed electricity sequence (judge repair=%s)', async repair => {
+  catalogue.push(...['ES', 'PT'].flatMap(country => levels.map(level => ({
+    filename: `base_${country}_${level}.nc`,
+    ...(level === 'full' ? { is_full_nodal_network: true, full_country: country }
+      : { is_geographic_cluster: true, geographic_country: country, geographic_level: level, geographic_clusters: 2 }),
+  }))));
+  const requests = [];
+  const normalFetch = global.fetch;
+  global.fetch = jest.fn((url, options) => String(url).endsWith('/api/atlas/gas/status')
+    ? Promise.resolve(response({ available: true, countries: ['ES', 'FR', 'PT'] })) : normalFetch(url, options));
+  mockOverlayDomainSource('gas', requests);
+  const view = render(<App />);
+  await flush();
+  for (const [text, intent, params] of [
+    ['load spain', 'load_country', { countries: ['ES'], resolution: 'nuts3', network_carrier: 'electricity' }],
+    ['increase the full granularity', 'set_network_resolution', { resolution: 'full' }],
+    ['add france at Nut1 level', 'add_country', { countries: ['FR'], resolution: 'nuts1' }],
+    ['add portugal add nuts3 level', 'add_country', { countries: ['PT'], resolution: 'nuts3' }],
+    ['change france to bz level', 'add_country', { countries: ['FR'], resolution: 'bidding_zone' }],
+  ]) {
+    interpreterPlan = [{ intent, params }];
+    await send(view, text);
+    act(() => jest.advanceTimersByTime(250));
+    await flush();
+  }
+  const powerNodes = frame().facilities.map(asset => [asset.id, asset.sourceNetworkFilename]);
+  const powerLines = frame().connections.map(line => [line.id, line.sourceNetworkFilename]);
+  const parsesBeforeOverlay = parseRequests.length;
+  const overlay = { intent: 'set_network_overlay', params: {
+    visible: true, network_carrier: 'gas', countries: ['PT'], layers: ['Grid'],
+  } };
+  interpreterPlan = [repair ? { intent: 'set_network_carrier', params: { network_carrier: 'gas' } } : overlay];
+  judgeReplies = repair ? [
+    { verdict: 'repair', summary: 'Methane is standalone; add it over Portugal.', corrections: [overlay] },
+    { verdict: 'pass', summary: 'Portugal methane overlays the unchanged electricity networks.', corrections: [] },
+  ] : [{ verdict: 'pass', summary: 'Portugal methane overlays the unchanged electricity networks.', corrections: [] }];
+  await send(view, 'show me the methane overlay in portugal');
+  act(() => jest.advanceTimersByTime(250));
+  await flush();
+  act(() => jest.advanceTimersByTime(250));
+  await flush();
+  expect(frame().facilities.filter(asset => asset.atlas_network_carrier === 'electricity')
+    .map(asset => [asset.id, asset.sourceNetworkFilename])).toEqual(powerNodes);
+  expect(frame().connections.filter(line => line.atlas_network_carrier === 'electricity')
+    .map(line => [line.id, line.sourceNetworkFilename])).toEqual(powerLines);
+  expect(frame().facilities.filter(asset => asset.atlas_network_carrier === 'gas')
+    .map(asset => asset.country_code)).toEqual(['PT']);
+  expect(parseRequests).toHaveLength(parsesBeforeOverlay);
+  const audits = global.fetch.mock.calls.filter(([url]) => String(url).endsWith('/api/map-agent/judge'))
+    .map(([, options]) => JSON.parse(options.body)).filter(body => body.message === 'show me the methane overlay in portugal');
+  expect(audits).toHaveLength(repair ? 2 : 1);
+  expect(audits[audits.length - 1].afterContext).toMatchObject({
+    networkOverlayMode: true, overlayNetworkCarriers: ['electricity', 'gas'],
+    networkResolutionByCountry: { ES: 'full', FR: 'bidding_zone', PT: 'nuts3' },
+    overlayCarrierScopes: { gas: { countries: ['PT'], domains: ['Grid'] } },
+  });
+  expect(view.getByRole('log').textContent).toContain('Verified — Portugal methane overlays');
+});
+
+test('explicit France land scope stays independent from the network geography', async () => {
+  const view = await loadCountries(['BE', 'FR']);
+  const before = geometry();
+  interpreterPlan = [{ intent: 'set_land_constraints', params: {
+    visible: true, countries: ['FR'], country_mode: 'replace',
+  } }];
+  await send(view, 'add the land overlay in france');
+  act(() => jest.advanceTimersByTime(250));
+  await flush();
+  expect(frame().landConstraints.countries).toEqual(['FR']);
+  expect(frame().landConstraints.followMapCountries).toBe(false);
+  expect(geometry()).toEqual(before);
+  interpreterPlan = [{ intent: 'load_country', params: { countries: ['BE'] } }];
+  await send(view, 'show Belgium');
+  act(() => jest.advanceTimersByTime(250));
+  await flush();
+  expect(frame().activeCountryCodes).toEqual(['BE']);
+  expect(frame().landConstraints.countries).toEqual(['FR']);
+  act(() => frame().onLandConstraintsChange({ followMapCountries: true }));
+  await flush();
+  expect(frame().landConstraints.countries).toEqual(['BE']);
+});
 
 test('ordinary camera telemetry updates live context without rerendering the application shell', async () => {
   await loadCountries(['BE']);
@@ -294,6 +437,31 @@ test('compound add and resolution stages only final layers and publishes all tar
   expect(parseRequests.every((request) => request.component_scope === 'grid')).toBe(true);
   expect(mockMapFrames.filter((props) => props.networkResolution === 'nuts2')
     .every((props) => props.activeCountryCodes.join(',') === 'BE,FR')).toBe(true);
+});
+
+test('France-only upgrade never publishes a global intermediate resolution or moves the camera', async () => {
+  const view = render(<App />);
+  await flush();
+  fireEvent.click(view.getByRole('button', { name: /Geography Domain/ }));
+  fireEvent.click(view.getByRole('button', { name: 'Select all country networks' }));
+  await flush();
+  const before = geometry();
+  const camera = frame().viewportCommand;
+  parseRequests = [];
+  mockMapFrames = [];
+  holdRequests = true;
+  interpreterPlan = [
+    { intent: 'set_network_resolution', params: { resolution: 'full' } },
+    { intent: 'add_country', params: { countries: ['FR'], resolution: 'full' } },
+  ];
+  await send(view, 'Update only France to full granularity');
+  expect(parseRequests.map(request => request.filename)).toEqual(['base_FR_full.nc']);
+  expect(geometry()).toEqual(before);
+  await resolveCountry('FR');
+  expect(frame().viewportCommand).toBe(camera);
+  expect(mockMapFrames.every(props => props.facilities.filter(node => node.sourceCountryCode === 'BE')
+    .every(node => node.sourceNetworkFilename === 'base_BE_bidding_zone.nc'))).toBe(true);
+  expect(frame().facilities.some(node => node.sourceCountryCode === 'FR' && node.sourceNetworkFilename === 'base_FR_full.nc')).toBe(true);
 });
 
 test('failed compound geography keeps the old resolution, countries and visible layers', async () => {

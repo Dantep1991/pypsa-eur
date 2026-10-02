@@ -56,10 +56,58 @@ export const overlayEmptyState = ({ countryCount, carriers = [], inventory = {},
 
 export const normalizeOverlayCountryCodes = (values) => [...new Set(
   (Array.isArray(values) ? values : String(values || '').split(','))
+    .flatMap((value) => String(value || '').split(','))
     .map((value) => String(value || '').trim().toUpperCase())
     .map((value) => value === 'UK' ? 'GB' : value)
     .filter((value) => /^[A-Z]{2}$/.test(value))
 )].sort();
+
+// Infrastructure APIs accept a comma-separated country set. An empty scope
+// means all available countries, not an empty map. Keep the set operation in
+// one place so methane, water, liquids and logistics behave identically.
+export const resolveInfrastructureCountryScope = (requested, available, current = '', mode = 'replace') => {
+  const availableCodes = normalizeOverlayCountryCodes(available);
+  const requestedCodes = normalizeOverlayCountryCodes(requested);
+  if (!requestedCodes.length) {
+    if (mode === 'remove') throw new Error('Choose a country to remove.');
+    return '';
+  }
+  const availableSet = new Set(availableCodes);
+  const missing = requestedCodes.filter((code) => !availableSet.has(code));
+  if (missing.length) throw new Error(`No country data is available for ${missing.join(', ')}.`);
+  const currentCodes = normalizeOverlayCountryCodes(current);
+  const base = currentCodes.length ? currentCodes : availableCodes;
+  let next;
+  if (mode === 'add') next = normalizeOverlayCountryCodes([...base, ...requestedCodes]);
+  else if (mode === 'remove') next = base.filter((code) => !requestedCodes.includes(code));
+  else next = requestedCodes;
+  if (!next.length) throw new Error('Removing every country would leave an empty map. Select another country or show all Europe.');
+  return next.length === availableCodes.length ? '' : next.join(',');
+};
+
+// Named regions are a coverage query, unlike an explicit list of countries.
+// Retain every mapped member and report the remainder instead of rejecting
+// an entire region because one source has no records for one member.
+export const resolveInfrastructureCountryGroupScope = (members, available) => {
+  const requested = normalizeOverlayCountryCodes(members);
+  const availableSet = new Set(normalizeOverlayCountryCodes(available));
+  return {
+    selected: requested.filter((code) => availableSet.has(code)),
+    missing: requested.filter((code) => !availableSet.has(code)),
+  };
+};
+
+// A geography-only request must not silently revert the visible domains to
+// Grid. Only an explicit workspace switch resets the map to its lazy-load
+// default. This policy is shared by all four infrastructure workspaces.
+export const resolveInfrastructureVisibleDomains = (domains, visibility, requested = [], mode = 'replace', reset = false) => {
+  const current = domains.filter((domain) => visibility[domain] !== false);
+  const selected = [...new Set(requested.filter((domain) => domains.includes(domain)))];
+  if (!selected.length) return reset ? (domains.includes('Grid') ? ['Grid'] : []) : current;
+  if (mode === 'add') return [...new Set([...current, ...selected])];
+  if (mode === 'hide') return current.filter((domain) => !selected.includes(domain));
+  return selected;
+};
 
 /**
  * PyPSA cache exporters restart component IDs (line-0, link-0, …) for each

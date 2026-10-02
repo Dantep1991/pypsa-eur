@@ -68,6 +68,7 @@ export default function GasAtlasControls({
               aria-label="Gas network country"
             >
               <option value="">All Europe</option>
+              {countryFilter?.includes(',') && <option value={countryFilter}>{countryFilter.split(',').join(' + ')}</option>}
               {countries.map((country) => <option key={country} value={country}>{country}</option>)}
             </select>
           </label>

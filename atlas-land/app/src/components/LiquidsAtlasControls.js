@@ -61,6 +61,7 @@ export default function LiquidsAtlasControls({
             <span className="block mb-1 text-[10px] uppercase tracking-wider text-tj-slate">Country</span>
             <select value={countryFilter} onChange={(event) => onCountryChange(event.target.value)} disabled={loading || checking || !countries.length} className="w-full px-2.5 py-2 rounded-lg bg-[#081523] border border-white/10 text-white focus:outline-none focus:border-amber-300/50 disabled:opacity-50" aria-label="Liquids network country">
               <option value="">All Europe overview</option>
+              {countryFilter?.includes(',') && <option value={countryFilter}>{countryFilter.split(',').join(' + ')}</option>}
               {countries.map((country) => <option key={country} value={country}>{country}</option>)}
             </select>
           </label>

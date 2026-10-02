@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bot, Mic, MicOff, VolumeX } from 'lucide-react';
+import { MicOff, VolumeX } from 'lucide-react';
 
 export default function EmilVoiceLauncher({ voice, onOpen }) {
   const expanded = voice.active || voice.speaking || Boolean(voice.error);
@@ -7,8 +7,9 @@ export default function EmilVoiceLauncher({ voice, onOpen }) {
   return <div className="flex max-w-[calc(100vw-32px)] items-center gap-2">
     <button type="button" onClick={onOpen} aria-label="Open map assistant"
       title={expanded ? `Open conversation · ${voice.error || label}` : 'Open assistant'}
-      className={`${expanded ? 'h-12 px-4 gap-2' : 'h-12 w-12'} min-w-0 rounded-full bg-tj-gold text-tj-navy-dark shadow-lg border border-tj-gold/60 flex items-center justify-center hover:brightness-105`}>
-      {voice.active ? <Mic className="h-4 w-4" /> : <Bot className="h-5 w-5" />}
+      className={`${expanded ? 'h-12 px-2 gap-2' : 'h-12 w-12'} min-w-0 rounded-full shadow-lg border flex items-center justify-center hover:brightness-105`}
+      style={{ background: 'var(--bg-overlay)', borderColor: 'var(--border-strong)', color: 'var(--text-primary)' }}>
+      <img src={`${process.env.PUBLIC_URL || ''}/nohm-emil-idle.svg`} alt="" aria-hidden="true" className="h-9 w-9 shrink-0" />
       {expanded && <span className="min-w-0 max-w-[150px] truncate text-[11px] font-semibold">{label}</span>}
     </button>
     {voice.active && <button type="button" onClick={voice.stop}

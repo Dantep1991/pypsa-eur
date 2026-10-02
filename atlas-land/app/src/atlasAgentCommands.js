@@ -53,9 +53,10 @@ export const ATLAS_COUNTRY_GROUPS = [
 ];
 
 export const ATLAS_AGENT_CAPABILITY_SECTIONS = [
+  { label: 'Presentation and evidence', controls: 'Present and exit; save, restore, delete and advance named scenes; capture a comparison baseline and compare; move the comparison divider; inspect assets; configure and screen candidate sites; show site evidence; undo the last AI map change' },
   {
     label: 'Geography',
-    controls: 'electricity, methane, water, oil/liquids, or ports/air-freight network; multi-network overlay mode; country filters; named country groups; place drill-down; AI viewport zoom/framing/isolation; electricity Bidding/e-Highway/NUTS1/NUTS2/NUTS3/Full resolution; and mixed TSO rings with a detailed focus country and coarser neighbour rings',
+    controls: 'electricity, methane, water, oil/liquids, or ports/air-freight network; multi-network overlay mode; country filters; named country groups; place drill-down; AI viewport zoom/framing/isolation; electricity Bidding/e-Highway/NUTS1/NUTS2/NUTS3/Full resolution; and mixed TSO rings with multiple focus countries, two or three electrical rings, full-model extent, and visual country-region aggregation',
   },
   {
     label: 'Map view',
@@ -338,6 +339,31 @@ export const normalizeAtlasModelPlan = (rawActions, currentVisibleLayers = []) =
     return { ...action, params: { settings: { ...nested, ...flattened } } };
   });
 
+  // A carrier switch followed by geography is one data-selection request.
+  // Combining them lets the country loader validate the entire selection
+  // before changing the active workspace, including missing-source cases.
+  const carrierIndex = actions.findIndex((action) => action.intent === 'set_network_carrier');
+  const carrierGeographyIndex = actions.findIndex((action) => (
+    ['load_country', 'add_country', 'remove_country', 'load_country_groups', 'load_all_countries'].includes(action.intent)
+  ));
+  if (carrierIndex >= 0 && carrierGeographyIndex >= 0) {
+    const carrier = actions[carrierIndex].params.network_carrier || actions[carrierIndex].params.carrier;
+    const geography = actions[carrierGeographyIndex];
+    const geographyCarrier = geography.params.network_carrier || geography.params.carrier;
+    if (carrier && geographyCarrier && geographyCarrier !== carrier) return [];
+    if (carrier && (!geographyCarrier || geographyCarrier === carrier)) {
+      geography.params.network_carrier = carrier;
+      actions.splice(carrierIndex, 1);
+    }
+  }
+
+  // Scoped resolution is an incremental replacement of those countries, not
+  // a global slider change followed by a corrective reload.
+  actions = actions.map(action => {
+    if (action.intent !== 'set_network_resolution') return action;
+    const { countries } = readAtlasModelCountries(action.params);
+    return countries.length ? { ...action, intent: 'add_country', params: { ...action.params, countries } } : action;
+  });
   const geographyIntents = new Set(['load_country', 'load_all_countries', 'load_country_groups', 'add_country', 'set_mixed_granularity']);
   const geographyIndex = actions.findIndex((action) => geographyIntents.has(action.intent));
   const standaloneResolutionIndex = actions.findIndex((action) => (
@@ -347,9 +373,22 @@ export const normalizeAtlasModelPlan = (rawActions, currentVisibleLayers = []) =
   if (geographyIndex >= 0 && standaloneResolutionIndex >= 0) {
     const geography = actions[geographyIndex];
     const resolutionAction = actions[standaloneResolutionIndex];
-    if (!geography.params.resolution && resolutionAction.intent === 'set_network_resolution') {
-      geography.params.resolution = resolutionAction.params.resolution || resolutionAction.params.granularity;
-      actions.splice(standaloneResolutionIndex, 1);
+    if (resolutionAction.intent === 'set_network_resolution') {
+      const level = resolutionAction.params.resolution || resolutionAction.params.granularity;
+      if (geography.intent === 'add_country' && geography.params.resolution && level
+          && geography.params.resolution !== level && !geography.params.other_resolution) {
+        // "Add France at NUTS2; keep everything else Full" must not become
+        // sequential global Full followed by France (or the inverse).
+        geography.params.other_resolution = level;
+        actions.splice(standaloneResolutionIndex, 1);
+      } else if (normalizeAtlasResolution(geography.params.resolution) === normalizeAtlasResolution(level) && level) {
+        // A planner may emit the same resolution twice. Never publish the
+        // global intermediate state when geography already expresses it.
+        actions.splice(standaloneResolutionIndex, 1);
+      } else if (!geography.params.resolution) {
+        geography.params.resolution = level;
+        actions.splice(standaloneResolutionIndex, 1);
+      }
     }
   }
 
@@ -420,6 +459,142 @@ export const readAtlasModelCountries = (params = {}) => {
     if (!remaining) throw new Error('Country list is incomplete.');
   }
   return { countries: [...new Set(countries)], place: '' };
+};
+
+export const readAtlasCountryResolutionOverrides = (params = {}) => {
+  const raw = params.resolutions_by_country || params.country_resolutions || {};
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('Country resolutions must be an object keyed by country.');
+  }
+  const resolutionsByCountry = {};
+  Object.entries(raw).forEach(([country, value]) => {
+    const { countries } = readAtlasModelCountries({ countries: [country] });
+    const resolution = normalizeAtlasResolution(value);
+    if (!resolution) throw new Error(`Unknown network resolution for ${country}.`);
+    resolutionsByCountry[countries[0]] = resolution;
+  });
+  const rawOther = params.other_resolution || params.remaining_resolution || '';
+  const otherResolution = rawOther ? normalizeAtlasResolution(rawOther) : '';
+  if (rawOther && !otherResolution) throw new Error('Unknown resolution for the other countries.');
+  return { resolutionsByCountry, otherResolution };
+};
+
+// A bounded fallback for when the independent AI judge is unavailable. It
+// checks only controls the browser can observe exactly; it does not claim to
+// verify viewport framing, source completeness, or arbitrary model actions.
+export const checkAtlasInfrastructureActionState = (action, before = {}, after = {}) => {
+  const params = action?.params || {};
+  const carrier = String(params.network_carrier || params.carrier || before.networkCarrier || '').toLowerCase();
+  if (!['gas', 'water', 'liquids', 'logistics'].includes(carrier)) return null;
+  if (!['load_country', 'add_country', 'remove_country', 'load_country_groups', 'load_all_countries'].includes(action?.intent)) return null;
+  if (after.networkCarrier !== carrier || after.activeNetwork !== `atlas_${carrier}.db`) return false;
+  const normalize = (values) => [...new Set((Array.isArray(values) ? values : [])
+    .map((value) => String(value || '').trim().toUpperCase()).filter(Boolean))].sort();
+  const beforeCodes = normalize(before.loadedCountryCodes);
+  const afterCodes = normalize(after.loadedCountryCodes);
+  let expected;
+  if (action.intent === 'load_all_countries') {
+    expected = normalize(after.availableCountryCodes);
+    if (!expected.length) return null;
+  }
+  else if (action.intent === 'load_country_groups') {
+    const groups = extractAtlasCountryGroups((params.groups || []).join(' '));
+    if (!groups.length) return null;
+    expected = normalize(groups.flatMap((group) => group.countries));
+    if (Array.isArray(after.availableCountryCodes) && after.availableCountryCodes.length) {
+      const available = new Set(normalize(after.availableCountryCodes));
+      expected = expected.filter((code) => available.has(code));
+    }
+  } else {
+    let requested;
+    try { requested = normalize(readAtlasModelCountries(params).countries); }
+    catch (_) { return null; }
+    if (!requested.length) return null;
+    if (action.intent === 'add_country') {
+      if (before.networkCarrier !== carrier) return null;
+      expected = beforeCodes.length ? normalize([...beforeCodes, ...requested]) : [];
+    } else if (action.intent === 'remove_country') {
+      if (before.networkCarrier !== carrier || !beforeCodes.length) return null;
+      expected = beforeCodes.filter((code) => !requested.includes(code));
+    } else expected = requested;
+  }
+  if (expected.join(',') !== afterCodes.join(',')) return false;
+  const requestedLayers = Array.isArray(params.layers) ? params.layers : [];
+  if (requestedLayers.length) {
+    const mode = String(params.layer_mode || 'replace').toLowerCase();
+    const previous = new Set(before.visibleMapLayers || []);
+    const expectedLayers = mode === 'add'
+      ? new Set([...previous, ...requestedLayers])
+      : mode === 'hide'
+        ? new Set([...previous].filter((layer) => !requestedLayers.includes(layer)))
+        : new Set(requestedLayers);
+    const observedLayers = new Set(after.visibleMapLayers || []);
+    if (expectedLayers.size !== observedLayers.size || [...expectedLayers].some((layer) => !observedLayers.has(layer))) return false;
+  } else if (before.networkCarrier === carrier) {
+    const previous = new Set(before.visibleMapLayers || []);
+    const observed = new Set(after.visibleMapLayers || []);
+    if (previous.size !== observed.size || [...previous].some((layer) => !observed.has(layer))) return false;
+  }
+  return true;
+};
+
+// A carrier switch alone loses the geography in requests such as "show me this
+// for electricity" when the visible overlay is methane scoped to France.
+// Resolve "this" only when the source is unambiguous; otherwise leave the
+// planner's result untouched rather than guessing a country.
+export const reconcileAtlasAnaphoricCarrierPlan = (message, plan, context = {}) => {
+  if (!Array.isArray(plan) || plan.length !== 1
+      || plan[0]?.intent !== 'set_network_carrier'
+      || !/\b(this|same)\b/i.test(String(message || ''))
+      || !/\b(electricity|electric|power(?: grid)?)\b/i.test(String(message || ''))
+      || !['electricity', 'power'].includes(String(plan[0]?.params?.network_carrier || '').toLowerCase())) return plan;
+  const visibleSources = context.networkOverlayMode
+    ? (context.overlayNetworkCarriers || []).filter((carrier) => carrier !== 'electricity')
+    : ['gas', 'water', 'liquids', 'logistics'].includes(context.networkCarrier)
+      ? [context.networkCarrier] : [];
+  if (visibleSources.length !== 1) return plan;
+  const source = visibleSources[0];
+  const scope = context.overlayCarrierScopes?.[source];
+  const countries = Array.isArray(scope?.countries) && scope.countries.length
+    ? scope.countries : context.loadedCountryCodes;
+  if (!Array.isArray(countries) || !countries.length
+      || countries.some((code) => !/^[A-Z]{2}$/.test(String(code)))) return plan;
+  const layers = Array.isArray(scope?.domains) && scope.domains.length
+    ? scope.domains.filter((layer) => ['Grid', 'Storage', 'Supply', 'Demand'].includes(layer))
+    : (context.visibleMapLayers || []).filter((layer) => ['Grid', 'Storage', 'Supply', 'Demand'].includes(layer));
+  return [{ intent: 'load_country', params: {
+    countries: [...new Set(countries)], network_carrier: 'electricity',
+    ...(context.networkResolution && context.networkResolution !== 'mixed'
+      ? { resolution: context.networkResolution } : {}),
+    ...(layers.length ? { layers } : {}),
+  } }];
+};
+
+export const checkAtlasElectricityActionState = (action, before = {}, after = {}) => {
+  if (!['load_country', 'add_country'].includes(action?.intent)) return null;
+  const carrier = String(action.params?.network_carrier || before.networkCarrier || '').toLowerCase();
+  if (carrier !== 'electricity') return null;
+  const powerVisible = after.networkOverlayMode
+    ? (after.overlayNetworkCarriers || []).includes('electricity')
+    : after.networkCarrier === 'electricity';
+  if (!powerVisible) return false;
+  let requested;
+  try { requested = readAtlasModelCountries(action.params || {}).countries; }
+  catch (_) { return null; }
+  if (!requested.length) return null;
+  const observed = new Set(after.loadedCountryCodes || []);
+  if (action.intent === 'load_country'
+      ? observed.size !== requested.length || requested.some((code) => !observed.has(code))
+      : requested.some((code) => !observed.has(code))) return false;
+  const resolution = normalizeAtlasResolution(action.params?.resolution || action.params?.granularity);
+  if (resolution && after.networkResolution !== resolution) return false;
+  const requestedLayers = Array.isArray(action.params?.layers) ? action.params.layers : [];
+  if (requestedLayers.length) {
+    const shown = new Set(after.visibleMapLayers || []);
+    const mode = String(action.params?.layer_mode || 'replace').toLowerCase();
+    if (requestedLayers.some((layer) => !shown.has(layer)) && mode !== 'hide') return false;
+  }
+  return true;
 };
 
 export const parseAtlasSettingUpdates = (input) => {
@@ -706,8 +881,9 @@ export const parseAtlasAgentCommand = (input) => {
   if (mixedGranularity) {
     geographyAction = {
       type: 'mixed_granularity',
-      ...(countries.length ? { focusCountry: countries[0] } : {}),
+      ...(countries.length ? { focusCountries: countries } : {}),
       levels: { focus: 'full', adjacent: 'nuts3', outer: 'bidding_zone' },
+      ...(/\b(?:all|full|entire)\s+(?:model|network|europe)\b/.test(text) ? { scope: 'full' } : {}),
       ...(layerAction ? {
         domains: layerAction.domains,
         ...(layerAction.mode !== 'replace' ? { layerMode: layerAction.mode } : {}),

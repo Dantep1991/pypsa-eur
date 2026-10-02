@@ -37,14 +37,22 @@ function useTaggedConnections(records, carrier, selected) {
 // Five single-current-value memos, not an accumulating country/history cache.
 // Hidden sources still provide legend inventory while overlay is active, but
 // changing one source must not rescan all others or invalidate visible arrays.
-export function useOverlayCountryRecords({ sources, countries, carriers, enabled }) {
+export function useOverlayCountryRecords({ sources, countries, countriesByCarrier = {}, carriers, enabled }) {
   const countryKey = normalizeOverlayCountryCodes(countries).join(',');
   const scope = useMemo(() => countryKey ? countryKey.split(',') : EMPTY, [countryKey]);
+  const gasKey = normalizeOverlayCountryCodes(countriesByCarrier.gas ?? scope).join(',');
+  const waterKey = normalizeOverlayCountryCodes(countriesByCarrier.water ?? scope).join(',');
+  const liquidsKey = normalizeOverlayCountryCodes(countriesByCarrier.liquids ?? scope).join(',');
+  const logisticsKey = normalizeOverlayCountryCodes(countriesByCarrier.logistics ?? scope).join(',');
+  const gasScope = useMemo(() => gasKey ? gasKey.split(',') : EMPTY, [gasKey]);
+  const waterScope = useMemo(() => waterKey ? waterKey.split(',') : EMPTY, [waterKey]);
+  const liquidsScope = useMemo(() => liquidsKey ? liquidsKey.split(',') : EMPTY, [liquidsKey]);
+  const logisticsScope = useMemo(() => logisticsKey ? logisticsKey.split(',') : EMPTY, [logisticsKey]);
   const electricity = useScopedRecords(sources.electricity, scope, enabled);
-  const gas = useScopedRecords(sources.gas, scope, enabled);
-  const water = useScopedRecords(sources.water, scope, enabled);
-  const liquids = useScopedRecords(sources.liquids, scope, enabled);
-  const logistics = useScopedRecords(sources.logistics, scope, enabled);
+  const gas = useScopedRecords(sources.gas, gasScope, enabled);
+  const water = useScopedRecords(sources.water, waterScope, enabled);
+  const liquids = useScopedRecords(sources.liquids, liquidsScope, enabled);
+  const logistics = useScopedRecords(sources.logistics, logisticsScope, enabled);
   const records = useMemo(() => ({ electricity, gas, water, liquids, logistics }),
     [electricity, gas, water, liquids, logistics]);
 

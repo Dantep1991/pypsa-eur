@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { AlertTriangle, Check, Filter, Loader2, Plus, RotateCcw, X } from 'lucide-react';
+import { Check, Loader2, Plus, RotateCcw, X } from 'lucide-react';
 
 const formatCount = value => Number(value || 0).toLocaleString();
 
@@ -32,14 +32,6 @@ export default function ModelDistillationControls({
 
   return (
     <div className="space-y-2.5">
-      <div className="flex items-start gap-2 rounded-lg border border-amber-300/25 bg-amber-300/[0.07] px-2.5 py-2">
-        <Filter className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" />
-        <div>
-          <p className="text-[10px] font-semibold text-white">Schema preview · non-executable</p>
-          <p className="mt-0.5 text-[9px] leading-3.5 text-tj-slate">Filters canonical identities only. No suturing, datafiles, validation, run, publication, or model version is created.</p>
-        </div>
-      </div>
-
       <div>
         <span className="mb-1 block text-[9px] uppercase tracking-wider text-tj-slate">Retain countries</span>
         <div className="flex gap-1.5">
@@ -74,11 +66,7 @@ export default function ModelDistillationControls({
           </label>
           <div className="flex items-start gap-2 rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-[9px] leading-3.5 text-tj-slate">
             <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-300" />
-            <span>{formatCount(preview.counts?.reconciliation?.classified_total)} identities reconciled to source · {preview.model_version} · {String(preview.source?.scene_fingerprint || '').slice(0, 18)}…</span>
-          </div>
-          <div className="flex items-start gap-2 rounded-lg border border-amber-300/25 bg-amber-300/[0.08] px-2.5 py-2 text-[9px] leading-3.5 text-white">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
-            <span>Run and publish are unavailable until the existing governed workflow materialises and validates this subset.</span>
+            <span>{formatCount(preview.counts?.reconciliation?.classified_total)} identities reconciled · {preview.model_version} · preview only</span>
           </div>
         </>
       )}

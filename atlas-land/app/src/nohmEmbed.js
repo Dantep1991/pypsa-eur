@@ -17,8 +17,11 @@ export const NOHM_ATLAS_BUILDER_DRAFT_MESSAGE = 'nohm.atlas.builder-draft.v1';
 export const NOHM_ATLAS_BUILDER_DRAFT_EVENT = 'nohm:atlas-builder-draft';
 export const NOHM_ATLAS_THEME_MESSAGE = 'nohm.atlas.theme.v1';
 export const NOHM_ATLAS_THEME_EVENT = 'nohm:atlas-theme';
+export const NOHM_ATLAS_ASSISTANT_MODE_MESSAGE = 'nohm.atlas.assistant-mode.v1';
+export const NOHM_ATLAS_ASSISTANT_MODE_EVENT = 'nohm:atlas-assistant-mode';
+export const NOHM_ATLAS_ASSISTANT_DOCK_MESSAGE = 'nohm.atlas.assistant-dock.v1';
 export const NOHM_ATLAS_DOMAINS = Object.freeze(['model', 'operate', 'visualise', 'explore']);
-export const NOHM_ATLAS_THEMES = Object.freeze(['dark', 'light', 'horizon']);
+export const NOHM_ATLAS_THEMES = Object.freeze(['dark', 'light', 'horizon', 'meridian']);
 export const NOHM_ATLAS_PORTAL_TARGETS = Object.freeze([
   'model-builder',
   'explore-model',
@@ -113,7 +116,7 @@ export function announceNohmAtlasViewState(payload, targetWindow = window) {
 export function normalizeNohmAtlasWorkspaceContext(context) {
   if (!context || typeof context !== 'object') return null;
   const projectId = optionalText(context.projectId);
-  const mode = context.mode === 'model' && projectId ? 'model' : 'reference';
+  const mode = projectId ? 'model' : 'reference';
   const geography = context.nativeGeography && typeof context.nativeGeography === 'object'
     ? {
       id: optionalText(context.nativeGeography.id) || 'model-native',
@@ -312,6 +315,18 @@ export function requestNohmAtlasPortal(target, targetWindow = window) {
   return true;
 }
 
+export function requestNohmAtlasAssistantMode(mode, targetWindow = window) {
+  if (!targetWindow?.parent || targetWindow.parent === targetWindow
+      || !['atlas', 'agent'].includes(mode)) return false;
+  targetWindow.parent.postMessage({
+    type: NOHM_ATLAS_ASSISTANT_MODE_MESSAGE,
+    protocolVersion: 1,
+    source: 'nohm-atlas',
+    mode,
+  }, targetWindow.location.origin);
+  return true;
+}
+
 export function acknowledgeNohmAtlasAction(receipt, targetWindow = window) {
   const requestId = optionalText(receipt?.requestId);
   const actionId = optionalText(receipt?.actionId);
@@ -346,6 +361,21 @@ export function startNohmEmbedBridge(targetWindow = window, { onDomainChange, on
       && event.data?.source === 'nohm-shell'
     );
     if (!fromNohmShell) return;
+    if (event.data?.type === NOHM_ATLAS_ASSISTANT_DOCK_MESSAGE) {
+      const { bottomPx, rightPx } = event.data;
+      if (![bottomPx, rightPx].every((value) => Number.isInteger(value) && value >= 0 && value <= 10000)) return;
+      const style = targetWindow.document?.documentElement?.style;
+      style?.setProperty('--nohm-assistant-bottom', `${bottomPx}px`);
+      style?.setProperty('--nohm-assistant-right', `${rightPx}px`);
+      return;
+    }
+    if (event.data?.type === NOHM_ATLAS_ASSISTANT_MODE_MESSAGE
+        && ['atlas', 'agent'].includes(event.data?.mode)) {
+      targetWindow.dispatchEvent(new targetWindow.CustomEvent(NOHM_ATLAS_ASSISTANT_MODE_EVENT, {
+        detail: { mode: event.data.mode },
+      }));
+      return;
+    }
     if (event.data?.type === NOHM_ATLAS_PING_MESSAGE) {
       announceNohmEmbedReady(targetWindow);
       return;

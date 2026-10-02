@@ -1,0 +1,12 @@
+.atlas-result-legend { pointer-events: auto; position: absolute; bottom: 112px; z-index: 560; width: min(490px, calc(100vw - 32px)); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 10px 14px; color: var(--atlas-map-text); background: var(--atlas-map-surface); box-shadow: var(--atlas-map-shadow); backdrop-filter: blur(12px); font-size: 12px; }
+.atlas-result-legend__heading { display: flex; align-items: center; gap: 12px; }
+.atlas-result-legend__heading strong { flex: 1; font-size: 13px; }
+.atlas-result-legend__heading strong span { font-weight: 400; }
+.atlas-result-legend__heading button { display: grid; place-items: center; border: none; color: inherit; background: transparent; padding: 4px; }
+.atlas-result-legend__keys { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; }
+.atlas-result-legend__swatch { display: inline-flex; align-items: center; gap: 5px; }
+.atlas-result-legend__swatch i { height: 9px; width: 9px; border-radius: 50%; }
+.atlas-result-legend__gradient { height: 7px; border-radius: 6px; margin-top: 8px; background: linear-gradient(90deg,#ef4444,#f97316,#facc15,#84cc16,#22c55e); }
+.atlas-result-legend__range { display: flex; justify-content: space-between; margin-top: 3px; }
+.atlas-result-legend__size summary { cursor: pointer; margin-top: 6px; }
+@media(max-width:640px) { .atlas-result-legend { bottom: 150px; } }

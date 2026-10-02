@@ -3,6 +3,9 @@ import {
   atlasRecordCountryCodes,
   filterOverlayRecordsByCountries,
   normalizeOverlayCountryCodes,
+  resolveInfrastructureCountryScope,
+  resolveInfrastructureCountryGroupScope,
+  resolveInfrastructureVisibleDomains,
   overlayCarrierStatus,
   overlayEmptyState,
   resolveOverlayCarrierToggle,
@@ -11,6 +14,39 @@ import {
 } from './atlasNetworkOverlay';
 
 describe('Atlas multi-network overlay helpers', () => {
+  test('infrastructure country sets replace, add and remove without becoming all Europe', () => {
+    const available = ['EE', 'LV', 'LT', 'FI', 'GB'];
+    expect(resolveInfrastructureCountryScope(['EE', 'LV', 'LT'], available)).toBe('EE,LT,LV');
+    expect(resolveInfrastructureCountryScope('EE,LV', available, 'LT', 'add')).toBe('EE,LT,LV');
+    expect(resolveInfrastructureCountryScope('LV', available, 'EE,LT,LV', 'remove')).toBe('EE,LT');
+    expect(resolveInfrastructureCountryScope('UK', available)).toBe('GB');
+    expect(resolveInfrastructureCountryScope('', available)).toBe('');
+    expect(resolveInfrastructureCountryScope('EE', available, '', 'add')).toBe('');
+    expect(normalizeOverlayCountryCodes(['EE,LV', 'LT'])).toEqual(['EE', 'LT', 'LV']);
+  });
+
+  test('infrastructure country sets fail atomically on missing or empty scope', () => {
+    expect(() => resolveInfrastructureCountryScope('EE,ZZ', ['EE', 'LV']))
+      .toThrow('No country data is available for ZZ.');
+    expect(() => resolveInfrastructureCountryScope('EE,LV', ['EE', 'LV'], 'EE,LV', 'remove'))
+      .toThrow('Removing every country would leave an empty map.');
+  });
+  test('named regions select mapped members and disclose missing source coverage', () => {
+    expect(resolveInfrastructureCountryGroupScope(
+      ['AL', 'BA', 'BG', 'GR', 'ME', 'XK'], ['AL', 'BG', 'GR'],
+    )).toEqual({ selected: ['AL', 'BG', 'GR'], missing: ['BA', 'ME', 'XK'] });
+    expect(resolveInfrastructureCountryGroupScope(['EE', 'LV', 'LT'], ['EE', 'LV', 'LT']))
+      .toEqual({ selected: ['EE', 'LT', 'LV'], missing: [] });
+  });
+  test('country changes preserve current domains while carrier switches reset to Grid', () => {
+    const domains = ['Grid', 'Storage', 'Supply', 'Demand'];
+    const visibility = { Grid: true, Storage: false, Supply: false, Demand: true };
+    expect(resolveInfrastructureVisibleDomains(domains, visibility)).toEqual(['Grid', 'Demand']);
+    expect(resolveInfrastructureVisibleDomains(domains, visibility, [], 'replace', true)).toEqual(['Grid']);
+    expect(resolveInfrastructureVisibleDomains(domains, visibility, ['Supply'], 'add')).toEqual(['Grid', 'Demand', 'Supply']);
+    expect(resolveInfrastructureVisibleDomains(domains, visibility, ['Grid'], 'hide')).toEqual(['Demand']);
+    expect(resolveInfrastructureVisibleDomains(domains, visibility, ['Storage'], 'replace')).toEqual(['Storage']);
+  });
   const emptyFacts = { countryCount: 1, carriers: ['electricity'],
     inventory: { electricity: { loaded: true } },
     records: { electricity: { facilities: [{ id: 'a' }], connections: [] } }, visibleDomainCount: 1 };

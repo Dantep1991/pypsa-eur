@@ -3,6 +3,7 @@ import React, { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallba
 import * as LucideIcons from 'lucide-react';
 import './index.css';
 import EnhancedLeafletMapWithVoice from './components/EnhancedLeafletMapWithVoice';
+import useAtlasSceneState from './hooks/useAtlasSceneState';
 import MapWorkspaceBoundary from './components/MapWorkspaceBoundary';
 import AtlasBatchProgress from './components/AtlasBatchProgress';
 import { useGridAccessRecords } from './hooks/useGridAccessRecords';
@@ -17,10 +18,14 @@ import AudioLevelMeter from './components/AudioLevelMeter';
 import LoadedCountryList from './components/LoadedCountryList';
 import MixedGranularityControls from './components/MixedGranularityControls';
 import ModelResultsControls from './components/ModelResultsControls';
+import ModelComparisonControls from './components/ModelComparisonControls';
 import ModelResultLegend from './components/ModelResultLegend';
+import LolaFlowWorkspace from './components/LolaFlowWorkspace';
+import ModelAssetsWorkspace from './components/ModelAssetsWorkspace';
 import ModelDistillationControls from './components/ModelDistillationControls';
 import ModelDistillationLegend from './components/ModelDistillationLegend';
 import ModelCountryScopeControls from './components/ModelCountryScopeControls';
+import ModelControlHelp from './components/ModelControlHelp';
 import ModelMixedResolutionControls from './components/ModelMixedResolutionControls';
 import ModelPortalControls from './components/ModelPortalControls';
 import ModelWorkspaceSection from './components/ModelWorkspaceSection';
@@ -32,11 +37,15 @@ import {
   ATLAS_AGENT_CAPABILITY_SECTIONS,
   ATLAS_AGENT_PARAMETER_CATALOG,
   ATLAS_RESOLUTION_LABELS,
+  checkAtlasInfrastructureActionState,
+  checkAtlasElectricityActionState,
   atlasAgentParameterDefinition,
   extractAtlasCountryGroups,
   normalizeAtlasAgentSettingValue,
   normalizeAtlasModelPlan,
+  reconcileAtlasAnaphoricCarrierPlan,
   readAtlasModelCountries,
+  readAtlasCountryResolutionOverrides,
   normalizeAtlasResolution,
 } from './atlasAgentCommands';
 import { clearAppliedViewportCommand } from './viewportCommand';
@@ -65,14 +74,17 @@ import {
   announceNohmAtlasViewState,
   announceNohmModelScene,
   normalizeNohmAtlasViewState,
+  normalizeNohmAtlasWorkspaceContext,
   readNohmAtlasWorkspaceContextFromLocation,
   NOHM_ATLAS_ACTION_EVENT,
   NOHM_ATLAS_DOMAIN_EVENT,
   NOHM_ATLAS_RUN_STATE_EVENT,
   NOHM_ATLAS_BUILDER_DRAFT_EVENT,
   NOHM_ATLAS_THEME_EVENT,
+  NOHM_ATLAS_ASSISTANT_MODE_EVENT,
   NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT,
   requestNohmAtlasPortal,
+  requestNohmAtlasAssistantMode,
 } from './nohmEmbed';
 import { applyAtlasTheme, nextAtlasTheme, normalizeAtlasTheme } from './atlasTheme';
 import { createCarrierNetworkRequests } from './carrierNetworkRequests';
@@ -81,13 +93,17 @@ import { stitchElectricityCrossBorderConnections } from './crossBorderNetwork';
 import electricityCrossBorderTopology from './data/electricity-cross-border.json';
 import { clearPypsaCatalogueCache, readPypsaCatalogueCache, writePypsaCatalogueCache } from './pypsaCatalogueCache';
 import { fetchModelScene, isModelSceneDomain, resolveModelSceneDomains } from './modelWorkspace/modelScene';
+import { buildModelAggregation, reapplyModelAggregation, projectAggregatedFlowFrame, projectAggregatedAssetFrame } from './modelWorkspace/modelAggregation';
+import ModelAggregationControls from './components/ModelAggregationControls';
 import { fetchBuilderAssemblyScene } from './modelWorkspace/builderAssemblyScene';
-import { assertModelGeographyOperation, modelGeographyPolicy } from './modelWorkspace/modelGeographyPolicy';
+import { assertModelGeographyOperation, modelGeographyPolicy, resolveModelCountryScope } from './modelWorkspace/modelGeographyPolicy';
 import {
   decorateModelResultRecord,
   defaultModelResultSelection,
   fetchModelResultCatalog,
+  modelResultConnections,
   fetchModelResultScene,
+  projectModelResultScene,
 } from './modelWorkspace/resultScene';
 import {
   decorateDistillationRecord,
@@ -95,12 +111,14 @@ import {
 } from './modelWorkspace/distillationPreview';
 import {
   buildModelMixedResolutionPreview,
-  buildModelUniformResolutionPreview,
 } from './modelWorkspace/mixedResolutionPreview';
 import {
   ATLAS_NETWORK_CARRIER_META,
   ATLAS_NETWORK_CARRIER_ORDER,
   normalizeOverlayCountryCodes,
+  resolveInfrastructureCountryScope,
+  resolveInfrastructureCountryGroupScope,
+  resolveInfrastructureVisibleDomains,
   overlayCarrierStatus,
   overlayEmptyState,
   resolveOverlayCarrierToggle,
@@ -109,7 +127,9 @@ import {
 import {
   buildMixedGranularityPlan,
   mixedGranularityResolutionLabel,
+  planCountryResolutionUpdate,
 } from './mixedGranularity';
+import { projectMixedCountryRegions } from './mixedRegionProjection';
 
 const ResultsTab = deferredPanel(() => import('./assistants/emil/ResultsTab'), 'results');
 const LineFlowChartPanel = deferredPanel(() => import('./components/LineFlowChartPanel'), 'flow chart');
@@ -174,7 +194,7 @@ const {
   ChevronDown, Database, Rocket, Settings, Sparkles, Upload, Zap,
   CheckCircle2, XCircle, LineChart, Boxes, Network, Braces, RefreshCw,
   ListChecks, Globe, FolderOpen, Folder, FileText, Box, Search,
-  Send, Loader2, Trash2, Mic, MicOff, VolumeX, Radio, MessageCircle,
+  Send, Loader2, Trash2, Mic, MicOff, VolumeX, Radio, MessageCircle, X,
   Sun, Moon, Wind, Waves, Droplets, Flame, Factory, Battery, Atom, Car, Hammer,
   Shield, CircleDot, Cog, Leaf, FlaskConical, MapPin, Layers, Clock3,
   CalendarDays, Info, HelpCircle, Circle, Check, PanelLeftClose, PanelLeftOpen,
@@ -323,6 +343,7 @@ const canonicalAtlasAgentLayer = (value) => ({
 })[String(value || '').trim().toLowerCase().replace(/[_-]+/g, ' ')];
 const ATLAS_JUDGE_SAFE_CORRECTION_INTENTS = new Set([
   'set_network_carrier',
+  'set_network_overlay', 'set_map_display', 'set_mixed_granularity',
   'set_land_constraints',
   'navigate_to_location', 'control_map_view', 'load_country', 'load_all_countries', 'load_country_groups',
   'add_country', 'remove_country', 'focus_country', 'set_model_standard',
@@ -580,8 +601,8 @@ function AppInner() {
   const [activeScenario, setActiveScenario] = useState("Base 2030");
   const [nohmWorkspaceContext, setNohmWorkspaceContext] = useState(
     () => {
-      const context = window.__NOHM_ATLAS_WORKSPACE_CONTEXT__
-        || readNohmAtlasWorkspaceContextFromLocation(window.location);
+      const context = normalizeNohmAtlasWorkspaceContext(window.__NOHM_ATLAS_WORKSPACE_CONTEXT__
+        || readNohmAtlasWorkspaceContextFromLocation(window.location));
       if (context) window.__NOHM_ATLAS_WORKSPACE_CONTEXT__ = context;
       return context || null;
     }
@@ -595,15 +616,37 @@ function AppInner() {
   const modelSceneLoadedSignatureRef = useRef('');
   const [modelGeographyResolution, setModelGeographyResolution] = useState('native');
   const [modelMixedResolutionStatus, setModelMixedResolutionStatus] = useState({ state: 'idle', preview: null, error: '' });
+  const modelMixedResolutionStatusRef = useRef(modelMixedResolutionStatus);
+  modelMixedResolutionStatusRef.current = modelMixedResolutionStatus;
   const [modelResultCatalogStatus, setModelResultCatalogStatus] = useState({ state: 'idle', catalog: null, error: '' });
   const [modelResultSelection, setModelResultSelection] = useState(null);
   const [modelResultStatus, setModelResultStatus] = useState({ state: 'idle', scene: null, error: '' });
+  const [modelResultMarkerScale, setModelResultMarkerScale] = useState(1);
+  const [modelComparisonOpen, setModelComparisonOpen] = useState(false);
+  const [lolaFlowOpen, setLolaFlowOpen] = useState(false);
+  const [modelAssetsOpen, setModelAssetsOpen] = useState(false);
+  const [modelAssetsFrame, setModelAssetsFrame] = useState(null);
+  const [modelAssetSelectedId, setModelAssetSelectedId] = useState('');
+  const [lolaFlowFrame, setLolaFlowFrame] = useState(null);
+  const [lolaFlowSelectedId, setLolaFlowSelectedId] = useState('');
+  const aggregationPreview = modelMixedResolutionStatus.preview;
+  const aggregatedLolaFlowFrame = useMemo(() => projectAggregatedFlowFrame(lolaFlowFrame, aggregationPreview), [lolaFlowFrame, aggregationPreview]);
+  const aggregatedModelAssetsFrame = useMemo(() => projectAggregatedAssetFrame(modelAssetsFrame, aggregationPreview), [modelAssetsFrame, aggregationPreview]);
+  const selectAggregatedFlowLine = useCallback(id => {
+    const line = aggregatedLolaFlowFrame?.lines.find(item => item.id === id);
+    setLolaFlowSelectedId(line?.sourceIds?.includes(lolaFlowSelectedId) ? lolaFlowSelectedId : line?.sourceIds?.[0] || id);
+  }, [aggregatedLolaFlowFrame, lolaFlowSelectedId]);
+  useEffect(() => {
+    setLolaFlowOpen(false); setLolaFlowFrame(null); setLolaFlowSelectedId('');
+    setModelAssetsOpen(false); setModelAssetsFrame(null); setModelAssetSelectedId('');
+  }, [nohmWorkspaceContext?.projectId, modelSceneStatus.meta?.version]);
   const [nohmRunState, setNohmRunState] = useState(null);
   const [builderDraftPreview, setBuilderDraftPreview] = useState(null);
   const [builderDraftSceneStatus, setBuilderDraftSceneStatus] = useState({ state: 'idle', key: '', error: '' });
   const builderDraftSceneAppliedRef = useRef('');
   const modelResultRequestRef = useRef(null);
   const [distillationCountries, setDistillationCountries] = useState([]);
+  const modelCountryScopeRef = useRef([]);
   const [distillationPreviewStatus, setDistillationPreviewStatus] = useState({ state: 'idle', preview: null, error: '' });
   const [showDistillationContext, setShowDistillationContext] = useState(false);
   const distillationPreviewRequestRef = useRef(null);
@@ -645,7 +688,7 @@ function AppInner() {
     try {
       if (ATLAS_IS_EMBEDDED) {
         const hostRoot = window.parent.document.documentElement;
-        if (hostRoot.dataset.themeVariant === 'horizon') return 'horizon';
+        if (['horizon', 'meridian'].includes(hostRoot.dataset.themeVariant)) return hostRoot.dataset.themeVariant;
         return normalizeAtlasTheme(hostRoot.dataset.theme);
       }
       const stored = window.localStorage?.getItem('atlas_theme');
@@ -692,11 +735,13 @@ function AppInner() {
   // domain controls and agent surface. Electricity remains the default;
   // methane is backed by the local ENTSOG + SciGRID_gas cache.
   const [atlasNetworkCarrier, setAtlasNetworkCarrier] = useState(() => {
+    if (boundModelGeography) return 'electricity';
     try { return window.localStorage?.getItem('atlas-network-carrier') || 'electricity'; }
     catch (_) { return 'electricity'; }
   });
   const atlasNetworkCarrierRef = useRef(atlasNetworkCarrier);
   const [atlasOverlayMode, setAtlasOverlayMode] = useState(() => {
+    if (boundModelGeography) return false;
     try { return window.localStorage?.getItem('atlas-network-overlay-mode') === 'true'; }
     catch (_) { return false; }
   });
@@ -732,8 +777,30 @@ function AppInner() {
   const atlasOverlayLoadAttemptsRef = useRef(new Map());
   const atlasOverlayScopeAttemptsRef = useRef(new Map());
   const atlasOverlayCountryScopeRef = useRef('');
+  const [atlasOverlayCarrierFilters, setAtlasOverlayCarrierFilters] = useState(() => {
+    try {
+      const saved = JSON.parse(window.localStorage?.getItem('atlas-network-overlay-carrier-filters') || '{}');
+      return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+    } catch (_) { return {}; }
+  });
+  const atlasOverlayCarrierFiltersRef = useRef(atlasOverlayCarrierFilters);
+  const atlasOverlayCarrierScopesRef = useRef({});
+  const updateAtlasOverlayCarrierFilter = useCallback((carrier, patch) => {
+    if (!ATLAS_NETWORK_CARRIER_ORDER.includes(carrier) || carrier === 'electricity') return;
+    const previous = atlasOverlayCarrierFiltersRef.current;
+    const next = { ...previous, [carrier]: { ...previous[carrier], ...patch } };
+    atlasOverlayCarrierFiltersRef.current = next;
+    setAtlasOverlayCarrierFilters(next);
+    atlasOverlayLoadAttemptsRef.current.delete(carrier);
+    atlasOverlayScopeAttemptsRef.current.delete(carrier);
+  }, []);
+  useEffect(() => {
+    try { window.localStorage?.setItem('atlas-network-overlay-carrier-filters', JSON.stringify(atlasOverlayCarrierFilters)); }
+    catch (_) { /* localStorage unavailable */ }
+  }, [atlasOverlayCarrierFilters]);
   const [atlasOverlayPanelOpen, setAtlasOverlayPanelOpen] = useState(true);
   const [mapAgentOpen, setMapAgentOpen] = useState(false);
+  const [assistantSurface, setAssistantSurface] = useState('atlas');
   const mapAgentSettings = useAssistantSettings();
   const atlasOverlayModeRef = useRef(atlasOverlayMode);
   const atlasWorkspaceTransitionRef = useRef(null);
@@ -812,10 +879,24 @@ function AppInner() {
     compact: compactAtlasLayout, setDomainsCollapsed: setMapControlsCollapsed,
   });
   const openMapAssistant = useCallback(() => {
+    setAssistantSurface('atlas');
     mapAgentFocusRequestedRef.current = true;
     if (atlasAssetPopupOpen) setAtlasPopupDismissRequest((request) => request + 1);
     focusAtlasPanel('assistant');
   }, [atlasAssetPopupOpen, focusAtlasPanel]);
+  useEffect(() => {
+    const onAssistantMode = (event) => {
+      if (event.detail?.mode === 'agent') {
+        setAssistantSurface('agent');
+        setMapAgentOpen(false);
+      } else if (event.detail?.mode === 'atlas') {
+        setAssistantSurface('atlas');
+        openMapAssistant();
+      }
+    };
+    window.addEventListener(NOHM_ATLAS_ASSISTANT_MODE_EVENT, onAssistantMode);
+    return () => window.removeEventListener(NOHM_ATLAS_ASSISTANT_MODE_EVENT, onAssistantMode);
+  }, [openMapAssistant]);
   const [gasFacilitiesData, setGasFacilitiesData] = useState([]);
   const [gasConnections, setGasConnections] = useState([]);
   const [gasLoadedDomains, setGasLoadedDomains] = useState({ Grid: false, Storage: false, Supply: false, Demand: false });
@@ -1225,7 +1306,6 @@ function AppInner() {
   }, [gasLoadedDomains, loadGasDomains]);
 
   const loadGasCountryFromAgent = useCallback(async (countryCode, options = {}) => {
-    const requestedCode = String(countryCode || '').trim().toUpperCase();
     let statusPayload = gasStatus;
     if (!statusPayload?.available) {
       statusPayload = await carrierNetworkRequests.read(
@@ -1234,20 +1314,13 @@ function AppInner() {
       );
       setGasStatus(statusPayload);
     }
-    const availableCountries = new Set(statusPayload?.countries || []);
-    const normalizedCode = requestedCode === 'UK' && availableCountries.has('GB') ? 'GB' : requestedCode;
-    if (normalizedCode && !availableCountries.has(normalizedCode)) {
-      throw new Error(`The methane database has no country filter for ${normalizedCode}.`);
-    }
+    const normalizedCode = resolveInfrastructureCountryScope(
+      countryCode, statusPayload?.countries || [], gasCountryFilterRef.current, options.countryMode,
+    );
 
-    const requestedDomains = [...new Set((options.domains || []).filter((domain) => ATLAS_MAP_DOMAINS.includes(domain)))];
-    const mode = ['add', 'hide'].includes(options.layerMode) ? options.layerMode : 'replace';
-    const currentVisible = ATLAS_MAP_DOMAINS.filter((domain) => atlasDomainVisibility[domain] !== false);
-    let visibleDomains;
-    if (!requestedDomains.length) visibleDomains = ['Grid'];
-    else if (mode === 'add') visibleDomains = [...new Set([...currentVisible, ...requestedDomains])];
-    else if (mode === 'hide') visibleDomains = currentVisible.filter((domain) => !requestedDomains.includes(domain));
-    else visibleDomains = requestedDomains;
+    const visibleDomains = resolveInfrastructureVisibleDomains(
+      ATLAS_MAP_DOMAINS, atlasDomainVisibility, options.domains || [], options.layerMode, options.resetLayers,
+    );
     const loadDomains = [...new Set(['Grid', ...visibleDomains])];
 
     gasControlledLoadRef.current = true;
@@ -1433,7 +1506,6 @@ function AppInner() {
   }, [loadWaterDomains, waterLoadedDomains]);
 
   const loadWaterCountryFromAgent = useCallback(async (countryCode, options = {}) => {
-    const requestedCode = String(countryCode || '').trim().toUpperCase();
     let statusPayload = waterStatus;
     if (!statusPayload?.available) {
       statusPayload = await carrierNetworkRequests.read(
@@ -1442,19 +1514,12 @@ function AppInner() {
       );
       setWaterStatus(statusPayload);
     }
-    const availableCountries = new Set(statusPayload?.countries || []);
-    const normalizedCode = requestedCode === 'UK' && availableCountries.has('GB') ? 'GB' : requestedCode;
-    if (normalizedCode && !availableCountries.has(normalizedCode)) {
-      throw new Error(`The water database has no country filter for ${normalizedCode}.`);
-    }
-    const requestedDomains = [...new Set((options.domains || []).filter((domain) => ATLAS_MAP_DOMAINS.includes(domain)))];
-    const mode = ['add', 'hide'].includes(options.layerMode) ? options.layerMode : 'replace';
-    const currentVisible = ATLAS_MAP_DOMAINS.filter((domain) => atlasDomainVisibility[domain] !== false);
-    let visibleDomains;
-    if (!requestedDomains.length) visibleDomains = ['Grid'];
-    else if (mode === 'add') visibleDomains = [...new Set([...currentVisible, ...requestedDomains])];
-    else if (mode === 'hide') visibleDomains = currentVisible.filter((domain) => !requestedDomains.includes(domain));
-    else visibleDomains = requestedDomains;
+    const normalizedCode = resolveInfrastructureCountryScope(
+      countryCode, statusPayload?.countries || [], waterCountryFilterRef.current, options.countryMode,
+    );
+    const visibleDomains = resolveInfrastructureVisibleDomains(
+      ATLAS_MAP_DOMAINS, atlasDomainVisibility, options.domains || [], options.layerMode, options.resetLayers,
+    );
     const loadDomains = [...new Set(['Grid', ...visibleDomains])];
 
     waterControlledLoadRef.current = true;
@@ -1630,7 +1695,6 @@ function AppInner() {
   }, [liquidsLoadedDomains, loadLiquidsDomains]);
 
   const loadLiquidsCountryFromAgent = useCallback(async (countryCode, options = {}) => {
-    const requestedCode = String(countryCode || '').trim().toUpperCase();
     let statusPayload = liquidsStatus;
     if (!statusPayload?.available) {
       statusPayload = await carrierNetworkRequests.read(
@@ -1639,17 +1703,12 @@ function AppInner() {
       );
       setLiquidsStatus(statusPayload);
     }
-    const availableCountries = new Set(statusPayload?.countries || []);
-    const normalizedCode = requestedCode === 'UK' && availableCountries.has('GB') ? 'GB' : requestedCode;
-    if (normalizedCode && !availableCountries.has(normalizedCode)) throw new Error(`The liquids database has no country filter for ${normalizedCode}.`);
-    const requestedDomains = [...new Set((options.domains || []).filter((domain) => ATLAS_MAP_DOMAINS.includes(domain)))];
-    const mode = ['add', 'hide'].includes(options.layerMode) ? options.layerMode : 'replace';
-    const currentVisible = ATLAS_MAP_DOMAINS.filter((domain) => atlasDomainVisibility[domain] !== false);
-    let visibleDomains;
-    if (!requestedDomains.length) visibleDomains = ['Grid'];
-    else if (mode === 'add') visibleDomains = [...new Set([...currentVisible, ...requestedDomains])];
-    else if (mode === 'hide') visibleDomains = currentVisible.filter((domain) => !requestedDomains.includes(domain));
-    else visibleDomains = requestedDomains;
+    const normalizedCode = resolveInfrastructureCountryScope(
+      countryCode, statusPayload?.countries || [], liquidsCountryFilterRef.current, options.countryMode,
+    );
+    const visibleDomains = resolveInfrastructureVisibleDomains(
+      ATLAS_MAP_DOMAINS, atlasDomainVisibility, options.domains || [], options.layerMode, options.resetLayers,
+    );
     const loadDomains = [...new Set(['Grid', ...visibleDomains])];
     liquidsControlledLoadRef.current = true;
     atlasNetworkCarrierRef.current = 'liquids';
@@ -1811,7 +1870,6 @@ function AppInner() {
   }, [logisticsLoadedDomains, loadLogisticsDomains]);
 
   const loadLogisticsCountryFromAgent = useCallback(async (countryCode, options = {}) => {
-    const requestedCode = String(countryCode || '').trim().toUpperCase();
     let statusPayload = logisticsStatus;
     if (!statusPayload?.available) {
       statusPayload = await carrierNetworkRequests.read(
@@ -1820,17 +1878,12 @@ function AppInner() {
       );
       setLogisticsStatus(statusPayload);
     }
-    const availableCountries = new Set(statusPayload?.countries || []);
-    const normalizedCode = requestedCode === 'UK' && availableCountries.has('GB') ? 'GB' : requestedCode;
-    if (normalizedCode && !availableCountries.has(normalizedCode)) throw new Error(`The logistics database has no country filter for ${normalizedCode}.`);
-    const requestedDomains = [...new Set((options.domains || []).filter((domain) => ATLAS_MAP_DOMAINS.includes(domain)))];
-    const mode = ['add', 'hide'].includes(options.layerMode) ? options.layerMode : 'replace';
-    const currentVisible = ATLAS_MAP_DOMAINS.filter((domain) => atlasDomainVisibility[domain] !== false);
-    let visibleDomains;
-    if (!requestedDomains.length) visibleDomains = ['Grid'];
-    else if (mode === 'add') visibleDomains = [...new Set([...currentVisible, ...requestedDomains])];
-    else if (mode === 'hide') visibleDomains = currentVisible.filter((domain) => !requestedDomains.includes(domain));
-    else visibleDomains = requestedDomains;
+    const normalizedCode = resolveInfrastructureCountryScope(
+      countryCode, statusPayload?.countries || [], logisticsCountryFilterRef.current, options.countryMode,
+    );
+    const visibleDomains = resolveInfrastructureVisibleDomains(
+      ATLAS_MAP_DOMAINS, atlasDomainVisibility, options.domains || [], options.layerMode, options.resetLayers,
+    );
     const loadDomains = [...new Set(['Grid', ...visibleDomains])];
     logisticsControlledLoadRef.current = true;
     atlasNetworkCarrierRef.current = 'logistics';
@@ -2056,27 +2109,29 @@ function AppInner() {
 
   const ensureAtlasOverlayCarrierLoaded = useCallback(async (carrier) => {
     if (carrier === 'electricity') return;
-    const sharedCountryScope = normalizeOverlayCountryCodes(
-      pypsaMapMembershipRef.current.networks.map((network) => network.countryCode)
-    ).join(',');
-    // Overlay mode is Geography-led. Do not eagerly deserialize a whole-Europe
-    // infrastructure database while the user has not selected any countries.
-    if (!sharedCountryScope) return;
+    const powerScope = normalizeOverlayCountryCodes(
+      pypsaMapMembershipRef.current.networks.map((network) => network.countryCode)).join(',');
+    const filter = atlasOverlayCarrierFiltersRef.current[carrier] || {};
+    const countryScope = normalizeOverlayCountryCodes(filter.countries || powerScope).join(',');
+    // A carrier may have its own explicit country scope. Do not hydrate the
+    // whole-Europe source when neither it nor power has a country selection.
+    if (!countryScope) return;
     const overlayLoadOptions = {
       preserveMapFilters: true,
       skipFocus: true,
-      domains: ATLAS_MAP_DOMAINS.filter((domain) => atlasDomainVisibility[domain] !== false),
+      domains: ATLAS_MAP_DOMAINS.filter((domain) => atlasDomainVisibility[domain] !== false
+        && (!filter.domains?.length || filter.domains.includes(domain))),
     };
     const initialize = carrier === 'gas' && !gasLoadedDomains.Grid && !gasDomainLoading ? initializeGasAtlas
       : carrier === 'water' && !waterLoadedDomains.Grid && !waterDomainLoading ? initializeWaterAtlas
         : carrier === 'liquids' && !liquidsLoadedDomains.Grid && !liquidsDomainLoading ? initializeLiquidsAtlas
           : carrier === 'logistics' && !logisticsLoadedDomains.Grid && !logisticsDomainLoading ? initializeLogisticsAtlas : null;
-    if (!initialize || atlasOverlayLoadAttemptsRef.current.get(carrier) === sharedCountryScope) return;
+    if (!initialize || atlasOverlayLoadAttemptsRef.current.get(carrier) === countryScope) return;
     // Initialisers report errors through workspace state rather than rejecting.
     // Their loading-state changes must not automatically retry a failed source.
     // A new country scope or explicit carrier reselection permits another try.
-    atlasOverlayLoadAttemptsRef.current.set(carrier, sharedCountryScope);
-    await initialize(sharedCountryScope, overlayLoadOptions);
+    atlasOverlayLoadAttemptsRef.current.set(carrier, countryScope);
+    await initialize(countryScope, overlayLoadOptions);
   }, [
     // Keep the lazy overlay effect reactive to ordinary UI country changes.
     // The ref supplies same-tick membership for compound agent plans, while
@@ -2287,7 +2342,7 @@ function AppInner() {
       if (event?.detail?.context) {
         setNohmRunState(null);
         setBuilderDraftPreview(null);
-        setNohmWorkspaceContext(event.detail.context);
+        setNohmWorkspaceContext(normalizeNohmAtlasWorkspaceContext(event.detail.context));
       }
     };
     window.addEventListener(NOHM_ATLAS_WORKSPACE_CONTEXT_EVENT, handleNohmAtlasWorkspaceContext);
@@ -2329,7 +2384,8 @@ function AppInner() {
     setPypsaGeoJsonOverlays([]);
     setPypsaDatasetMeta({
       filename: `${modelScene.meta.projectId}@${modelScene.meta.version}`,
-      sourceBusCount: modelScene.meta.nodeCount,
+      sourceBusCount: modelScene.meta.preview?.counts?.projectedNodes ?? modelScene.meta.nodeCount,
+      nativeSourceBusCount: modelScene.meta.nodeCount,
       source: temporaryDraft ? 'temporary_model_builder_assembly' : 'canonical_model_schema',
     });
     setLoadedPypsaNetworks([{
@@ -2405,10 +2461,11 @@ function AppInner() {
   }, [builderDraftPreview, modelSceneStatus.state, publishBoundModelRecords]);
 
   const applyBoundModelScene = useCallback((modelScene, layers) => {
+    const projection = reapplyModelAggregation(modelScene, modelMixedResolutionStatusRef.current.preview);
     boundModelSceneRef.current = modelScene;
-    setModelGeographyResolution('native');
-    setModelMixedResolutionStatus({ state: 'idle', preview: null, error: '' });
-    publishBoundModelRecords(modelScene, { focus: true });
+    setModelGeographyResolution(projection?.aggregation.level || 'native');
+    setModelMixedResolutionStatus({ state: projection ? 'ready' : 'idle', preview: projection, error: '' });
+    publishBoundModelRecords(projection || modelScene, { focus: !projection });
     setNohmWorkspaceContext((previous) => (
       previous?.projectId === modelScene.meta.projectId
         ? { ...previous, version: modelScene.meta.version }
@@ -2520,8 +2577,12 @@ function AppInner() {
     setModelResultStatus({ state: 'idle', scene: null, error: '' });
     fetchModelResultCatalog(nohmWorkspaceContext, modelVersion, {
       signal: controller.signal,
+      includeAssetCatalog: true,
       schemaCategories: modelSceneStatus.meta?.declaredCategories || {},
       schemaCategoryObjects: modelSceneStatus.meta?.declaredCategoryObjects || {},
+      onProgress: (progress) => {
+        if (!controller.signal.aborted) setModelResultCatalogStatus(previous => ({ ...previous, progress }));
+      },
     })
       .then((catalog) => {
         if (controller.signal.aborted) return;
@@ -2547,44 +2608,35 @@ function AppInner() {
   const showSelectedModelResult = useCallback(async (selectionOverride = null) => {
     const requestedSelection = selectionOverride?.runId ? selectionOverride : modelResultSelection;
     if (!requestedSelection || !modelSceneStatus.meta?.version || nohmWorkspaceContext?.mode !== 'model') return;
+    setLolaFlowOpen(false); setLolaFlowFrame(null);
     clearModelMixedResolutionPreview();
     distillationPreviewRequestRef.current?.abort();
     setDistillationPreviewStatus({ state: 'idle', preview: null, error: '' });
     modelResultRequestRef.current?.abort();
     const controller = new AbortController();
     modelResultRequestRef.current = controller;
-    setModelResultStatus((previous) => ({ ...previous, state: 'loading', error: '' }));
+    setModelResultStatus((previous) => ({ ...previous, state: 'loading', progress: { phase: 'query' }, error: '' }));
     try {
       const scene = await fetchModelResultScene(nohmWorkspaceContext, {
         ...requestedSelection,
         modelVersion: modelSceneStatus.meta.version,
         carrier: 'electricity',
-      }, { signal: controller.signal });
+      }, { signal: controller.signal, onProgress: progress => {
+        if (!controller.signal.aborted) setModelResultStatus(previous => ({ ...previous, progress }));
+      } });
       if (controller.signal.aborted) return;
       const mapTarget = scene.selection?.map_target;
-      const mapEntityIds = new Set((mapTarget === 'link'
-        ? pypsaConnectionsRef.current
-        : pypsaFacilitiesDataRef.current
-      ).map(record => String(record?.id || '')).filter(Boolean));
-      const values = scene.values.filter(row => mapEntityIds.has(String(row.entity_id || '')));
-      if (!values.length) {
-        setModelResultStatus({
-          state: 'error',
-          scene: null,
+      const projection = projectModelResultScene(scene, pypsaFacilitiesDataRef.current, pypsaConnectionsRef.current);
+      if (!projection.values.length) {
+        setModelResultStatus(previous => ({
+          ...previous, state: 'error',
           error: 'The Visualisation query returned values, but none match the nodes or links in the loaded model topology.',
-        });
+        }));
         return;
       }
       const mappedScene = {
-        ...scene,
-        values,
-        valueByEntityId: new Map(values.map(row => [String(row.entity_id || ''), row])),
+        ...projection,
         selection: { ...scene.selection, scope_id: String(requestedSelection.scopeId || '').trim() },
-        coverage: {
-          ...scene.coverage,
-          mapped_row_count: values.length,
-          excluded_row_count: Math.max(0, scene.values.length - values.length),
-        },
       };
       if (mapTarget !== 'link') setShowMapNodes(true);
       setModelResultStatus({ state: 'ready', scene: mappedScene, error: '' });
@@ -2595,37 +2647,37 @@ function AppInner() {
   }, [clearModelMixedResolutionPreview, modelResultSelection, modelSceneStatus.meta?.version, nohmWorkspaceContext]);
 
   const showLolaFlowOnMap = useCallback(() => {
-    const run = (modelResultCatalogStatus.catalog?.runs || []).find(item => item.compatible && item.quantities?.length);
-    const quantity = run?.quantities?.find(item => item.id === 'Line.Flow')
-      || run?.quantities?.find(item => item.class_name === 'Line');
-    if (!run || !quantity) return;
-    const selection = {
-      runId: run.run_id,
-      runLabel: run.label || run.run_id,
-      category: '',
-      categoryObjects: [],
-      quantityId: quantity.id,
-      reportFamily: quantity.report_family || '',
-      className: quantity.class_name,
-      propertyName: quantity.property_name,
-      unit: quantity.unit || '',
-      period: quantity.periods?.[0] || run.periods?.[0] || '',
-      scopeId: '',
-      supportsFlowMap: Boolean(quantity.supports_flow_map),
-    };
-    setModelResultSelection(selection);
-    showSelectedModelResult(selection);
-  }, [modelResultCatalogStatus.catalog, showSelectedModelResult]);
+    setModelAssetsOpen(false); setModelAssetsFrame(null);
+    modelResultRequestRef.current?.abort();
+    setModelResultStatus({ state: 'idle', scene: null, error: '' });
+    setMapControlsCollapsed(true);
+    setLolaFlowOpen(true);
+  }, [setMapControlsCollapsed]);
 
   const clearModelResult = useCallback(() => {
     modelResultRequestRef.current?.abort();
     setModelResultStatus({ state: 'idle', scene: null, error: '' });
   }, []);
 
+  const openModelComparison = useCallback(() => {
+    if (nohmWorkspaceContext?.mode !== 'model') return;
+    setLolaFlowOpen(false); setModelAssetsOpen(false); setMapControlsCollapsed(true); setModelComparisonOpen(true);
+  }, [nohmWorkspaceContext?.mode]);
+  const showModelComparison = useCallback(scene => {
+    const projection = projectModelResultScene(scene, pypsaFacilitiesDataRef.current, pypsaConnectionsRef.current);
+    if (!projection.values.length) throw new Error('No comparison records match the loaded model geography.');
+    modelResultRequestRef.current?.abort(); setLolaFlowFrame(null); setModelAssetsFrame(null);
+    setShowMapNodes(true);
+    setModelResultStatus({ state: 'ready', error: '', scene: { ...projection,
+      project_id: nohmWorkspaceContext.projectId, model_version: modelSceneStatus.meta.version } });
+  }, [nohmWorkspaceContext?.projectId, modelSceneStatus.meta?.version]);
+
   useEffect(() => () => modelResultRequestRef.current?.abort(), []);
 
   const clearDistillationPreview = useCallback(() => {
     distillationPreviewRequestRef.current?.abort();
+    modelCountryScopeRef.current = [];
+    setDistillationCountries([]);
     setDistillationPreviewStatus({ state: 'idle', preview: null, error: '' });
     setShowDistillationContext(false);
   }, []);
@@ -2637,7 +2689,7 @@ function AppInner() {
     setShowDistillationContext(false);
   }, []);
 
-  const runDistillationPreview = useCallback(async (countriesOverride = null) => {
+  const runDistillationPreview = useCallback(async (countriesOverride = null, options = {}) => {
     const meta = modelSceneStatus.meta;
     const requestedCountries = Array.isArray(countriesOverride) ? countriesOverride : distillationCountries;
     if (!requestedCountries.length || !meta?.version || nohmWorkspaceContext?.mode !== 'model') return;
@@ -2658,34 +2710,42 @@ function AppInner() {
       });
       if (controller.signal.aborted) return;
       setDistillationPreviewStatus({ state: 'ready', preview, error: '' });
+      return preview;
     } catch (error) {
       if (controller.signal.aborted || error?.name === 'AbortError') return;
       setDistillationPreviewStatus(previous => ({ ...previous, state: 'error', error: error?.message || 'The geographical subset could not be previewed.' }));
+      if (options.throwOnError) {
+        modelCountryScopeRef.current = [];
+        setDistillationCountries([]);
+        throw error;
+      }
     }
   }, [clearModelMixedResolutionPreview, clearModelResult, distillationCountries, modelSceneStatus.meta, nohmWorkspaceContext]);
 
-  const selectBoundModelCountries = useCallback((countryCodes) => {
+  const selectBoundModelCountries = useCallback(async (countryCodes, options = {}) => {
     const available = new Set(boundModelGeography?.sourceCountries || []);
     const normalized = [...new Set((countryCodes || [])
       .map(code => String(code || '').trim().toUpperCase())
       .filter(code => available.has(code)))].sort();
     if (!normalized.length || normalized.length === available.size) {
+      modelCountryScopeRef.current = [];
       setDistillationCountries([]);
       clearDistillationPreview();
       setEmilViewportCommand({ id: Date.now() + Math.random(), operation: 'fit_targets' });
-      return;
+      return null;
     }
+    modelCountryScopeRef.current = normalized;
     setDistillationCountries(normalized);
     setEmilViewportCommand({
       id: Date.now() + Math.random(),
       operation: 'fit_targets',
       countryCodes: normalized,
     });
-    runDistillationPreview(normalized);
+    return runDistillationPreview(normalized, options);
   }, [boundModelGeography?.sourceCountries, clearDistillationPreview, runDistillationPreview]);
 
-  const applyBoundModelResolution = useCallback((resolution) => {
-    const normalized = resolution === 'country' ? 'country' : 'native';
+  const applyBoundModelResolution = useCallback((resolution, options = {}) => {
+    const normalized = ['country', 'bidding_zone', 'regional'].includes(resolution) ? resolution : 'native';
     const sourceScene = boundModelSceneRef.current;
     if (!sourceScene) {
       setModelMixedResolutionStatus({ state: 'error', preview: null, error: 'Load the project model before changing its map resolution.' });
@@ -2702,9 +2762,9 @@ function AppInner() {
     }
     setModelMixedResolutionStatus(previous => ({ ...previous, state: 'loading', error: '' }));
     try {
-      const preview = buildModelUniformResolutionPreview(sourceScene, 'country');
+      const preview = buildModelAggregation(sourceScene, normalized, options);
       publishBoundModelRecords(preview, { focus: false });
-      setModelGeographyResolution('country');
+      setModelGeographyResolution(normalized);
       setModelMixedResolutionStatus({ state: 'ready', preview, error: '' });
     } catch (error) {
       publishBoundModelRecords(sourceScene, { focus: false });
@@ -2761,10 +2821,14 @@ function AppInner() {
     {
       id: 'map-agent-welcome',
       role: 'assistant',
-      text: 'Hello! I can control Atlas for you. Try “show Belgium at NUTS3”, “add France”, “increase granularity”, or “show generation”.',
+      text: nohmWorkspaceContext?.mode === 'model'
+        ? 'Hello! I can explore this project model. Try “show France and Ireland”, “add Spain”, “show all project countries”, or “show generation”. I can filter its existing topology, but cannot split it below its native resolution yet.'
+        : 'Hello! I can control Atlas for you. Try “show Belgium at NUTS3”, “add France”, “increase granularity”, or “show generation”.',
     },
   ]);
   const mapAgentObservedContextRef = useRef(null);
+  const experienceAgentRef = useRef(null);
+  const registerExperienceAgent = useCallback(controller => { experienceAgentRef.current = controller; }, []);
   const [editableNodes, setEditableNodes] = useState(() => {
     // Load persisted nodes from localStorage on component mount
     try {
@@ -4124,6 +4188,7 @@ function AppInner() {
   overlayDomainStateRef.current = {
     carriers: atlasOverlayCarriers,
     visibility: atlasDomainVisibility,
+    filters: atlasOverlayCarrierFilters,
     sources: {
       gas: { loaded: gasLoadedDomains, scope: gasDatasetCountryScopeRef, initializing: gasInitializingRef, load: loadGasDomains },
       water: { loaded: waterLoadedDomains, scope: waterDatasetCountryScopeRef, initializing: waterInitializingRef, load: loadWaterDomains },
@@ -4158,21 +4223,24 @@ function AppInner() {
           await loadPyPSAMapBatch(networks, { mode: 'domains', domains: requested });
           return;
         }
-        const { sources, visibility } = overlayDomainStateRef.current;
+        const { sources, visibility, filters } = overlayDomainStateRef.current;
         const source = sources[carrier];
         if (!source) throw new Error(`Unknown overlay carrier: ${carrier}.`);
-        const replace = source.scope.current !== country || !source.loaded.Grid || Boolean(source.initializing.current);
+        const filter = filters[carrier] || {};
+        const carrierCountry = normalizeOverlayCountryCodes(filter.countries || country).join(',');
+        const permitted = (domain) => !filter.domains?.length || filter.domains.includes(domain);
+        const replace = source.scope.current !== carrierCountry || !source.loaded.Grid || Boolean(source.initializing.current);
         const missing = replace
-          ? [...new Set(['Grid', ...requested, ...ATLAS_MAP_DOMAINS.filter(domain => visibility[domain] !== false)])]
-          : requested.filter(domain => !source.loaded[domain]);
+          ? [...new Set(['Grid', ...requested, ...ATLAS_MAP_DOMAINS.filter(domain => visibility[domain] !== false)])].filter(permitted)
+          : requested.filter(domain => permitted(domain) && !source.loaded[domain]);
         if (!missing.length) return;
         // A country rescope/status request may still be finishing. This user
         // request supersedes it with the right scope and required domains;
         // the shared request owner cancels obsolete reads and caps downloads.
         source.initializing.current = '';
-        atlasOverlayLoadAttemptsRef.current.set(carrier, country);
-        atlasOverlayScopeAttemptsRef.current.set(carrier, country);
-        await source.load(missing, { replace, country, skipFocus: true });
+        atlasOverlayLoadAttemptsRef.current.set(carrier, carrierCountry);
+        atlasOverlayScopeAttemptsRef.current.set(carrier, carrierCountry);
+        await source.load(missing, { replace, country: carrierCountry, skipFocus: true });
       };
       for (let index = 0; index < carriers.length; index += 2) {
         // Wait for both outcomes before reporting a failure or releasing UI
@@ -4462,15 +4530,20 @@ function AppInner() {
   const allPypsaCountriesSelected = availablePypsaCountryOptions.length > 0
     && loadedPypsaCountryCodes.length === availablePypsaCountryOptions.length;
 
-  // In overlay mode the electricity Geography selection is the single source
-  // of truth for every carrier. Keep the source datasets country-scoped as
-  // well as filtering the final map records; this reduces transfer/rendering
-  // cost and prevents a previously loaded all-Europe carrier leaking through.
+  // Electricity Geography is the default scope. Each infrastructure carrier
+  // may override it independently (for example, power in Europe plus methane
+  // Grid in France). Scope both the source request and the final map records.
   const atlasOverlayCountryCodes = useMemo(
     () => normalizeOverlayCountryCodes(loadedPypsaCountryCodes),
     [loadedPypsaCountryCodes]
   );
   const atlasOverlayCountryFilter = atlasOverlayCountryCodes.join(',');
+  const atlasOverlayCountriesByCarrier = useMemo(() => Object.fromEntries(
+    ATLAS_NETWORK_CARRIER_ORDER.filter((carrier) => carrier !== 'electricity').map((carrier) => [
+      carrier, normalizeOverlayCountryCodes(atlasOverlayCarrierFilters[carrier]?.countries || atlasOverlayCountryCodes),
+    ])
+  ), [atlasOverlayCarrierFilters, atlasOverlayCountryCodes]);
+  atlasOverlayCarrierScopesRef.current = atlasOverlayCountriesByCarrier;
   useEffect(() => { atlasOverlayCountryScopeRef.current = atlasOverlayCountryFilter; }, [atlasOverlayCountryFilter]);
   // Guard feedback belongs to the selection that caused it, not later filter
   // states. Do not auto-clear real load failures when unrelated filters change.
@@ -4532,18 +4605,21 @@ function AppInner() {
   });
 
   useEffect(() => {
-    if (!atlasOverlayMode || !atlasOverlayCountryFilter) return;
+    if (!atlasOverlayMode) return;
     const jobs = [];
     const enqueue = (carrier, loadedDomains, loading, currentScope, loader) => {
-      if (!atlasOverlayCarriers.includes(carrier) || loading || currentScope === atlasOverlayCountryFilter) return;
-      const domains = ATLAS_MAP_DOMAINS.filter((domain) => loadedDomains?.[domain]);
+      const carrierCountry = (atlasOverlayCountriesByCarrier[carrier] || []).join(',');
+      if (!carrierCountry || !atlasOverlayCarriers.includes(carrier) || loading || currentScope === carrierCountry) return;
+      const filter = atlasOverlayCarrierFilters[carrier] || {};
+      const domains = ATLAS_MAP_DOMAINS.filter((domain) => loadedDomains?.[domain]
+        && (!filter.domains?.length || filter.domains.includes(domain)));
       if (!domains.length) return; // The lazy carrier loader handles this case.
-      if (atlasOverlayScopeAttemptsRef.current.get(carrier) === atlasOverlayCountryFilter) return;
-      atlasOverlayScopeAttemptsRef.current.set(carrier, atlasOverlayCountryFilter);
+      if (atlasOverlayScopeAttemptsRef.current.get(carrier) === carrierCountry) return;
+      atlasOverlayScopeAttemptsRef.current.set(carrier, carrierCountry);
       // Replacement releases Grid before fetching. If it fails, the lazy
       // initializer must not immediately retry the same scope as a new load.
-      atlasOverlayLoadAttemptsRef.current.set(carrier, atlasOverlayCountryFilter);
-      jobs.push(loader(domains, { replace: true, country: atlasOverlayCountryFilter, skipFocus: true }));
+      atlasOverlayLoadAttemptsRef.current.set(carrier, carrierCountry);
+      jobs.push(loader(domains, { replace: true, country: carrierCountry, skipFocus: true }));
     };
     enqueue('gas', gasLoadedDomains, gasDomainLoading, gasDatasetCountryScopeRef.current, loadGasDomains);
     enqueue('water', waterLoadedDomains, waterDomainLoading, waterDatasetCountryScopeRef.current, loadWaterDomains);
@@ -4560,6 +4636,8 @@ function AppInner() {
     atlasOverlayMode,
     atlasOverlayCarriers,
     atlasOverlayCountryFilter,
+    atlasOverlayCountriesByCarrier,
+    atlasOverlayCarrierFilters,
     atlasOverlayCountrySummary,
     gasLoadedDomains,
     gasDomainLoading,
@@ -4943,9 +5021,16 @@ function AppInner() {
     }) || null;
   }, [primaryPypsaSourceEntries]);
 
-  const currentAtlasResolutionKey = useMemo(() => (
-    mixedGranularityPlan ? 'mixed' : selectedCachedNetworkLevel ? atlasResolutionKeyForEntry(selectedCachedNetworkLevel) : ''
-  ), [mixedGranularityPlan, selectedCachedNetworkLevel]);
+  const currentAtlasResolutionKey = useMemo(() => {
+    const loadedLevels = new Set(loadedPypsaNetworks
+      .map((network) => network.resolutionKey || atlasResolutionKeyForEntry(
+        primaryPypsaSourceEntries.find((entry) => entry.filename === network.filename) || network
+      ))
+      .filter(Boolean));
+    if (mixedGranularityPlan || loadedLevels.size > 1) return 'mixed';
+    return [...loadedLevels][0]
+      || (selectedCachedNetworkLevel ? atlasResolutionKeyForEntry(selectedCachedNetworkLevel) : '');
+  }, [loadedPypsaNetworks, mixedGranularityPlan, primaryPypsaSourceEntries, selectedCachedNetworkLevel]);
 
   useEffect(() => {
     updateNohmAtlasViewState({
@@ -4971,12 +5056,12 @@ function AppInner() {
     updateNohmAtlasViewState,
   ]);
 
-  const applyMixedGranularityView = useCallback(async (focusCountryCode, levels = {}) => {
+  const applyMixedGranularityView = useCallback(async (focusCountryCodes, levels = {}, options = {}) => {
     const restriction = boundModelGeographyError('mixed-resolution');
     if (restriction) throw restriction;
     if (pypsaLoading || pypsaBatchRef.current) return null;
     const availableCodes = availablePypsaCountryOptions.map((option) => option.countryCode);
-    const plan = buildMixedGranularityPlan(focusCountryCode, availableCodes, levels);
+    const plan = buildMixedGranularityPlan(focusCountryCodes, availableCodes, levels, options);
     const entries = plan.countries.map(({ countryCode, resolution }) => {
       const entry = findAtlasCountryNetworkEntry(countryCode, resolution);
       if (!entry) {
@@ -5060,25 +5145,38 @@ function AppInner() {
     const codes = [...new Set((countryCodes || []).map((code) => String(code || '').trim().toUpperCase()).filter(Boolean))];
     if (!codes.length) throw new Error('No country was provided.');
     const mode = options.mode === 'add' ? 'add' : 'replace';
-    const resolutionKey = String(
+    const fallbackResolution = String(
       options.resolution
       || (currentAtlasResolutionKey === 'mixed' ? mixedGranularityPlan?.levels?.adjacent : currentAtlasResolutionKey)
+      || atlasResolutionKeyForEntry(selectedCachedNetworkLevel)
       || 'nuts3'
     ).trim().toLowerCase();
     const membership = pypsaMapMembershipRef.current;
-    // Adding countries at a new resolution is one transaction across the final
-    // selection, not a resolution update followed by a second country load.
-    const replaceSelection = mode === 'replace' || Boolean(options.resolution);
-    const targetCodes = mode === 'add' && replaceSelection
-      ? [...new Set([...membership.networks.map((network) => network.countryCode), ...codes])]
-      : codes;
-    const entries = targetCodes.map((countryCode) => {
-      const entry = findAtlasCountryNetworkEntry(countryCode, resolutionKey);
-      if (!entry) {
-        throw new Error(`${ATLAS_RESOLUTION_LABELS[resolutionKey] || resolutionKey} is not cached for ${countryCodeToName(countryCode)}.`);
-      }
-      return entry;
+    const assignments = planCountryResolutionUpdate({
+      existingNetworks: membership.networks.map((network) => ({
+        ...network,
+        resolutionKey: network.resolutionKey || atlasResolutionKeyForEntry(
+          primaryPypsaSourceEntries.find((entry) => entry.filename === network.filename) || network
+        ),
+      })),
+      requestedCountryCodes: codes,
+      mode,
+      resolution: options.resolution || '',
+      otherResolution: options.otherResolution || '',
+      resolutionsByCountry: options.resolutionsByCountry || {},
+      fallbackResolution,
     });
+    // Check every cache before mutating the map. In add mode, stage only new
+    // countries or those whose level actually changes; leave the rest intact.
+    const entries = assignments.map(({ countryCode, resolution }) => {
+      const entry = findAtlasCountryNetworkEntry(countryCode, resolution);
+      if (!entry) {
+        throw new Error(`${ATLAS_RESOLUTION_LABELS[resolution] || resolution} is not cached for ${countryCodeToName(countryCode)}.`);
+      }
+      return { ...entry, requestedCountryCode: countryCode };
+    }).filter((entry, index) => mode === 'replace'
+      || assignments[index].changed
+      || membership.networks.find((network) => network.countryCode === entry.requestedCountryCode)?.filename !== entry.filename);
 
     const currentDomains = ATLAS_MAP_DOMAINS.filter((domain) => atlasDomainVisibility[domain] !== false);
     const explicitLayers = Array.isArray(options.domains) && options.domains.length > 0;
@@ -5088,10 +5186,12 @@ function AppInner() {
       : options.layerMode === 'add' ? [...new Set([...currentDomains, ...requestedDomains])]
       : requestedDomains;
     const finalCode = codes[codes.length - 1];
-    await loadPyPSAMapBatch(entries, {
-      mode: replaceSelection ? 'replace' : 'add', activeCountry: finalCode, focus: aiMapControlEnabled,
-      domains,
-    });
+    if (entries.length) {
+      await loadPyPSAMapBatch(entries, {
+        mode, activeCountry: finalCode,
+        focus: aiMapControlEnabled && (mode === 'replace' || codes.some(code => !membership.networks.some(network => network.countryCode === code))), domains,
+      });
+    }
     setFullEuOnly(false);
     setAtlasDomainVisibility(Object.fromEntries(ATLAS_MAP_DOMAINS.map((domain) => [domain, domains.includes(domain)])));
     if (mode === 'replace') {
@@ -5101,12 +5201,14 @@ function AppInner() {
       ...previous,
       region: pypsaMapMembershipRef.current.networks.map((network) => network.countryName || countryCodeToName(network.countryCode)).join(' + '),
     }));
-    return { entries, resolutionKey };
+    return { entries, resolutionKey: options.resolution || fallbackResolution, assignments };
   }, [
     boundModelGeographyError,
     countryCodeToName,
     currentAtlasResolutionKey,
     mixedGranularityPlan,
+    primaryPypsaSourceEntries,
+    selectedCachedNetworkLevel,
     findAtlasCountryNetworkEntry,
     loadPyPSAMapBatch,
     atlasDomainVisibility,
@@ -5319,7 +5421,28 @@ function AppInner() {
     const isLiquidsAction = requestedNetworkCarrier === 'liquids';
     const isLogisticsAction = requestedNetworkCarrier === 'logistics';
     const isInfrastructureAction = isGasAction || isWaterAction || isLiquidsAction || isLogisticsAction;
+    const makeElectricityVisible = () => {
+      if (atlasOverlayModeRef.current && action.networkCarrier === 'electricity') {
+        // A named electricity request means the standalone power map unless
+        // the user explicitly asked for a multi-network overlay action.
+        atlasOverlayModeRef.current = false;
+        setAtlasOverlayMode(false);
+        atlasNetworkCarrierRef.current = 'electricity';
+        setAtlasNetworkCarrier('electricity');
+      } else if (atlasOverlayModeRef.current) {
+        // An implicit power geography/resolution operation must never update
+        // hidden power while leaving a methane-only overlay on screen.
+        setAtlasOverlayCarriers((previous) => [...previous, 'electricity']);
+      } else if (atlasNetworkCarrierRef.current !== 'electricity') {
+        atlasNetworkCarrierRef.current = 'electricity';
+        setAtlasNetworkCarrier('electricity');
+      }
+    };
     const infrastructureLabel = isGasAction ? 'methane' : isWaterAction ? 'water' : isLiquidsAction ? 'oil and liquids' : 'ports and air freight';
+    const infrastructureScopeLabel = (scope) => {
+      const codes = normalizeOverlayCountryCodes(scope);
+      return codes.length ? ` for ${codes.map(countryCodeToName).join(' and ')}` : ' for all Europe';
+    };
     const layerAvailabilityNote = (domains, mode = 'replace') => {
       // Overlay coverage is reported per carrier by the map legend. A single
       // power-cache inventory cannot establish absence across other sources.
@@ -5449,6 +5572,7 @@ function AppInner() {
           panelOpen: action.panelOpen !== false,
           categories,
           countries,
+          ...(requestedCountries !== null ? { followMapCountries: false } : {}),
           ...(Number.isFinite(Number(action.opacity)) ? { opacity: Number(action.opacity) } : {}),
         });
         const labels = categories.map((category) => (
@@ -5461,9 +5585,41 @@ function AppInner() {
         return true;
       }
       case 'network_overlay': {
+        if (boundModelGeography && action.visible) throw new Error('Reference network overlays are not part of this project model. Use Studio Atlas to explore independent networks.');
         if (!action.visible) {
           setAtlasOverlayMode(false);
           pushReply(`Returned to the ${ATLAS_NETWORK_CARRIER_META[atlasNetworkCarrierRef.current]?.label || 'single-network'} view.`);
+          return true;
+        }
+        const scopedCarrier = String(action.scopeCarrier || '').trim().toLowerCase();
+        const scopedCountries = normalizeOverlayCountryCodes(action.scopeCountries || []);
+        const scopedDomains = (action.scopeDomains || []).filter((domain) => ATLAS_MAP_DOMAINS.includes(domain));
+        if (scopedCarrier && scopedCountries.length) {
+          if (scopedCarrier === 'electricity' || !ATLAS_NETWORK_CARRIER_ORDER.includes(scopedCarrier)) {
+            throw new Error('Choose an infrastructure carrier for a separate overlay country scope.');
+          }
+          const loader = { gas: loadGasDomains, water: loadWaterDomains,
+            liquids: loadLiquidsDomains, logistics: loadLogisticsDomains }[scopedCarrier];
+          const country = scopedCountries.join(',');
+          // Hydrate before entering overlay mode. The mode-transition effect
+          // deliberately aborts in-flight source requests, so entering first
+          // used to cancel this very agent action after the data had loaded.
+          await loader(scopedDomains.length ? scopedDomains : ['Grid'], {
+            replace: true, country, skipFocus: true,
+          });
+          updateAtlasOverlayCarrierFilter(scopedCarrier, {
+            countries: scopedCountries,
+            domains: scopedDomains.length ? scopedDomains : null,
+          });
+          const next = ATLAS_NETWORK_CARRIER_ORDER.filter((carrier) =>
+            atlasOverlayCarriersRef.current.includes(carrier) || carrier === scopedCarrier
+            || (carrier === 'electricity' && pypsaMapMembershipRef.current.networks.length > 0));
+          setAtlasOverlayCarriers(next);
+          atlasOverlayLoadAttemptsRef.current.set(scopedCarrier, country);
+          atlasOverlayScopeAttemptsRef.current.set(scopedCarrier, country);
+          atlasOverlayModeRef.current = true;
+          setAtlasOverlayMode(true);
+          pushReply(`Overlaying ${ATLAS_NETWORK_CARRIER_META[scopedCarrier].label} ${scopedDomains.join(' + ') || 'Grid'} in ${scopedCountries.map(countryCodeToName).join(' and ')}. Existing power countries and resolutions are unchanged.`);
           return true;
         }
         const requestedCarriers = [...new Set((action.carriers || [])
@@ -5493,24 +5649,26 @@ function AppInner() {
       }
       case 'network_carrier': {
         const carrier = String(action.carrier || action.networkCarrier || '').trim().toLowerCase();
+        if (boundModelGeography && carrier !== 'electricity') throw new Error('This project scene can only show its declared electricity model data. Independent carrier networks are available in Studio Atlas.');
         if (!['electricity', 'gas', 'water', 'liquids', 'logistics'].includes(carrier)) {
           pushReply('Choose Electricity, Methane gas, Water, Oil & energy liquids, or Ports & air freight.');
           return true;
         }
+        atlasOverlayModeRef.current = false;
         setAtlasOverlayMode(false);
         atlasNetworkCarrierRef.current = carrier;
         if (carrier === 'gas') {
-          await loadGasCountryFromAgent(gasCountryFilterRef.current);
-          pushReply(`Switched to the methane gas network${gasCountryFilterRef.current ? ` for ${countryCodeToName(gasCountryFilterRef.current)}` : ' for all Europe'}.`);
+          await loadGasCountryFromAgent(gasCountryFilterRef.current, { resetLayers: true });
+          pushReply(`Switched to the methane gas network${infrastructureScopeLabel(gasCountryFilterRef.current)}.`);
         } else if (carrier === 'water') {
-          await loadWaterCountryFromAgent(waterCountryFilterRef.current);
-          pushReply(`Switched to the water network${waterCountryFilterRef.current ? ` for ${countryCodeToName(waterCountryFilterRef.current)}` : ' for all Europe'}.`);
+          await loadWaterCountryFromAgent(waterCountryFilterRef.current, { resetLayers: true });
+          pushReply(`Switched to the water network${infrastructureScopeLabel(waterCountryFilterRef.current)}.`);
         } else if (carrier === 'liquids') {
-          await loadLiquidsCountryFromAgent(liquidsCountryFilterRef.current);
-          pushReply(`Switched to the oil and energy-liquids network${liquidsCountryFilterRef.current ? ` for ${countryCodeToName(liquidsCountryFilterRef.current)}` : ' for all Europe'}.`);
+          await loadLiquidsCountryFromAgent(liquidsCountryFilterRef.current, { resetLayers: true });
+          pushReply(`Switched to the oil and energy-liquids network${infrastructureScopeLabel(liquidsCountryFilterRef.current)}.`);
         } else if (carrier === 'logistics') {
-          await loadLogisticsCountryFromAgent(logisticsCountryFilterRef.current);
-          pushReply(`Switched to the ports and air-freight Atlas${logisticsCountryFilterRef.current ? ` for ${countryCodeToName(logisticsCountryFilterRef.current)}` : ' for all Europe'}.`);
+          await loadLogisticsCountryFromAgent(logisticsCountryFilterRef.current, { resetLayers: true });
+          pushReply(`Switched to the ports and air-freight Atlas${infrastructureScopeLabel(logisticsCountryFilterRef.current)}.`);
         } else {
           setAtlasNetworkCarrier('electricity');
           pushReply('Switched to the electricity network.');
@@ -5520,86 +5678,46 @@ function AppInner() {
       case 'country': {
         const countryCodes = (action.countries || []).map((code) => String(code || '').trim().toUpperCase()).filter(Boolean);
         if (!countryCodes.length) throw new Error('No country was provided.');
-        if (isInfrastructureAction && countryCodes.length > 1) throw new Error('This carrier country action currently accepts one country or all Europe; no partial selection was loaded.');
+        if (boundModelGeography) {
+          if (modelSceneStatus.state !== 'ready') throw new Error('Wait for the project model to finish loading before selecting its countries.');
+          if (action.resolution && !['native', boundModelGeography.nativeResolution, 'country'].includes(action.resolution)) {
+            throw new Error(`This project has ${boundModelGeography.nativeGeography} topology; a finer split is not available yet.`);
+          }
+          if (modelGeographyResolution !== 'native') applyBoundModelResolution('native');
+          const selection = resolveModelCountryScope(
+            boundModelGeography.sourceCountries,
+            modelCountryScopeRef.current,
+            countryCodes,
+            action.mode,
+          );
+          if (action.domains?.length) await setAtlasDomainsFromAgent(action.domains, action.layerMode || 'replace');
+          await selectBoundModelCountries(selection, { throwOnError: true });
+          if (action.generationMix) setShowGenerationMix(true);
+          const scope = selection.length ? selection : boundModelGeography.sourceCountries;
+          pushReply(`Showing ${scope.map(countryCodeToName).join(' and ')} from the existing ${boundModelGeography.nativeGeography.toLowerCase()} project model. No country network was added or split.`);
+          return true;
+        }
         const names = countryCodes.map(countryCodeToName);
-        if (isGasAction) {
-          if (action.mode === 'remove') {
-            const activeCountries = String(gasCountryFilterRef.current || '').split(',').filter(Boolean);
-            if (!activeCountries.some((code) => countryCodes.includes(code))) {
-              pushReply(`${names.join(' and ')} is not the active methane country filter.`);
-              return true;
-            }
-            await loadGasCountryFromAgent('', { domains: action.domains, layerMode: action.layerMode });
-            pushReply(`Removed the country filter. Showing the methane network for all Europe.`);
-            return true;
-          }
-          const targetCode = countryCodes[0];
-          await loadGasCountryFromAgent(targetCode, {
+        if (isInfrastructureAction) {
+          const loader = isGasAction ? loadGasCountryFromAgent
+            : isWaterAction ? loadWaterCountryFromAgent
+              : isLiquidsAction ? loadLiquidsCountryFromAgent : loadLogisticsCountryFromAgent;
+          const activeScope = isGasAction ? gasCountryFilterRef
+            : isWaterAction ? waterCountryFilterRef
+              : isLiquidsAction ? liquidsCountryFilterRef : logisticsCountryFilterRef;
+          await loader(countryCodes, {
+            countryMode: action.mode,
             domains: action.domains,
             layerMode: action.layerMode || 'replace',
+            resetLayers: atlasNetworkCarrierRef.current !== requestedNetworkCarrier,
           });
+          const selected = normalizeOverlayCountryCodes(activeScope.current);
+          const scopeLabel = selected.length ? selected.map(countryCodeToName).join(' and ') : 'all Europe';
           const layerLabel = action.domains?.length ? ` with ${action.domains.join(' and ')}` : '';
-          pushReply(`Showing ${countryCodeToName(targetCode)} in the methane Atlas${layerLabel}.`);
+          pushReply(`Showing ${scopeLabel} in the ${infrastructureLabel} Atlas${layerLabel}.`);
           return true;
         }
-        if (isWaterAction) {
-          if (action.mode === 'remove') {
-            const activeCountries = String(waterCountryFilterRef.current || '').split(',').filter(Boolean);
-            if (!activeCountries.some((code) => countryCodes.includes(code))) {
-              pushReply(`${names.join(' and ')} is not the active water country filter.`);
-              return true;
-            }
-            await loadWaterCountryFromAgent('', { domains: action.domains, layerMode: action.layerMode });
-            pushReply('Removed the country filter. Showing the water network for all Europe.');
-            return true;
-          }
-          const targetCode = countryCodes[0];
-          await loadWaterCountryFromAgent(targetCode, {
-            domains: action.domains,
-            layerMode: action.layerMode || 'replace',
-          });
-          const layerLabel = action.domains?.length ? ` with ${action.domains.join(' and ')}` : '';
-          pushReply(`Showing ${countryCodeToName(targetCode)} in the water Atlas${layerLabel}.`);
-          return true;
-        }
-        if (isLiquidsAction) {
-          if (action.mode === 'remove') {
-            const activeCountries = String(liquidsCountryFilterRef.current || '').split(',').filter(Boolean);
-            if (!activeCountries.some((code) => countryCodes.includes(code))) {
-              pushReply(`${names.join(' and ')} is not the active liquids country filter.`);
-              return true;
-            }
-            await loadLiquidsCountryFromAgent('', { domains: action.domains, layerMode: action.layerMode });
-            pushReply('Removed the country filter. Showing the oil and liquids network for all Europe.');
-            return true;
-          }
-          const targetCode = countryCodes[0];
-          await loadLiquidsCountryFromAgent(targetCode, { domains: action.domains, layerMode: action.layerMode || 'replace' });
-          const layerLabel = action.domains?.length ? ` with ${action.domains.join(' and ')}` : '';
-          pushReply(`Showing ${countryCodeToName(targetCode)} in the oil and liquids Atlas${layerLabel}.`);
-          return true;
-        }
-        if (isLogisticsAction) {
-          if (action.mode === 'remove') {
-            const activeCountries = String(logisticsCountryFilterRef.current || '').split(',').filter(Boolean);
-            if (!activeCountries.some((code) => countryCodes.includes(code))) {
-              pushReply(`${names.join(' and ')} is not the active logistics country filter.`);
-              return true;
-            }
-            await loadLogisticsCountryFromAgent('', { domains: action.domains, layerMode: action.layerMode });
-            pushReply('Removed the country filter. Showing European ports and air-freight assets.');
-            return true;
-          }
-          const targetCode = countryCodes[0];
-          await loadLogisticsCountryFromAgent(targetCode, { domains: action.domains, layerMode: action.layerMode || 'replace' });
-          const layerLabel = action.domains?.length ? ` with ${action.domains.join(' and ')}` : '';
-          pushReply(`Showing ${countryCodeToName(targetCode)} in the ports and air-freight Atlas${layerLabel}.`);
-          return true;
-        }
-        if (!atlasOverlayModeRef.current && atlasNetworkCarrierRef.current !== 'electricity') {
-          atlasNetworkCarrierRef.current = 'electricity';
-          setAtlasNetworkCarrier('electricity');
-        }
+        makeElectricityVisible();
         if (action.mode === 'remove') {
           removeAtlasCountriesFromAgent(countryCodes);
           pushReply(`Removed ${names.join(' and ')} from the map.`);
@@ -5617,6 +5735,8 @@ function AppInner() {
         const result = await loadAtlasCountriesFromAgent(countryCodes, {
           mode,
           resolution: action.resolution,
+          otherResolution: action.otherResolution,
+          resolutionsByCountry: action.resolutionsByCountry,
           domains: action.domains,
           layerMode: action.layerMode,
         });
@@ -5636,10 +5756,17 @@ function AppInner() {
         return true;
       }
       case 'all_countries': {
+        if (boundModelGeography) {
+          await selectBoundModelCountries([]);
+          if (action.domains?.length) await setAtlasDomainsFromAgent(action.domains, action.layerMode || 'replace');
+          pushReply(`Showing all ${boundModelGeography.sourceCountries.length} countries in the existing ${boundModelGeography.nativeGeography.toLowerCase()} project model.`);
+          return true;
+        }
         if (isGasAction) {
           await loadGasCountryFromAgent('', {
             domains: action.domains,
             layerMode: action.layerMode || 'replace',
+            resetLayers: atlasNetworkCarrierRef.current !== requestedNetworkCarrier,
           });
           const layerLabel = action.domains?.length ? ` with ${action.domains.join(' and ')}` : '';
           pushReply(`Showing the methane network for all Europe${layerLabel}.`);
@@ -5649,23 +5776,25 @@ function AppInner() {
           await loadWaterCountryFromAgent('', {
             domains: action.domains,
             layerMode: action.layerMode || 'replace',
+            resetLayers: atlasNetworkCarrierRef.current !== requestedNetworkCarrier,
           });
           const layerLabel = action.domains?.length ? ` with ${action.domains.join(' and ')}` : '';
           pushReply(`Showing the water network for all Europe${layerLabel}.`);
           return true;
         }
         if (isLiquidsAction) {
-          await loadLiquidsCountryFromAgent('', { domains: action.domains, layerMode: action.layerMode || 'replace' });
+          await loadLiquidsCountryFromAgent('', { domains: action.domains, layerMode: action.layerMode || 'replace', resetLayers: atlasNetworkCarrierRef.current !== requestedNetworkCarrier });
           const layerLabel = action.domains?.length ? ` with ${action.domains.join(' and ')}` : '';
           pushReply(`Showing the oil and liquids network for all Europe${layerLabel}.`);
           return true;
         }
         if (isLogisticsAction) {
-          await loadLogisticsCountryFromAgent('', { domains: action.domains, layerMode: action.layerMode || 'replace' });
+          await loadLogisticsCountryFromAgent('', { domains: action.domains, layerMode: action.layerMode || 'replace', resetLayers: atlasNetworkCarrierRef.current !== requestedNetworkCarrier });
           const layerLabel = action.domains?.length ? ` with ${action.domains.join(' and ')}` : '';
           pushReply(`Showing European ports and air-freight assets${layerLabel}.`);
           return true;
         }
+        makeElectricityVisible();
         let countryCodes = availablePypsaCountryOptions.map((option) => option.countryCode);
         if (!countryCodes.length) {
           const files = await loadPyPSAFiles(pypsaGranularity);
@@ -5689,10 +5818,47 @@ function AppInner() {
         return true;
       }
       case 'country_groups': {
-        if (isInfrastructureAction) {
-          pushReply(`The ${infrastructureLabel} geography control currently supports one country or all Europe. Choose a country, or ask to show Europe in that network.`);
+        if (boundModelGeography) {
+          const selection = resolveModelCountryScope(boundModelGeography.sourceCountries, [], action.countries || []);
+          if (action.domains?.length) await setAtlasDomainsFromAgent(action.domains, action.layerMode || 'replace');
+          await selectBoundModelCountries(selection, { throwOnError: true });
+          pushReply(`Showing ${selection.length || boundModelGeography.sourceCountries.length} project countries at ${boundModelGeography.nativeGeography}. No external country networks were loaded.`);
           return true;
         }
+        if (isInfrastructureAction) {
+          const countryCodes = normalizeOverlayCountryCodes(action.countries);
+          if (!countryCodes.length) throw new Error('The requested region has no countries to select.');
+          let sourceStatus = isGasAction ? gasStatus
+            : isWaterAction ? waterStatus
+              : isLiquidsAction ? liquidsStatus : logisticsStatus;
+          if (!sourceStatus?.available) {
+            sourceStatus = await carrierNetworkRequests.read(
+              requestedNetworkCarrier,
+              `${API_BASE}/api/atlas/${requestedNetworkCarrier}/status`,
+              `The ${infrastructureLabel} source catalogue is unavailable.`,
+              { kind: 'status' },
+            );
+          }
+          const { selected: selectedCodes, missing: missingCodes } = resolveInfrastructureCountryGroupScope(
+            countryCodes, sourceStatus?.countries || [],
+          );
+          if (!selectedCodes.length) throw new Error(`The ${infrastructureLabel} source has no mapped data for ${countryCodes.map(countryCodeToName).join(', ')}.`);
+          const loader = isGasAction ? loadGasCountryFromAgent
+            : isWaterAction ? loadWaterCountryFromAgent
+              : isLiquidsAction ? loadLiquidsCountryFromAgent : loadLogisticsCountryFromAgent;
+          await loader(selectedCodes, {
+            domains: action.domains,
+            layerMode: action.layerMode || 'replace',
+            resetLayers: atlasNetworkCarrierRef.current !== requestedNetworkCarrier,
+          });
+          const label = (action.groupLabels || []).join(' and ') || countryCodes.map(countryCodeToName).join(' and ');
+          const coverageNote = missingCodes.length
+            ? ` No mapped ${infrastructureLabel} records are available for ${missingCodes.map(countryCodeToName).join(', ')}; those countries were not added.`
+            : '';
+          pushReply(`Showing ${label} (${selectedCodes.map(countryCodeToName).join(', ')}) in the ${infrastructureLabel} Atlas.${coverageNote}`);
+          return true;
+        }
+        makeElectricityVisible();
         const availableCodes = new Set(availablePypsaCountryOptions.map((option) => option.countryCode));
         const countryCodes = (action.countries || []).filter((code) => availableCodes.has(code));
         if (!countryCodes.length) throw new Error('No local country caches are available for those regions.');
@@ -5724,18 +5890,25 @@ function AppInner() {
           pushReply('Mixed TSO resolution rings apply to the electricity network. Other infrastructure layers retain their source topology.');
           return true;
         }
-        const focusCode = String(action.focusCountry || activePypsaCountryCode || '').trim().toUpperCase();
-        if (!focusCode) throw new Error('Choose a focus country for the mixed TSO view.');
-        const result = await applyMixedGranularityView(focusCode, action.levels || {});
+        makeElectricityVisible();
+        const focusCodes = action.focusCountries?.length
+          ? action.focusCountries
+          : [action.focusCountry || activePypsaCountryCode].filter(Boolean);
+        if (!focusCodes.length) throw new Error('Choose at least one focus country for the mixed TSO view.');
+        const result = await applyMixedGranularityView(focusCodes, action.levels || {}, {
+          scope: action.scope || 'two_hops', regions: action.regions || [],
+        });
         if (!result) return true;
         if (action.domains?.length) {
           await setAtlasDomainsFromAgent(action.domains, action.layerMode || 'replace', result.entries);
         }
         pushReply(
-          `Built a mixed TSO view around ${countryCodeToName(result.focusCode)}: `
-          + `${ATLAS_RESOLUTION_LABELS[result.levels.focus]} for the focus country, `
+          `Built a mixed TSO view around ${result.focusCodes.map(countryCodeToName).join(' and ')}: `
+          + `${ATLAS_RESOLUTION_LABELS[result.levels.focus]} for ${result.focusCodes.length} focus countries, `
           + `${ATLAS_RESOLUTION_LABELS[result.levels.adjacent]} for ${result.adjacent.length} direct grid neighbours, and `
-          + `${ATLAS_RESOLUTION_LABELS[result.levels.outer]} for ${result.outer.length} outer-ring countries.`
+          + `${ATLAS_RESOLUTION_LABELS[result.levels.outer]} for ${result.outer.length} second-ring countries. `
+          + `${result.periphery.length} third-ring and ${result.remaining.length} remaining-model countries; `
+          + `${result.regions.length} visual country regions.`
         );
         return true;
       }
@@ -5744,6 +5917,7 @@ function AppInner() {
           pushReply(`The ${infrastructureLabel} Atlas currently has one source-topology resolution; NUTS and bidding-zone levels apply to the electricity network.`);
           return true;
         }
+        makeElectricityVisible();
         const level = await setAtlasResolutionFromAgent(action.resolution);
         if (action.domains?.length) {
           await setAtlasDomainsFromAgent(action.domains, action.layerMode || 'replace', level.entries);
@@ -5757,6 +5931,7 @@ function AppInner() {
           pushReply(`The ${infrastructureLabel} Atlas currently has one source-topology resolution, so its granularity cannot be stepped yet.`);
           return true;
         }
+        makeElectricityVisible();
         const result = await stepAtlasResolutionFromAgent(action.direction);
         if (action.domains?.length) {
           await setAtlasDomainsFromAgent(action.domains, action.layerMode || 'replace', result.level.entries);
@@ -5946,6 +6121,7 @@ function AppInner() {
   }, [
     activateCountryNetwork,
     activePypsaCountryCode,
+    applyBoundModelResolution,
     applyMixedGranularityView,
     atlasNetworkCarrier,
     atlasOverlayCarriers,
@@ -5954,6 +6130,7 @@ function AppInner() {
     aiMapControlEnabled,
     landStatus,
     availablePypsaCountryOptions,
+    boundModelGeography,
     extractPypsaCountryCode,
     loadPyPSAFiles,
     pypsaGranularity,
@@ -5964,14 +6141,22 @@ function AppInner() {
     logisticsFacilitiesData,
     ensureAtlasOverlayCarrierLoaded,
     loadAtlasOverlayCarriers,
+    loadGasDomains,
+    loadWaterDomains,
+    loadLiquidsDomains,
+    loadLogisticsDomains,
     loadGasCountryFromAgent,
     loadLiquidsCountryFromAgent,
     loadLogisticsCountryFromAgent,
     loadWaterCountryFromAgent,
     loadAtlasCountriesFromAgent,
     loadedPypsaNetworks,
+    modelGeographyResolution,
+    modelSceneStatus.state,
     removeAtlasCountriesFromAgent,
+    selectBoundModelCountries,
     setAtlasDomainsFromAgent,
+    updateAtlasOverlayCarrierFilter,
     setAtlasResolutionFromAgent,
     stepAtlasResolutionFromAgent,
     updateLandOverlay,
@@ -6968,6 +7153,10 @@ function AppInner() {
   const buildMapContext = useCallback(() => {
     const view = mapViewRef.current || {};
     const currentLandOverlay = landOverlayRef.current;
+    const isBoundModel = Boolean(boundModelGeography);
+    const modelCountryCodes = distillationPreviewStatus.state === 'ready' && distillationCountries.length
+      ? distillationCountries
+      : (boundModelGeography?.sourceCountries || []);
     // In overlay, Geography is shared and the dropdown is only the workspace
     // to return to. Its standalone country filter must not scope navigation.
     const isGasNetwork = !atlasOverlayMode && atlasNetworkCarrier === 'gas';
@@ -6994,6 +7183,13 @@ function AppInner() {
     const infrastructureCountryCodes = infrastructureCountryFilter
       ? infrastructureCountryFilter.split(',').map((code) => code.trim()).filter(Boolean)
       : [];
+    const availableInfrastructureCodes = normalizeOverlayCountryCodes(isGasNetwork
+      ? gasStatus?.countries
+      : isWaterNetwork ? waterStatus?.countries
+        : isLiquidsNetwork ? liquidsStatus?.countries
+          : isLogisticsNetwork ? logisticsStatus?.countries : []);
+    const infrastructureLoadedCountryCodes = infrastructureCountryCodes.length
+      ? infrastructureCountryCodes : availableInfrastructureCodes;
     const selectedMarker = selectedNode
       ? (() => {
           const sources = { electricity: pypsaFacilitiesData, gas: gasFacilitiesData,
@@ -7027,6 +7223,7 @@ function AppInner() {
       zoom: Number.isFinite(view.zoom) ? view.zoom : null,
       aiMapControlEnabled,
       mapDisplay: {
+        // Presentation state is read live separately for planning and verification.
         nodeMarkers: showMapNodes,
         geographicBoundaries: showGeographicBoundaries,
         domainControls: !mapControlsCollapsed,
@@ -7053,22 +7250,34 @@ function AppInner() {
       workspaceCarrier: atlasNetworkCarrier,
       networkOverlayMode: atlasOverlayMode,
       overlayNetworkCarriers: atlasOverlayMode ? atlasOverlayCarriers : [atlasNetworkCarrier],
+      overlayCarrierScopes: Object.fromEntries(ATLAS_NETWORK_CARRIER_ORDER.map((carrier) => [carrier, {
+        countries: carrier === 'electricity' ? atlasOverlayCountryCodes : (atlasOverlayCountriesByCarrier[carrier] || []),
+        domains: atlasOverlayCarrierFilters[carrier]?.domains?.length
+          ? atlasOverlayCarrierFilters[carrier].domains
+          : ATLAS_MAP_DOMAINS.filter((domain) => atlasDomainVisibility[domain] !== false),
+      }])),
       landConstraints: {
         enabled: Boolean(currentLandOverlay.enabled),
         categories: currentLandOverlay.categories,
         countries: currentLandOverlay.countries,
         opacity: currentLandOverlay.opacity,
       },
-      activeNetwork: atlasOverlayMode ? null : isGasNetwork ? 'atlas_gas.db' : isWaterNetwork ? 'atlas_water.db' : isLiquidsNetwork ? 'atlas_liquids.db' : isLogisticsNetwork ? 'atlas_logistics.db' : (selectedPyPSAFile || null),
-      activeCountryCode: isInfrastructureNetwork ? (infrastructureCountryCodes[0] || null) : (selectedPyPSACountryCode || null),
-      loadedCountryCodes: isInfrastructureNetwork ? infrastructureCountryCodes : loadedPypsaCountryCodes,
-      loadedCountries: isInfrastructureNetwork
+      activeNetwork: isBoundModel ? `${boundModelGeography.projectId} · ${boundModelGeography.modelVersion}` : atlasOverlayMode ? null : isGasNetwork ? 'atlas_gas.db' : isWaterNetwork ? 'atlas_water.db' : isLiquidsNetwork ? 'atlas_liquids.db' : isLogisticsNetwork ? 'atlas_logistics.db' : (selectedPyPSAFile || null),
+      activeCountryCode: isBoundModel ? (modelCountryCodes.length === 1 ? modelCountryCodes[0] : null) : isInfrastructureNetwork ? (infrastructureCountryCodes.length === 1 ? infrastructureCountryCodes[0] : null) : (selectedPyPSACountryCode || null),
+      loadedCountryCodes: isBoundModel ? modelCountryCodes : isInfrastructureNetwork ? infrastructureLoadedCountryCodes : loadedPypsaCountryCodes,
+      countryScopeMode: isInfrastructureNetwork ? (infrastructureCountryCodes.length ? 'subset' : 'all_europe') : null,
+      availableCountryCodes: isBoundModel ? boundModelGeography.sourceCountries : isInfrastructureNetwork
+        ? availableInfrastructureCodes
+        : availablePypsaCountryOptions.map((option) => option.countryCode),
+      loadedCountries: isBoundModel ? modelCountryCodes.map(countryCodeToName) : isInfrastructureNetwork
         ? (infrastructureCountryCodes.length ? infrastructureCountryCodes.map(countryCodeToName) : ['All Europe'])
         : loadedPypsaNetworks.map((network) => network.countryName || network.countryCode),
-      granularity: isInfrastructureNetwork ? null : (pypsaGranularity || null),
-      networkResolution: isGasNetwork ? 'transmission_topology' : isWaterNetwork || isLiquidsNetwork || isLogisticsNetwork ? 'source_topology' : (currentAtlasResolutionKey || null),
-      networkResolutionByCountry: isInfrastructureNetwork ? null : Object.fromEntries(
-        loadedPypsaNetworks.map((network) => [network.countryCode, network.resolutionKey || atlasResolutionKeyForEntry(network)])
+      granularity: isBoundModel || isInfrastructureNetwork ? null : (pypsaGranularity || null),
+      networkResolution: isBoundModel ? (['country', 'bidding_zone', 'regional'].includes(modelGeographyResolution) ? modelGeographyResolution : boundModelGeography.nativeResolution) : isGasNetwork ? 'transmission_topology' : isWaterNetwork || isLiquidsNetwork || isLogisticsNetwork ? 'source_topology' : (currentAtlasResolutionKey || null),
+      networkResolutionByCountry: isBoundModel || isInfrastructureNetwork ? null : Object.fromEntries(
+        loadedPypsaNetworks.map((network) => [network.countryCode, network.resolutionKey || atlasResolutionKeyForEntry(
+          primaryPypsaSourceEntries.find((entry) => entry.filename === network.filename) || network
+        )])
       ),
       mixedGranularity: mixedGranularityPlan,
       networkResolutionScope: atlasOverlayMode ? 'electricity' : atlasNetworkCarrier,
@@ -7085,7 +7294,16 @@ function AppInner() {
         [definition.key]: pypsaSettings[definition.key],
       }), {}),
       controlSchema: {
-        overlayScope: 'When networkOverlayMode is true, loadedCountryCodes are shared Geography for all overlayNetworkCarriers. networkCarrier="overlay" describes the combined view; workspaceCarrier only chooses the standalone workspace on exit. networkResolution describes the electricity cache; other carriers keep their source topology. There is no single activeNetwork in an overlay.',
+        modelGeography: isBoundModel ? {
+          projectId: boundModelGeography.projectId,
+          modelVersion: boundModelGeography.modelVersion,
+          nativeResolution: boundModelGeography.nativeResolution,
+          sourceCountries: boundModelGeography.sourceCountries,
+          selectedCountryCodes: modelCountryCodes,
+          selectionMode: distillationPreviewStatus.state === 'ready' && distillationCountries.length ? 'subset' : 'all_project_countries',
+          instruction: 'Country requests filter or distil existing project nodes. Never load standalone PyPSA country caches. Country aggregation is possible; splitting finer than the declared native model topology is not.',
+        } : null,
+        overlayScope: 'When networkOverlayMode is true, loadedCountryCodes and networkResolution describe electricity only. Other carriers may have independent countries and domains in overlayCarrierScopes. networkCarrier="overlay" describes the combined view; workspaceCarrier only chooses the standalone workspace on exit and is not the visible map. A request for electricity alone exits overlay; use set_network_overlay only when the user asks to combine networks.',
         mapDisplay: {
           intent: 'set_map_display',
           params: { node_markers: 'optional boolean', geographic_boundaries: 'optional boolean' },
@@ -7094,14 +7312,22 @@ function AppInner() {
         countrySelection: {
           intents: ['load_country', 'add_country', 'remove_country', 'focus_country'],
           countries: 'Non-empty array of country names or ISO2 codes. Include every requested country in one action, never a combined place string.',
-          modes: 'load_country replaces the complete selection; add_country preserves existing countries; remove_country removes only the listed countries; focus_country accepts one country.',
+          modes: 'load_country replaces the complete selection; add_country preserves existing countries and their individual resolutions; remove_country removes only the listed countries; focus_country accepts one country.',
+          perCountryResolution: 'On add_country, resolution applies only to named countries. other_resolution changes the already-loaded countries; omit it to preserve them. resolutions_by_country maps ISO2 codes to individual levels. Example: add France at NUTS2 while all others become Full => countries=[FR], resolution=nuts2, other_resolution=full.',
           example: { intent: 'load_country', params: { countries: ['BE', 'FR'], resolution: 'nuts3', layers: ['Grid', 'Supply'] } },
         },
+        mixedResolution: {
+          intent: 'set_mixed_granularity',
+          focus_countries: 'Array of one or more focus country names or ISO2 codes.',
+          extent: ['two_hops', 'three_hops', 'full'],
+          tiers: ['focus_resolution', 'neighbour_resolution', 'outer_resolution', 'third_ring_resolution', 'remaining_resolution'],
+          regions: 'Optional array of {name, countries:[ISO2,...]} to aggregate two or more non-focus countries into one visual region node. This is not an executable model topology.',
+        },
         mapViewOperations: ['zoom_in', 'zoom_out', 'fit_selection', 'isolate', 'reset'],
-        networkCarriers: ['electricity', 'gas', 'water', 'liquids', 'logistics'],
+        networkCarriers: isBoundModel ? ['electricity'] : ['electricity', 'gas', 'water', 'liquids', 'logistics'],
         landConstraintCategories: ATLAS_LAND_CATEGORY_ORDER,
         landConstraintCountries: landStatus?.countries?.map((country) => country.code) || [],
-        networkResolutions: ['bidding_zone', 'ehighway', 'nuts1', 'nuts2', 'nuts3', 'full'],
+        networkResolutions: isBoundModel ? [boundModelGeography.nativeResolution, 'country'] : ['bidding_zone', 'ehighway', 'nuts1', 'nuts2', 'nuts3', 'full'],
         mapLayers: ATLAS_AGENT_MAP_LAYERS,
         waterAssetFilters: Object.keys(WATER_ASSET_FILTERS),
         availableCountryCodes: isGasNetwork
@@ -7112,7 +7338,9 @@ function AppInner() {
               ? (liquidsStatus?.countries || [])
               : isLogisticsNetwork
                 ? (logisticsStatus?.countries || [])
-          : availablePypsaCountryOptions.map((option) => option.countryCode),
+          : isBoundModel
+            ? boundModelGeography.sourceCountries
+            : availablePypsaCountryOptions.map((option) => option.countryCode),
         modelSettings: ATLAS_AGENT_PARAMETER_CATALOG.map((definition) => ({
           key: definition.key,
           type: definition.type,
@@ -7126,13 +7354,14 @@ function AppInner() {
     };
   }, [
     selectedNode, pypsaFacilitiesData, gasFacilitiesData, waterFacilitiesData, liquidsFacilitiesData, logisticsFacilitiesData,
+    boundModelGeography, distillationCountries, distillationPreviewStatus.state, modelGeographyResolution,
     regionCenter, regionRadiusKm, regionManifest, regionDirname, regionPanelVisible,
     selectedPyPSAFile, selectedPyPSACountryCode, pypsaGranularity,
-    loadedPypsaCountryCodes, loadedPypsaNetworks,
+    loadedPypsaCountryCodes, loadedPypsaNetworks, primaryPypsaSourceEntries,
     currentAtlasResolutionKey, mixedGranularityPlan, atlasDomainVisibility, hiddenCarriers, showGenerationMix,
     showMapNodes, showGeographicBoundaries, mapControlsCollapsed,
     lastSearchedLocation, runMode, pypsaSettings, availablePypsaCountryOptions, aiMapControlEnabled,
-    atlasNetworkCarrier, atlasOverlayMode, atlasOverlayCarriers, landOverlay.enabled, landOverlay.categories, landOverlay.countries, gridAccessOverlay.enabled, gasCountryFilter, gasStatus, waterCountryFilter, waterStatus,
+    atlasNetworkCarrier, atlasOverlayMode, atlasOverlayCarriers, atlasOverlayCountryCodes, atlasOverlayCountriesByCarrier, atlasOverlayCarrierFilters, landOverlay.enabled, landOverlay.categories, landOverlay.countries, gridAccessOverlay.enabled, gasCountryFilter, gasStatus, waterCountryFilter, waterStatus,
     liquidsCountryFilter, liquidsStatus, logisticsCountryFilter, logisticsStatus, countryCodeToName,
   ]);
 
@@ -7249,7 +7478,7 @@ function AppInner() {
     //   2. Geocode params.location.
     //   3. use_map_context flag → currently selected region center.
     //   4. Falls back through last searched / last solved / live map center.
-    const resolveCoords = async () => {
+    const resolveCoords = async ({ countryScoped = true } = {}) => {
       if (Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lon))) {
         return { lat: Number(p.lat), lon: Number(p.lon), label: p.location || null };
       }
@@ -7259,7 +7488,7 @@ function AppInner() {
           const selectedCountries = Array.isArray(ctx.loadedCountryCodes)
             ? ctx.loadedCountryCodes.filter(Boolean)
             : [];
-          const countryQuery = selectedCountries.length
+          const countryQuery = countryScoped && selectedCountries.length
             ? `&countries=${encodeURIComponent(selectedCountries.join(','))}`
             : '';
           const resp = await fetch(`${API_BASE}/api/geocode?q=${encodeURIComponent(loc)}${countryQuery}`);
@@ -7330,6 +7559,19 @@ function AppInner() {
     }
 
     switch (intent) {
+      case 'control_experience': {
+        // Earlier actions may have just committed a country/layer load. Let
+        // React publish that map before snapshotting or restoring its state.
+        await new Promise(resolve => setTimeout(resolve, 50));
+        if (!experienceAgentRef.current) throw new Error('The map tools are not ready yet.');
+        for (let attempt = 0; experienceAgentRef.current?.getState().busy && attempt < 100; attempt += 1) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        const result = await experienceAgentRef.current.execute(p);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        pushReply(result);
+        return true;
+      }
       case 'set_land_constraints':
         return executeAtlasDirectAction({
           type: 'land_constraints',
@@ -7342,12 +7584,26 @@ function AppInner() {
           panelOpen: p.panel_open,
         }, pushReply);
 
-      case 'set_network_overlay':
+      case 'set_network_overlay': {
+        const carriers = Array.isArray(p.network_carriers) ? p.network_carriers.map(normalizeNetworkCarrier) : Array.isArray(p.carriers) ? p.carriers.map(normalizeNetworkCarrier) : [];
+        const infrastructure = carriers.filter(carrier => carrier !== 'electricity');
+        const scopeCarrier = p.network_carrier ? normalizeNetworkCarrier(p.network_carrier)
+          : infrastructure.length === 1 ? infrastructure[0] : '';
+        // Adding an overlay means "here" unless the request supplies its own
+        // geography. A previously visited methane workspace is not that scope.
+        const scopeCountries = Array.isArray(p.countries) ? p.countries : p.country ? [p.country]
+          : scopeCarrier ? (pypsaMapMembershipRef.current.networks.length
+            ? pypsaMapMembershipRef.current.networks.map(network => network.countryCode)
+            : ctx.loadedCountryCodes || []) : [];
         return executeAtlasDirectAction({
           type: 'network_overlay',
           visible: p.visible !== false,
-          carriers: Array.isArray(p.network_carriers) ? p.network_carriers.map(normalizeNetworkCarrier) : Array.isArray(p.carriers) ? p.carriers.map(normalizeNetworkCarrier) : [],
+          carriers,
+          scopeCarrier,
+          scopeCountries,
+          scopeDomains: Array.isArray(p.layers) ? p.layers : [],
         }, pushReply);
+      }
 
       case 'set_network_carrier':
         return executeAtlasDirectAction({
@@ -7524,7 +7780,10 @@ function AppInner() {
         }
 
         const location = String(p.location || p.zone || '').trim();
-        const coords = location ? await resolveCoords() : null;
+        // Camera-only requests may target places outside the loaded network.
+        // Scoping the geocoder to loaded countries can turn a well-known city
+        // such as Paris into an unrelated homonymous locality in Spain.
+        const coords = location ? await resolveCoords({ countryScoped: false }) : null;
         if (coords) {
           setEmilViewportCommand({
             id: Date.now() + Math.random(),
@@ -7552,20 +7811,28 @@ function AppInner() {
       case 'set_mixed_granularity': {
         const { countries } = readAtlasModelCountries({
           ...p,
+          ...(p.focus_countries || p.focusCountries ? { countries: p.focus_countries || p.focusCountries } : {}),
           country: p.focus_country || p.focusCountry || p.country,
         });
-        const focusCountry = countries[0] || ctx.activeCountryCode || '';
+        const focusCountries = countries.length ? countries : [ctx.activeCountryCode].filter(Boolean);
         const level = (value, fallback) => normalizeAtlasResolution(value) || fallback;
         try {
           return executeAtlasDirectAction({
             type: 'mixed_granularity',
-            focusCountry,
+            focusCountries,
             networkCarrier: normalizeNetworkCarrier(p.network_carrier || p.carrier || ctx.networkCarrier),
             levels: {
               focus: level(p.focus_resolution, 'full'),
               adjacent: level(p.neighbour_resolution || p.neighbor_resolution, 'nuts3'),
               outer: level(p.outer_resolution, 'bidding_zone'),
+              periphery: level(p.third_ring_resolution, 'bidding_zone'),
+              remaining: level(p.remaining_resolution, 'bidding_zone'),
             },
+            scope: p.extent || p.scope || 'two_hops',
+            regions: (Array.isArray(p.regions) ? p.regions : []).map((region) => ({
+              name: region.name,
+              countryCodes: readAtlasModelCountries({ countries: region.countries || region.country_codes || [] }).countries,
+            })),
             domains: (Array.isArray(p.layers) ? p.layers : String(p.layers || '').split(','))
               .map(canonicalAtlasAgentLayer)
               .filter(Boolean),
@@ -7587,15 +7854,18 @@ function AppInner() {
           const domains = (Array.isArray(p.layers) ? p.layers : String(p.layers || '').split(','))
             .map(canonicalAtlasAgentLayer)
             .filter(Boolean);
+          const { countries } = readAtlasModelCountries(p);
           await executeAtlasDirectAction({
-            type: 'set_resolution',
+            type: countries.length ? 'country' : 'set_resolution',
+            mode: 'add',
+            countries,
             networkCarrier: normalizeNetworkCarrier(p.network_carrier || p.carrier || ctx.networkCarrier),
             resolution,
             domains,
             layerMode: String(p.layer_mode || 'replace').toLowerCase(),
           }, pushReply);
         } catch (error) {
-          pushReply(`Could not switch network resolution: ${error.message}`);
+          throw new Error(`Could not switch network resolution: ${error.message}`);
         }
         return true;
       }
@@ -7614,7 +7884,7 @@ function AppInner() {
             layerMode: String(p.layer_mode || 'replace').toLowerCase(),
           }, pushReply);
         } catch (error) {
-          pushReply(`Could not step network resolution: ${error.message}`);
+          throw new Error(`Could not step network resolution: ${error.message}`);
         }
         return true;
       }
@@ -7629,6 +7899,7 @@ function AppInner() {
         }
         if (intent === 'focus_country' && countryCodes.length !== 1) throw new Error('Focus one country, or use fit_selection to frame multiple countries.');
         const resolution = normalizeAtlasResolution(p.resolution || p.granularity);
+        const { otherResolution, resolutionsByCountry } = readAtlasCountryResolutionOverrides(p);
         try {
           const domains = (Array.isArray(p.layers) ? p.layers : String(p.layers || '').split(','))
             .map(canonicalAtlasAgentLayer)
@@ -7639,12 +7910,14 @@ function AppInner() {
             countries: countryCodes,
             networkCarrier: normalizeNetworkCarrier(p.network_carrier || p.carrier || ctx.networkCarrier),
             resolution,
+            otherResolution,
+            resolutionsByCountry,
             domains,
             layerMode: String(p.layer_mode || 'replace').toLowerCase(),
             generationMix: Boolean(p.generation_mix),
           }, pushReply);
         } catch (error) {
-          pushReply(`Could not update ${countryCodes.map(countryCodeToName).join(' and ')}: ${error.message}`);
+          throw new Error(`Could not update ${countryCodes.map(countryCodeToName).join(' and ')}: ${error.message}`);
         }
         return true;
       }
@@ -7815,6 +8088,7 @@ function AppInner() {
         if (!place && !countryCodes.length) { pushReply('Which country / place? e.g. "country italy".'); return true; }
         if (countryCodes.length) {
           const resolution = normalizeAtlasResolution(p.resolution || p.granularity);
+          const { otherResolution, resolutionsByCountry } = readAtlasCountryResolutionOverrides(p);
           try {
             const domains = (Array.isArray(p.layers) ? p.layers : String(p.layers || '').split(','))
               .map(canonicalAtlasAgentLayer)
@@ -7825,15 +8099,16 @@ function AppInner() {
               countries: countryCodes,
               networkCarrier: normalizeNetworkCarrier(p.network_carrier || p.carrier || ctx.networkCarrier),
               resolution,
+              otherResolution,
+              resolutionsByCountry,
               domains,
               layerMode: String(p.layer_mode || 'replace').toLowerCase(),
               generationMix: Boolean(p.generation_mix),
             }, pushReply);
             return true;
           } catch (error) {
-            pushReply(`Could not load ${countryCodes.map(countryCodeToName).join(' and ')}: ${error.message}`);
+            throw new Error(`Could not load ${countryCodes.map(countryCodeToName).join(' and ')}: ${error.message}`);
           }
-          return true;
         }
         if (isSourceInfrastructure) {
           const coords = await resolveCoords();
@@ -7951,9 +8226,86 @@ function AppInner() {
     closeRegionPanel, aiMapControlEnabled,
   ]);
 
+  const [presentationMode, setPresentationMode] = useState(false);
+  const [presentationAction, setPresentationAction] = useState(null);
+  const presentationScene = useAtlasSceneState({
+    carrier: [atlasNetworkCarrier, setAtlasNetworkCarrier],
+    overlay: [atlasOverlayMode, setAtlasOverlayMode],
+    overlayCarriers: [atlasOverlayCarriers, setAtlasOverlayCarriers],
+    overlayFilters: [atlasOverlayCarrierFilters, setAtlasOverlayCarrierFilters],
+    domains: [atlasDomainVisibility, setAtlasDomainVisibility],
+    nodes: [showMapNodes, setShowMapNodes],
+    boundaries: [showGeographicBoundaries, setShowGeographicBoundaries],
+    generationMix: [showGenerationMix, setShowGenerationMix],
+    hiddenCarriers: [hiddenCarriers, setHiddenCarriers],
+    theme: [atlasTheme, setAtlasTheme],
+    facilities: [pypsaFacilitiesData, setPypsaFacilitiesData],
+    connections: [pypsaConnections, setPypsaConnections],
+    polygons: [pypsaGeoJsonOverlays, setPypsaGeoJsonOverlays],
+    networks: [loadedPypsaNetworks, setLoadedPypsaNetworks],
+    mixed: [mixedGranularityPlan, setMixedGranularityPlan],
+    country: [selectedPyPSACountryCode, setSelectedPyPSACountryCode],
+    file: [selectedPyPSAFile, setSelectedPyPSAFile],
+    listFile: [selectedPypsaListFile, setSelectedPypsaListFile],
+    componentScope: [pypsaComponentScope, setPypsaComponentScope],
+    modelResolution: [modelGeographyResolution, setModelGeographyResolution],
+    modelMixed: [modelMixedResolutionStatus, setModelMixedResolutionStatus],
+    modelCountries: [distillationCountries, setDistillationCountries],
+    modelDistillation: [distillationPreviewStatus, setDistillationPreviewStatus],
+    modelContext: [showDistillationContext, setShowDistillationContext],
+    modelResultSelection: [modelResultSelection, setModelResultSelection],
+    modelResult: [modelResultStatus, setModelResultStatus],
+    selectedNode: [selectedNode, setSelectedNode],
+    selectedNodes: [selectedNodes, setSelectedNodes],
+    regionCenter: [regionCenter, setRegionCenter],
+    regionRadius: [regionRadiusKm, setRegionRadiusKm],
+    resolution: [pypsaGranularity, setPypsaGranularity],
+    dataset: [pypsaDatasetMeta, setPypsaDatasetMeta],
+    loadedDomains: [pypsaLoadedDomainsByNetwork, setPypsaLoadedDomainsByNetwork],
+    land: [landOverlay, setLandOverlayCached],
+    access: [gridAccessOverlay, setGridAccessOverlay],
+    gasFacilities: [gasFacilitiesData, setGasFacilitiesData],
+    gasConnections: [gasConnections, setGasConnections],
+    gasCountry: [gasCountryFilter, setGasCountryFilter],
+    gasDomains: [gasLoadedDomains, setGasLoadedDomains],
+    gasMeta: [gasDatasetMeta, setGasDatasetMeta],
+    waterFacilities: [waterFacilitiesData, setWaterFacilitiesData],
+    waterConnections: [waterConnections, setWaterConnections],
+    waterCountry: [waterCountryFilter, setWaterCountryFilter],
+    waterDomains: [waterLoadedDomains, setWaterLoadedDomains],
+    waterMeta: [waterDatasetMeta, setWaterDatasetMeta],
+    liquidsFacilities: [liquidsFacilitiesData, setLiquidsFacilitiesData],
+    liquidsConnections: [liquidsConnections, setLiquidsConnections],
+    liquidsCountry: [liquidsCountryFilter, setLiquidsCountryFilter],
+    liquidsDomains: [liquidsLoadedDomains, setLiquidsLoadedDomains],
+    liquidsMeta: [liquidsDatasetMeta, setLiquidsDatasetMeta],
+    logisticsFacilities: [logisticsFacilitiesData, setLogisticsFacilitiesData],
+    logisticsConnections: [logisticsConnections, setLogisticsConnections],
+    logisticsCountry: [logisticsCountryFilter, setLogisticsCountryFilter],
+    logisticsDomains: [logisticsLoadedDomains, setLogisticsLoadedDomains],
+  }, pypsaLoading || pypsaResolutionSwitching || pypsaDetailHydrating || modelMixedResolutionStatus.state === 'loading' || distillationPreviewStatus.state === 'loading' || Boolean(pypsaDomainLoading || gasDomainLoading || waterDomainLoading || liquidsDomainLoading || logisticsDomainLoading), (snapshot) => {
+    // A scene restore is not a request to initialise another carrier workspace.
+    atlasWorkspaceTransitionRef.current = { carrier: snapshot.carrier, overlay: snapshot.overlay };
+    atlasNetworkCarrierRef.current = snapshot.carrier;
+    atlasOverlayModeRef.current = snapshot.overlay;
+    atlasOverlayCarrierFiltersRef.current = snapshot.overlayFilters;
+    for (const [countryRef, scopeRef, country] of [
+      [gasCountryFilterRef, gasDatasetCountryScopeRef, snapshot.gasCountry],
+      [waterCountryFilterRef, waterDatasetCountryScopeRef, snapshot.waterCountry],
+      [liquidsCountryFilterRef, liquidsDatasetCountryScopeRef, snapshot.liquidsCountry],
+      [logisticsCountryFilterRef, logisticsDatasetCountryScopeRef, snapshot.logisticsCountry],
+    ]) { countryRef.current = country; scopeRef.current = normalizeOverlayCountryCodes(country).join(','); }
+    setEmilFocusLocation(null); setEmilViewportCommand(null);
+  });
+  const handlePresentationMode = useCallback((enabled) => {
+    setPresentationMode(enabled);
+    if (enabled) setMapControlsCollapsed(true);
+  }, [setMapControlsCollapsed]);
+
   const handleMapAgentCommand = useCallback(async (rawInput = null, commandOptions = {}) => {
     const raw = String((rawInput ?? mapAgentInput) || '').trim();
     if (!raw || mapAgentBusy) return;
+    const experienceBefore = presentationScene.capture();
 
     setMapAgentMessages((prev) => [...prev, { id: `usr-${Date.now()}`, role: 'user', text: raw }]);
     setMapAgentInput('');
@@ -7980,6 +8332,7 @@ function AppInner() {
     // so the model can resolve "here", "this region", "make it 50 km", etc.
     const mapContext = {
       ...buildMapContext(),
+      experience: experienceAgentRef.current?.getState() || null,
       ...(commandOptions.forceLocation ? { requestSurface: 'place_drilldown', countryScopedDrilldown: true } : {}),
       ...(commandOptions.source === 'voice' ? {
         requestSurface: 'voice',
@@ -8002,7 +8355,7 @@ function AppInner() {
       if (interpResp.ok && interpData) {
         const decoded = readAtlasPlannerResponse(interpData, mapContext.visibleMapLayers);
         planningStatus = decoded.status;
-        llmPlan = decoded.plan;
+        llmPlan = reconcileAtlasAnaphoricCarrierPlan(raw, decoded.plan, mapContext);
       }
     } catch (_) {
       planningStatus = 'unavailable';
@@ -8011,6 +8364,7 @@ function AppInner() {
     }
 
     if (llmPlan.length) {
+      if (llmPlan.some(action => action.intent !== 'control_experience')) setPresentationAction({ id: Date.now(), text: raw, before: experienceBefore });
       const planReplies = [];
       const correctionReplies = [];
       let planError = '';
@@ -8031,11 +8385,11 @@ function AppInner() {
         if (finishIfCancelled()) return;
         console.error('Map-agent plan execution failed:', err);
         planError = err.message;
-        planReplies.push(`Initial execution issue: ${err.message}`);
+        planReplies.push(err.message);
       }
 
       if (finishIfCancelled()) return;
-      try {
+      if (!planError) try {
         // Allow React to publish state changes from the completed async actions
         // before the independent judge reads the observed map state.
         // At most one correction round; the second audit is read-only.
@@ -8050,6 +8404,7 @@ function AppInner() {
           const liveView = mapViewRef.current || {};
           const observedContext = {
             ...observedBase,
+            experience: experienceAgentRef.current?.getState() || null,
             center: {
               lat: Number.isFinite(liveView.lat) ? liveView.lat : observedBase.center?.lat ?? null,
               lng: Number.isFinite(liveView.lng) ? liveView.lng : observedBase.center?.lng ?? null,
@@ -8074,7 +8429,11 @@ function AppInner() {
                 executionNotes: [...planReplies, ...correctionReplies],
               }),
             });
-            judgeData = await judgeResp.json();
+            const judgeBody = await judgeResp.text();
+            if (!judgeResp.ok) throw new Error(`Verification service is unavailable (HTTP ${judgeResp.status}).`);
+            if (!judgeBody.trim()) throw new Error('Verification service returned an empty response.');
+            try { judgeData = JSON.parse(judgeBody); }
+            catch (_) { throw new Error('Verification service returned an invalid response.'); }
             if (judgeController.signal.aborted) throw new Error('Verification timed out.');
           } finally { clearTimeout(judgeTimeout); }
           if (finishIfCancelled()) return;
@@ -8086,13 +8445,17 @@ function AppInner() {
           if (judgeResp.ok && judgeData) {
             judgeResult = judgeData;
             if (judgeData.verdict === 'pass' || auditPass === 1) break;
+            const proposedCorrections = Array.isArray(judgeData.corrections) ? judgeData.corrections : [];
+            const unsupportedCorrections = proposedCorrections.filter((action) => !ATLAS_JUDGE_SAFE_CORRECTION_INTENTS.has(action?.intent));
+            if (unsupportedCorrections.length) {
+              throw new Error('The verifier identified a mismatch but its proposed repair is not available for automatic execution.');
+            }
             const corrections = normalizeAtlasModelPlan(
-              (Array.isArray(judgeData.corrections) ? judgeData.corrections : [])
-                .filter((action) => ATLAS_JUDGE_SAFE_CORRECTION_INTENTS.has(action?.intent))
-                .slice(0, 6),
+              proposedCorrections.slice(0, 6),
               observedContext.visibleMapLayers,
             );
             if (!corrections.length) break;
+            pushReply('The check found a mismatch. Applying a correction and checking the map again.');
             auditedActions = corrections;
             for (const correction of corrections) {
               const handled = await dispatchMapAgentIntent(
@@ -8109,10 +8472,13 @@ function AppInner() {
       } catch (judgeError) {
         if (finishIfCancelled()) return;
         console.error('Map-agent judge failed:', judgeError);
-        judgeResult = {
-          verdict: 'unverified',
-          summary: `Verification could not complete: ${judgeError.message}`,
-        };
+        const observed = mapAgentObservedContextRef.current || buildMapContext();
+        const controlsMatch = llmPlan.length === 1
+          && (checkAtlasInfrastructureActionState(llmPlan[0], mapContext, observed) === true
+            || checkAtlasElectricityActionState(llmPlan[0], mapContext, observed) === true);
+        judgeResult = controlsMatch
+          ? { verdict: 'local_pass', summary: 'Country, network and layer controls match the requested state; independent AI verification was unavailable.' }
+          : { verdict: 'unverified', summary: `Verification could not complete: ${judgeError.message}` };
       }
 
       if (finishIfCancelled()) return;
@@ -8120,13 +8486,15 @@ function AppInner() {
       let verificationText = '';
       if (judgeResult?.verdict === 'pass') {
         verificationText = `Verified — ${judgeResult.summary || 'the observed Atlas state matches your request.'}`;
+      } else if (judgeResult?.verdict === 'local_pass') {
+        verificationText = `Controls checked — ${judgeResult.summary}`;
       } else if (judgeResult?.verdict === 'repair') {
         verificationText = `Not verified — ${judgeResult.summary || 'a mismatch remains after checking the map.'}`;
       } else {
         verificationText = judgeResult?.summary || 'The changes were applied, but the verification pass was unavailable.';
       }
-      if (planError && !resultText) {
-        pushReply(`I could not complete the requested plan. ${verificationText}`);
+      if (planError) {
+        pushReply(`${resultText} Not verified — the requested change could not be completed.`);
       } else {
         pushReply([resultText, verificationText].filter(Boolean).join(' '));
       }
@@ -8148,6 +8516,7 @@ function AppInner() {
     buildConversationHistory,
     dispatchMapAgentIntent,
     aiMapControlEnabled,
+    presentationScene.capture,
   ]);
 
   const runGeographyDrilldown = useCallback(async () => {
@@ -8177,6 +8546,14 @@ function AppInner() {
     onOpen: openMapAssistant,
     transcriptionContext: atlasTranscriptionContext,
   });
+
+  // Outside presentation mode the embedded workspace uses Nohm's own Emil
+  // dock as its sole launcher. Do not leave an Atlas microphone running after
+  // switching surfaces or covering its controls with another panel.
+  useEffect(() => {
+    if (ATLAS_IS_EMBEDDED && (!mapAgentOpen || atlasAssetPopupOpen) && !presentationMode
+      && (emilVoice.active || emilVoice.speaking)) emilVoice.stop();
+  }, [mapAgentOpen, atlasAssetPopupOpen, presentationMode, emilVoice.active, emilVoice.speaking, emilVoice.stop]);
 
   useEffect(() => {
     if (!mapAgentOpen || atlasAssetPopupOpen || !mapAgentFocusRequestedRef.current) return;
@@ -10891,6 +11268,7 @@ function AppInner() {
   } = useOverlayCountryRecords({
     enabled: atlasOverlayMode,
     countries: atlasOverlayCountryCodes,
+    countriesByCarrier: atlasOverlayCountriesByCarrier,
     carriers: atlasOverlayCarriers,
     sources: {
       electricity: { facilities: pypsaFacilitiesWithRegionDataSource, connections: pypsaConnections },
@@ -10908,6 +11286,8 @@ function AppInner() {
         .filter((facility) => {
           const domain = classifyAtlasMapDomain(facility);
           if (atlasDomainVisibility[domain] === false) return false;
+          if (atlasOverlayCarrierFilters[carrier]?.domains?.length
+            && !atlasOverlayCarrierFilters[carrier].domains.includes(domain)) return false;
           const legacyKey = facility.carrier_key || facility.type;
           return !hiddenCarriers.has(atlasCarrierFilterKey(facility)) && !hiddenCarriers.has(legacyKey);
         })
@@ -10917,6 +11297,7 @@ function AppInner() {
     atlasOverlayMode,
     atlasOverlaySelectedRecords,
     atlasDomainVisibility,
+    atlasOverlayCarrierFilters,
     hiddenCarriers,
   ]);
 
@@ -10924,11 +11305,14 @@ function AppInner() {
     if (!atlasOverlayMode) return {};
     return atlasOverlaySelectedConnections.reduce((groups, connection) => {
       const domain = connection.atlas_domain || 'Grid';
+      const carrier = connection.atlas_network_carrier;
+      if (atlasOverlayCarrierFilters[carrier]?.domains?.length
+        && !atlasOverlayCarrierFilters[carrier].domains.includes(domain)) return groups;
       if (!groups[domain]) groups[domain] = [];
       groups[domain].push(connection);
       return groups;
     }, {});
-  }, [atlasOverlayMode, atlasOverlaySelectedConnections]);
+  }, [atlasOverlayMode, atlasOverlaySelectedConnections, atlasOverlayCarrierFilters]);
   const atlasOverlayVisibleConnectionDomainKey = Object.keys(atlasOverlayConnectionsByDomain)
     .filter((domain) => atlasDomainVisibility[domain] !== false)
     .sort()
@@ -10950,17 +11334,19 @@ function AppInner() {
             const domain = classifyAtlasMapDomain(facility);
             const legacyKey = facility.carrier_key || facility.type;
             return atlasDomainVisibility[domain] !== false
+              && (!atlasOverlayCarrierFilters[carrier]?.domains?.length || atlasOverlayCarrierFilters[carrier].domains.includes(domain))
               && !hiddenCarriers.has(atlasCarrierFilterKey(facility))
               && !hiddenCarriers.has(legacyKey);
           }).length,
           connections: records.connections.filter((connection) => (
             atlasDomainVisibility[connection.atlas_domain || 'Grid'] !== false
+            && (!atlasOverlayCarrierFilters[carrier]?.domains?.length || atlasOverlayCarrierFilters[carrier].domains.includes(connection.atlas_domain || 'Grid'))
           )).length,
         },
       };
     },
     {},
-  ), [atlasOverlayRecordsByCarrier, atlasDomainVisibility, hiddenCarriers]);
+  ), [atlasOverlayRecordsByCarrier, atlasDomainVisibility, atlasOverlayCarrierFilters, hiddenCarriers]);
 
   const visibleMapFacilities = useMemo(() => {
     // PyPSA engine: facilities come from PyPSA progress JSON, not PLEXOS
@@ -11011,24 +11397,6 @@ function AppInner() {
     hiddenCarriers, facilitiesData, selectedCountry, selectedCapacityType,
     connectionClassGroupFilter, connectionClassFilter, connectionCategoryFilter,
     connectionObjectFilter, connectionPropertyFilter, connections]);
-  const resultDecoratedMapFacilities = useMemo(() => {
-    const scene = modelResultStatus.scene;
-    if (!scene || nohmWorkspaceContext?.mode !== 'model') return visibleMapFacilities;
-    return mapSharedFacilityGroups(
-      visibleMapFacilities,
-      facility => decorateModelResultRecord(facility, scene),
-    );
-  }, [modelResultStatus.scene, nohmWorkspaceContext?.mode, visibleMapFacilities]);
-  const distillationDecoratedMapFacilities = useMemo(() => {
-    const preview = distillationPreviewStatus.preview;
-    if (!preview || nohmWorkspaceContext?.mode !== 'model') return resultDecoratedMapFacilities;
-    return mapSharedFacilityGroups(
-      resultDecoratedMapFacilities,
-      facility => decorateDistillationRecord(facility, preview, showDistillationContext),
-    );
-  }, [distillationPreviewStatus.preview, nohmWorkspaceContext?.mode, resultDecoratedMapFacilities, showDistillationContext]);
-  const getFilteredFacilities = useCallback(() => visibleMapFacilities, [visibleMapFacilities]);
-
   // Human-readable connection title
   const getConnectionLabel = (conn) => {
     const type = (conn.collection || conn.type || '').toString();
@@ -11093,24 +11461,47 @@ function AppInner() {
   }, [engine, atlasOverlayMode, atlasOverlayConnectionsData, atlasNetworkCarrier,
     activeVisibleConnectionDomains, gasConnections, waterConnections, liquidsConnections,
     logisticsConnections, pypsaConnections, visibleMapFacilities, editableNodes, connections]);
+  const projectedMixedRegionMap = useMemo(() => projectMixedCountryRegions(
+    visibleMapFacilities,
+    visibleMapConnections,
+    atlasNetworkCarrier === 'electricity' ? mixedGranularityPlan?.regions : [],
+    pypsaFacilitiesWithRegionDataSource,
+  ), [visibleMapFacilities, visibleMapConnections, atlasNetworkCarrier, mixedGranularityPlan, pypsaFacilitiesWithRegionDataSource]);
+  const resultDecoratedMapFacilities = useMemo(() => {
+    const scene = modelResultStatus.scene;
+    if (!scene || nohmWorkspaceContext?.mode !== 'model') return projectedMixedRegionMap.facilities;
+    return mapSharedFacilityGroups(
+      [...new Map([...projectedMixedRegionMap.facilities, ...(scene.spatial_nodes || [])].map(record => [record.id, record])).values()],
+      facility => decorateModelResultRecord(facility, scene, atlasTheme),
+    );
+  }, [modelResultStatus.scene, nohmWorkspaceContext?.mode, projectedMixedRegionMap, atlasTheme]);
+  const distillationDecoratedMapFacilities = useMemo(() => {
+    const preview = distillationPreviewStatus.preview;
+    if (!preview || nohmWorkspaceContext?.mode !== 'model') return resultDecoratedMapFacilities;
+    return mapSharedFacilityGroups(
+      resultDecoratedMapFacilities,
+      facility => decorateDistillationRecord(facility, preview, showDistillationContext),
+    );
+  }, [distillationPreviewStatus.preview, nohmWorkspaceContext?.mode, resultDecoratedMapFacilities, showDistillationContext]);
+  const getFilteredFacilities = useCallback(() => projectedMixedRegionMap.facilities, [projectedMixedRegionMap]);
   const getVisibleConnections = useCallback(() => visibleMapConnections, [visibleMapConnections]);
   const mapPerformanceDecision = useMemo(() => resolveMapPerformanceMode({
     preference: performancePreference,
-    facilityCount: visibleMapFacilities.length,
-    connectionCount: visibleMapConnections.length,
+    facilityCount: projectedMixedRegionMap.facilities.length,
+    connectionCount: projectedMixedRegionMap.connections.length,
     navigatorLike: typeof navigator !== 'undefined' ? navigator : undefined,
     matchMedia: typeof window !== 'undefined' ? window.matchMedia?.bind(window) : undefined,
-  }), [performancePreference, visibleMapFacilities.length, visibleMapConnections.length]);
+  }), [performancePreference, projectedMixedRegionMap.facilities.length, projectedMixedRegionMap.connections.length]);
   const performanceMode = mapPerformanceDecision.enabled;
   const renderedMapConnections = useMemo(
-    () => enrichConnectionsForMetrics(visibleMapConnections),
-    [enrichConnectionsForMetrics, visibleMapConnections],
+    () => enrichConnectionsForMetrics(projectedMixedRegionMap.connections),
+    [enrichConnectionsForMetrics, projectedMixedRegionMap.connections],
   );
   const resultDecoratedMapConnections = useMemo(() => {
     const scene = modelResultStatus.scene;
     if (!scene || nohmWorkspaceContext?.mode !== 'model') return renderedMapConnections;
-    return renderedMapConnections.map(connection => decorateModelResultRecord(connection, scene));
-  }, [modelResultStatus.scene, nohmWorkspaceContext?.mode, renderedMapConnections]);
+    return modelResultConnections(renderedMapConnections, scene, atlasTheme);
+  }, [modelResultStatus.scene, nohmWorkspaceContext?.mode, renderedMapConnections, atlasTheme]);
   const distillationDecoratedMapConnections = useMemo(() => {
     const preview = distillationPreviewStatus.preview;
     if (!preview || nohmWorkspaceContext?.mode !== 'model') return resultDecoratedMapConnections;
@@ -11622,20 +12013,20 @@ function AppInner() {
           : atlasOverlayMode
             ? atlasOverlayCountrySummary
             : atlasNetworkCarrier === 'gas'
-              ? (gasCountryFilter || 'All Europe')
+              ? (gasCountryFilter ? normalizeOverlayCountryCodes(gasCountryFilter).map(countryCodeToName).join(' + ') : 'All Europe')
               : atlasNetworkCarrier === 'water'
-                ? (waterCountryFilter || 'All Europe')
+                ? (waterCountryFilter ? normalizeOverlayCountryCodes(waterCountryFilter).map(countryCodeToName).join(' + ') : 'All Europe')
                 : atlasNetworkCarrier === 'liquids'
-                  ? (liquidsCountryFilter || 'All Europe')
+                  ? (liquidsCountryFilter ? normalizeOverlayCountryCodes(liquidsCountryFilter).map(countryCodeToName).join(' + ') : 'All Europe')
                   : atlasNetworkCarrier === 'logistics'
-                    ? (logisticsCountryFilter || 'All Europe')
+                    ? (logisticsCountryFilter ? normalizeOverlayCountryCodes(logisticsCountryFilter).map(countryCodeToName).join(' + ') : 'All Europe')
                     : loadedCountrySummary;
     const resolutionValue = modelSceneReady
-      ? modelGeographyResolution === 'country'
-        ? `${modelMixedResolutionStatus.preview?.meta?.preview?.counts?.projectedNodes || modelSceneStatus.meta.countries.length} country nodes · visual aggregation`
+      ? ['country', 'bidding_zone', 'regional'].includes(modelGeographyResolution)
+        ? `${modelMixedResolutionStatus.preview?.meta?.preview?.counts?.projectedNodes || modelSceneStatus.meta.countries.length} ${modelGeographyResolution.replace('_', ' ')} nodes · visual aggregation`
         : modelGeographyResolution === 'mixed'
           ? `${modelMixedResolutionStatus.preview?.meta?.preview?.counts?.projectedNodes || modelSceneStatus.meta.nodeCount} mixed-resolution nodes`
-          : `${modelSceneStatus.meta.nodeCount} bidding-zone nodes · ${modelSceneStatus.meta.linkCount} links`
+          : `${modelSceneStatus.meta.nodeCount} model nodes · ${modelSceneStatus.meta.linkCount} links`
       : nohmWorkspaceContext?.mode === 'model' && modelSceneStatus.state === 'error'
         ? modelSceneStatus.error
         : atlasOverlayMode
@@ -11646,8 +12037,10 @@ function AppInner() {
               ? 'Mapped + reported topology'
               : atlasNetworkCarrier === 'liquids'
                 ? 'Mapped source topology'
-                : atlasNetworkCarrier === 'logistics'
+              : atlasNetworkCarrier === 'logistics'
                   ? 'Ports + air-freight assets'
+                  : currentAtlasResolutionKey === 'mixed'
+                    ? (mixedGranularityPlan ? 'Mixed TSO' : 'Mixed country resolution')
                   : selectedCachedNetworkLevel?.isFull || selectedCachedNetworkLevel?.isGeographic
                     ? selectedCachedNetworkLevel.label
                     : selectedCachedNetworkLevel
@@ -11718,7 +12111,8 @@ function AppInner() {
     logisticsCountryFilter, modelSceneStatus, nohmWorkspaceContext?.mode,
     modelGeographyResolution, modelMixedResolutionStatus.preview,
     pypsaHasGenerationMixData, pypsaSettings.solver_method,
-    regionalClusterOverlay, runMode, selectedCachedNetworkLevel, showGenerationMix, waterCountryFilter,
+    regionalClusterOverlay, runMode, currentAtlasResolutionKey, mixedGranularityPlan,
+    selectedCachedNetworkLevel, showGenerationMix, waterCountryFilter,
     nohmRunState, nohmWorkspaceContext?.version,
   ]);
 
@@ -15210,6 +15604,7 @@ function AppInner() {
                           <select
                             value={atlasNetworkCarrier}
                             onChange={(event) => setAtlasNetworkCarrier(event.target.value)}
+                            disabled={Boolean(boundModelGeography)}
                             className="atlas-select max-w-[150px] rounded-lg border border-tj-gold/30 bg-[#081523] px-2.5 py-2 text-[11px] font-semibold text-white focus:outline-none focus:border-tj-gold/60"
                             aria-label="Network carrier"
                             title={atlasOverlayMode ? 'Workspace to open when overlay is turned off. Choose visible carriers in the overlay legend.' : 'Choose network workspace'}
@@ -15239,6 +15634,7 @@ function AppInner() {
                           }}
                           aria-pressed={atlasOverlayMode}
                           aria-label="Toggle multi-network overlay"
+                          disabled={Boolean(boundModelGeography)}
                           data-atlas-overlay-carriers={atlasOverlayMode ? atlasOverlayCarriers.join(',') : ''}
                           title={atlasOverlayMode ? 'Return to single-network view' : 'Overlay multiple network carriers'}
                           className={`h-9 rounded-lg border px-2.5 flex items-center gap-1.5 text-[11px] font-semibold transition ${atlasOverlayMode ? 'border-tj-gold/55 bg-tj-gold/15 text-tj-gold' : 'border-white/10 bg-white/[0.035] text-tj-slate hover:border-tj-gold/35 hover:text-white'}`}
@@ -15277,8 +15673,8 @@ function AppInner() {
                             const scopeHasRecords = Boolean(scoped?.facilities.length || scoped?.connections.length);
                             const status = overlayCarrierStatus({ selected, inventory, visibleInventory, carrier, scopeHasRecords });
                             return (
+                              <div key={carrier}>
                               <button
-                                key={carrier}
                                 type="button"
                                 onClick={() => handleAtlasOverlayCarrierToggle(carrier)}
                                 aria-pressed={selected}
@@ -15296,6 +15692,39 @@ function AppInner() {
                                 </span>
                                 <span className="mt-0.5 block pl-[38px] text-[8px] leading-3 text-tj-slate">{status}</span>
                               </button>
+                              {selected && carrier !== 'electricity' && (
+                                <div className="mt-1 mb-1 ml-2 flex items-center gap-1.5 text-[9px] text-tj-slate">
+                                  <label htmlFor={`overlay-country-${carrier}`} className="shrink-0">Area</label>
+                                  <select
+                                    id={`overlay-country-${carrier}`}
+                                    aria-label={`${meta.label} overlay country`}
+                                    value={atlasOverlayCarrierFilters[carrier]?.countries?.join(',') || ''}
+                                    onChange={(event) => updateAtlasOverlayCarrierFilter(carrier, {
+                                      countries: event.target.value ? [event.target.value] : null,
+                                    })}
+                                    className="min-w-0 flex-1 rounded border border-white/20 bg-[#112438] px-1 py-1 text-[9px] text-white"
+                                  >
+                                    <option value="">Follow power countries</option>
+                                    {atlasOverlayCarrierFilters[carrier]?.countries?.length > 1 && (
+                                      <option value={atlasOverlayCarrierFilters[carrier].countries.join(',')}>
+                                        {atlasOverlayCarrierFilters[carrier].countries.map(countryCodeToName).join(' + ')}
+                                      </option>
+                                    )}
+                                    {normalizeOverlayCountryCodes(({
+                                      gas: gasStatus, water: waterStatus, liquids: liquidsStatus, logistics: logisticsStatus,
+                                    })[carrier]?.countries || availablePypsaCountryOptions.map((item) => item.countryCode))
+                                      .map((code) => <option key={code} value={code}>{countryCodeToName(code)}</option>)}
+                                  </select>
+                                  <label className="flex shrink-0 items-center gap-1 text-white" title="Show only this carrier's Grid assets and links">
+                                    <input type="checkbox" aria-label={`${meta.label} Grid only`}
+                                      checked={atlasOverlayCarrierFilters[carrier]?.domains?.join(',') === 'Grid'}
+                                      onChange={(event) => updateAtlasOverlayCarrierFilter(carrier, {
+                                        domains: event.target.checked ? ['Grid'] : null,
+                                      })} /> Grid only
+                                  </label>
+                                </div>
+                              )}
+                              </div>
                             );
                           })}
                         </div>
@@ -15305,7 +15734,7 @@ function AppInner() {
                             <button type="button" aria-label="Dismiss overlay notice" onClick={() => setAtlasOverlayNotice(null)} className="min-h-[32px] min-w-[32px] rounded text-amber-100 hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-200">×</button>
                           </div>
                         )}
-                        <p className="px-1 pt-1.5 text-[8px] leading-3 text-tj-slate">Country scope: <span className="text-white">{atlasOverlayCountrySummary}</span>. All drawable links in view are retained. Overview node markers may be thinned; zoom in for detail.</p>
+                        <p className="px-1 pt-1.5 text-[8px] leading-3 text-tj-slate">Power countries: <span className="text-white">{atlasOverlayCountrySummary}</span>. Other carriers may have their own Area and Grid-only scope.</p>
                       </div>
                     )}
 
@@ -15406,7 +15835,7 @@ function AppInner() {
                       style={atlasAssetPopupOpen ? { display: 'none' } : undefined}
                       aria-hidden={mapControlsCollapsed}
                       inert={mapControlsCollapsed ? '' : undefined}
-                      className={`absolute top-[76px] left-3 z-[510] w-[320px] max-w-[calc(100vw-1.5rem)] transition-all duration-200 ${mapControlsCollapsed ? '-translate-x-[110%] opacity-0 pointer-events-none' : 'translate-x-0 opacity-100'}`}
+                      className={`absolute top-[76px] left-3 z-[510] w-[384px] max-w-[calc(100vw-1.5rem)] transition-all duration-200 ${mapControlsCollapsed ? '-translate-x-[110%] opacity-0 pointer-events-none' : 'translate-x-0 opacity-100'}`}
                     >
                       <div className="atlas-domain-panel rounded-xl overflow-hidden max-h-[calc(100vh-7.25rem)] flex flex-col">
                         <div className="atlas-domain-panel__header shrink-0 px-3 py-2.5 border-b border-white/10 flex items-center justify-between">
@@ -15483,7 +15912,7 @@ function AppInner() {
                           title="Geography Domain"
                           summary={boundModelGeography
                             ? `${boundModelGeography.projectName} · ${boundModelGeography.nativeGeography}`
-                            : `${loadedCountrySummary} · ${selectedCachedNetworkLevel?.isFull || selectedCachedNetworkLevel?.isGeographic ? selectedCachedNetworkLevel.label : selectedCachedNetworkLevel ? `${selectedCachedNetworkLevel.label} nodes` : 'No cache'}`}
+                            : `${loadedCountrySummary} · ${currentAtlasResolutionKey === 'mixed' ? 'Mixed country resolution' : selectedCachedNetworkLevel?.isFull || selectedCachedNetworkLevel?.isGeographic ? selectedCachedNetworkLevel.label : selectedCachedNetworkLevel ? `${selectedCachedNetworkLevel.label} nodes` : 'No cache'}`}
                           open={pypsaSectionOpen.geography}
                           onToggle={() => togglePypsaDomainSection('geography')}
                           compact={compactAtlasLayout && !ATLAS_IS_EMBEDDED}
@@ -15492,7 +15921,13 @@ function AppInner() {
                             {boundModelGeography ? (
                               <>
                               <div aria-label="Loaded model geography" className="rounded-xl border border-cyan-300/20 bg-cyan-300/[0.06] p-3">
-                                <span className="block text-[10px] uppercase tracking-wider text-cyan-100/70">Loaded model</span>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="block text-[10px] uppercase tracking-wider text-tj-slate">Loaded model</span>
+                                  <ModelControlHelp label="Loaded model">
+                                    <p>This project opens at its native bidding-zone topology. Countries are scope attributes inside the project, not separately loadable networks.</p>
+                                    <p>Expanding a country to a finer topology requires the future governed split workflow; Atlas will not substitute an unrelated full-granularity cache.</p>
+                                  </ModelControlHelp>
+                                </div>
                                 <strong className="mt-1 block text-sm text-white">{boundModelGeography.projectName}</strong>
                                 <span className="mt-0.5 block text-[10px] text-tj-slate">
                                   {[boundModelGeography.modelVersion, boundModelGeography.nativeGeography].filter(Boolean).join(' · ')}
@@ -15505,33 +15940,11 @@ function AppInner() {
                                     <b className="block text-white">{boundModelGeography.sourceCountries.length}</b> source countries
                                   </span>
                                 </div>
-                                <p className="mt-2 text-[10px] leading-4 text-tj-slate">
-                                  This project opens at its native bidding-zone topology. Countries are scope attributes inside the project, not separately loadable networks.
-                                </p>
-                                <p className="mt-1 text-[10px] leading-4 text-amber-100/80">
-                                  Expanding a country to a finer topology requires the future governed split workflow; Atlas will not substitute an unrelated full-granularity cache.
-                                </p>
                               </div>
-                              <label className="block rounded-xl border border-white/10 bg-black/20 p-3">
-                                <span className="mb-1 block text-[9px] uppercase tracking-wider text-tj-slate">Network geography</span>
-                                <select
-                                  value={modelGeographyResolution}
-                                  onChange={(event) => applyBoundModelResolution(event.target.value)}
-                                  disabled={modelMixedResolutionStatus.state === 'loading' || distillationPreviewStatus.state === 'loading'}
-                                  className="w-full rounded-lg border border-white/10 bg-[#081523] px-2 py-2 text-[10px] text-white disabled:opacity-50"
-                                  aria-label="Model network geography"
-                                >
-                                  <option value="native">{boundModelGeography.nativeGeography} (native)</option>
-                                  <option value="country">Country aggregation</option>
-                                  {modelGeographyResolution === 'mixed' && <option value="mixed" disabled>Mixed TSO view</option>}
-                                </select>
-                                <span className="mt-1.5 block text-[9px] leading-3.5 text-tj-slate">
-                                  Atlas can aggregate the existing bidding zones to countries. It cannot split them to a finer topology yet.
-                                </span>
-                                {modelMixedResolutionStatus.state === 'error' && (
-                                  <span role="alert" className="mt-1.5 block text-[9px] leading-3.5 text-red-200">{modelMixedResolutionStatus.error}</span>
-                                )}
-                              </label>
+                              <ModelAggregationControls catalog={modelSceneStatus.meta?.aggregationCatalog}
+                                countries={modelSceneStatus.meta?.countries || []} value={modelGeographyResolution}
+                                status={modelMixedResolutionStatus} nativeLabel={boundModelGeography.nativeGeography}
+                                onApply={applyBoundModelResolution} />
                               <ModelCountryScopeControls
                                 availableCountries={boundModelGeography.sourceCountries}
                                 selectedCountries={distillationCountries}
@@ -15545,7 +15958,7 @@ function AppInner() {
                                 <ModelMixedResolutionControls
                                   countries={boundModelGeography.sourceCountries}
                                   nativeLabel={boundModelGeography.nativeGeography}
-                                  status={modelMixedResolutionStatus}
+                                  status={modelMixedResolutionStatus.preview?.aggregation ? { state: 'idle', preview: null, error: '' } : modelMixedResolutionStatus}
                                   onApply={applyModelMixedResolutionPreview}
                                   onClear={clearModelMixedResolutionPreview}
                                   countryName={countryCodeToName}
@@ -15555,7 +15968,7 @@ function AppInner() {
                             ) : (
                             <>
                             <div className="block">
-                              <span className="block mb-1 text-[10px] uppercase tracking-wider text-tj-slate">{atlasOverlayMode ? 'Countries · all overlay carriers' : 'Countries'}</span>
+                              <span className="block mb-1 text-[10px] uppercase tracking-wider text-tj-slate">{atlasOverlayMode ? 'Power countries' : 'Countries'}</span>
                               <div className="flex items-stretch gap-2">
                                 <div className="relative min-w-0 flex-1">
                                   <MapPin className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-tj-slate" />
@@ -15631,7 +16044,7 @@ function AppInner() {
                               </div>
                             )}
                             <LoadedCountryList networks={loadedPypsaNetworks} activeCountryCode={activePypsaCountryCode}
-                              showResolution={Boolean(mixedGranularityPlan)}
+                              showResolution={currentAtlasResolutionKey === 'mixed'}
                               disabled={pypsaLoading || pypsaResolutionSwitching}
                               onActivate={activateCountryNetwork} onRemove={removeCountryNetwork}
                             />
@@ -15679,7 +16092,9 @@ function AppInner() {
                                 <span className="shrink-0 rounded-lg border border-tj-gold/30 bg-tj-gold/10 px-2 py-1 text-sm font-semibold text-tj-gold">
                                   {(pypsaResolutionSwitching || networkResolutionSelectionPending) && !pypsaDomainLoading
                                     ? `Switching to ${displayedCachedNetworkLevel?.label || 'network'}…`
-                                    : mixedGranularityPlan ? 'Mixed TSO' : selectedCachedNetworkLevel?.label || 'N/A'}
+                                    : currentAtlasResolutionKey === 'mixed'
+                                      ? (mixedGranularityPlan ? 'Mixed TSO' : 'Mixed resolution')
+                                      : selectedCachedNetworkLevel?.label || 'N/A'}
                                 </span>
                               </div>
                               {cachedNetworkLevels.length > 1 ? (
@@ -15694,7 +16109,7 @@ function AppInner() {
                                     onChange={(event) => previewCachedNetworkLevel(Number(event.target.value))}
                                     className="mt-3 w-full accent-tj-gold disabled:opacity-50"
                                     aria-label="Network resolution"
-                                    aria-valuetext={mixedGranularityPlan ? 'Mixed TSO resolution' : displayedCachedNetworkLevel?.label || 'No network resolution selected'}
+                                    aria-valuetext={currentAtlasResolutionKey === 'mixed' ? 'Mixed country resolution' : displayedCachedNetworkLevel?.label || 'No network resolution selected'}
                                   />
                                   <div className="mt-1 flex gap-2 overflow-x-auto pb-1 scrollbar-hidden">
                                     {cachedNetworkLevels.map((level, index) => (
@@ -15704,7 +16119,7 @@ function AppInner() {
                                         onClick={() => commitCachedNetworkLevel(index)}
                                         disabled={pypsaLoading || pypsaResolutionSwitching}
                                         title={level.label}
-                                        className={`shrink-0 text-[9px] text-center ${!mixedGranularityPlan && index === displayedCachedNetworkIndex ? 'text-tj-gold font-semibold' : 'text-tj-slate hover:text-white'}`}
+                                        className={`shrink-0 text-[9px] text-center ${currentAtlasResolutionKey !== 'mixed' && index === displayedCachedNetworkIndex ? 'text-tj-gold font-semibold' : 'text-tj-slate hover:text-white'}`}
                                       >
                                         {level.isFullNodal ? 'Nodal' : level.label === 'Bidding zone' ? 'Bidding' : level.label}
                                       </button>
@@ -15722,6 +16137,8 @@ function AppInner() {
                                 activePlan={mixedGranularityPlan}
                                 busy={pypsaLoading || pypsaResolutionSwitching}
                                 onApply={applyMixedGranularityView}
+                                facilities={pypsaFacilitiesWithRegionDataSource}
+                                connections={pypsaConnections}
                               />
                             </div>
                             </>
@@ -15730,12 +16147,27 @@ function AppInner() {
                         </AtlasDomainSection>
                         )}
 
+                        {nohmWorkspaceContext?.mode === 'model' && atlasWorkspaceAreaIsVisible('geography', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
+                          <ModelWorkspaceSection title="Model database" summary="Objects · inputs · outputs" Icon={Layers}
+                            help={<p>Explore all model classes through their exact node memberships. Inspect native input records or map outputs from a result run bound to this model version.</p>}>
+                            <button type="button" disabled={!modelSceneStatus.meta?.version}
+                              className="atlas-primary-action w-full rounded-lg border px-3 py-2 text-[11px] font-semibold disabled:opacity-40"
+                              onClick={() => { setLolaFlowOpen(false); setLolaFlowFrame(null); setMapControlsCollapsed(true); setModelAssetsOpen(true); }}>
+                              Open model database
+                            </button>
+                          </ModelWorkspaceSection>
+                        )}
+
                         {nohmWorkspaceContext?.mode === 'model'
                           && atlasWorkspaceAreaIsVisible('geography', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
                           <ModelWorkspaceSection
                             title="Distil geography"
-                            summary="Preview a reconciled schema subset without mutation"
+                            summary="Preview a model subset"
                             Icon={Layers}
+                            help={<>
+                              <p>Preview a reconciled subset of the model's existing countries and canonical identities.</p>
+                              <p>This is non-executable: no suturing, datafiles, validation, run, publication, or new model version is created.</p>
+                            </>}
                           >
                             <ModelDistillationControls
                               availableCountries={modelSceneStatus.meta?.countries || []}
@@ -15755,8 +16187,9 @@ function AppInner() {
                           && atlasWorkspaceAreaIsVisible('geography', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
                           <ModelWorkspaceSection
                             title="Project workspaces"
-                            summary="Open linked evidence beside the live map"
+                            summary="Linked project pages"
                             Icon={PanelLeftOpen}
+                            help={<p>Open Explore Model, Demand, Climate, or Commodity beside the live Atlas map. These workspaces keep the active project context.</p>}
                           >
                             <ModelPortalControls
                               embedded={ATLAS_IS_EMBEDDED}
@@ -15770,10 +16203,15 @@ function AppInner() {
                           && ATLAS_IS_EMBEDDED
                           && atlasWorkspaceAreaIsVisible('filters', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
                           <>
+                            <ModelWorkspaceSection title="Compare" summary="Delta between two solutions" Icon={GitBranch}
+                              help={<p>Compare reported values with matching canonical identities, units and periods. Jev recommends the favourable change; you can override it.</p>}>
+                              <button type="button" className="atlas-primary-action w-full" disabled={!modelSceneStatus.meta?.version} onClick={openModelComparison}>Compare model results</button>
+                            </ModelWorkspaceSection>
                             <ModelWorkspaceSection
                               title="Results"
-                              summary="Map solved quantities by category and node or region"
+                              summary="Solved quantities"
                               Icon={BarChart3}
+                              help={<p>Choose a result category and node or region, then show its solved values on the Atlas map.</p>}
                             >
                               <ModelResultsControls
                                 catalogStatus={modelResultCatalogStatus}
@@ -15783,36 +16221,35 @@ function AppInner() {
                                 onSelectionChange={setModelResultSelection}
                                 onShow={showSelectedModelResult}
                                 onClear={clearModelResult}
+                                markerScale={modelResultMarkerScale}
+                                onMarkerScaleChange={setModelResultMarkerScale}
                               />
                             </ModelWorkspaceSection>
                             <ModelWorkspaceSection
                               title="Lola Flow"
-                              summary="Render solved transmission flow directly on Atlas"
+                              summary="Lines and gas pipelines"
                               Icon={GitBranch}
+                              help={<p>Explore reported directional flows, select connections on this map, and inspect their actual time series. Only native endpoint coordinates and compatible model runs are used.</p>}
                             >
                               <div className="space-y-2.5">
-                                <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] px-3 py-2 text-[10px] leading-4 text-tj-slate">
-                                  Uses the compatible labelled solution run and maps line-flow values onto the loaded topology. No external portal is opened.
-                                </div>
                                 <button
                                   type="button"
                                   onClick={showLolaFlowOnMap}
-                                  disabled={modelResultCatalogStatus.state !== 'ready' || modelResultStatus.state === 'loading'}
+                                  disabled={!modelSceneStatus.meta?.version}
                                   className="atlas-primary-action w-full rounded-lg border border-tj-gold/40 bg-tj-gold px-3 py-2 text-[10px] font-semibold text-tj-navy-dark disabled:cursor-not-allowed disabled:opacity-40"
                                 >
-                                  {modelResultStatus.state === 'loading' ? 'Mapping flow…' : 'Map solved line flow'}
+                                  Open flow workspace
                                 </button>
                               </div>
                             </ModelWorkspaceSection>
                             <ModelWorkspaceSection
                               title="Cost-benefit analysis"
-                              summary="Native Atlas assessment workspace · planned"
+                              summary="Planned"
                               Icon={Scale}
                               badge="Later"
+                              help={<p>CBA will be implemented here as an Atlas-native section against governed model and result versions. It is intentionally not linked to a portal yet.</p>}
                             >
-                              <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.06] px-3 py-2 text-[10px] leading-4 text-tj-slate">
-                                CBA will be implemented here as an Atlas-native section against governed model and result versions. It is intentionally not linked to a portal yet.
-                              </div>
+                              <span className="text-[10px] text-tj-slate">Not available yet.</span>
                             </ModelWorkspaceSection>
                           </>
                         )}
@@ -15822,12 +16259,10 @@ function AppInner() {
                           && atlasWorkspaceAreaIsVisible('operations', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
                           <ModelWorkspaceSection
                             title="Model operations"
-                            summary="Use Nohm's validated tools beside the live model"
+                            summary="Runs and tools"
                             Icon={Cog}
+                            help={<p>Atlas supplies project and model-version context. Operations, confirmations and audit history remain governed by Nohm.</p>}
                           >
-                            <div className="mb-2.5 rounded-lg border border-emerald-300/20 bg-emerald-300/[0.06] px-3 py-2 text-[10px] leading-4 text-tj-slate">
-                              Atlas supplies project and model-version context. Operations, confirmations and audit history remain governed by Nohm.
-                            </div>
                             <ModelRunStatus
                               runState={nohmRunState}
                               onOpen={() => requestNohmAtlasPortal('model-runs')}
@@ -15915,7 +16350,7 @@ function AppInner() {
                         </AtlasDomainSection>
                         )}
 
-                        {atlasWorkspaceAreaIsVisible('filters', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
+                        {nohmWorkspaceContext?.mode !== 'model' && atlasWorkspaceAreaIsVisible('filters', activeWorkspaceArea, ATLAS_IS_EMBEDDED) && (
                         <AtlasDomainSection
                           icon={SlidersHorizontal}
                           title={atlasOverlayMode ? 'Power carrier filters' : 'Atlas Domains'}
@@ -16322,6 +16757,19 @@ function AppInner() {
                 <ModelBuilderDraftPreview preview={builderDraftPreview} sceneStatus={builderDraftSceneStatus} />
                 <MapWorkspaceBoundary resetKey={mapRecoveryKey}>
                 <EnhancedLeafletMapWithVoice
+                  lolaFlowFrame={aggregatedLolaFlowFrame}
+                  onOpenResultComparison={nohmWorkspaceContext?.mode === 'model' ? openModelComparison : undefined}
+                  modelAssetsFrame={aggregatedModelAssetsFrame}
+                  onModelAssetSelect={setModelAssetSelectedId}
+                  onLolaFlowSelect={selectAggregatedFlowLine}
+                  presentationMode={presentationMode}
+                  registerAgentController={registerExperienceAgent}
+                  presentationScope={`${boundModelGeography?.projectId || 'studio'}:${boundModelGeography?.modelVersion || ''}`}
+                  onPresentationMode={handlePresentationMode}
+                  captureScene={presentationScene.capture}
+                  restoreScene={presentationScene.restore}
+                  agentActivity={presentationAction}
+                  agentBusy={mapAgentBusy}
                   atlasTheme={atlasTheme}
                   controlsHidden={compactAtlasLayout && (!mapControlsCollapsed || atlasAssetPopupOpen)}
                   panelsHidden={atlasAssetPopupOpen}
@@ -16330,12 +16778,12 @@ function AppInner() {
                   pypsaLoading={atlasOverlayMode ? Boolean(pypsaLoading || gasDomainLoading || waterDomainLoading || liquidsDomainLoading || logisticsDomainLoading) : atlasNetworkCarrier === 'gas' ? Boolean(gasDomainLoading) : atlasNetworkCarrier === 'water' ? Boolean(waterDomainLoading) : atlasNetworkCarrier === 'liquids' ? Boolean(liquidsDomainLoading) : atlasNetworkCarrier === 'logistics' ? Boolean(logisticsDomainLoading) : pypsaLoading}
                   geoJsonOverlays={(atlasOverlayMode ? atlasOverlayCarriers.includes('electricity') : atlasNetworkCarrier === 'electricity') ? pypsaGeoJsonOverlays : EMPTY_GEOGRAPHIC_OVERLAYS}
                   regionalClusterOverlay={regionalClusterOverlay}
-                  activeCountryCode={atlasOverlayMode ? (atlasOverlayCountryCodes[0] || null) : atlasNetworkCarrier === 'gas' ? gasCountryFilter : atlasNetworkCarrier === 'water' ? waterCountryFilter : atlasNetworkCarrier === 'liquids' ? liquidsCountryFilter : atlasNetworkCarrier === 'logistics' ? logisticsCountryFilter : selectedPyPSACountryCode}
+                  activeCountryCode={atlasOverlayMode ? (atlasOverlayCountryCodes[0] || null) : atlasNetworkCarrier === 'gas' ? (normalizeOverlayCountryCodes(gasCountryFilter).length === 1 ? gasCountryFilter : null) : atlasNetworkCarrier === 'water' ? (normalizeOverlayCountryCodes(waterCountryFilter).length === 1 ? waterCountryFilter : null) : atlasNetworkCarrier === 'liquids' ? (normalizeOverlayCountryCodes(liquidsCountryFilter).length === 1 ? liquidsCountryFilter : null) : atlasNetworkCarrier === 'logistics' ? (normalizeOverlayCountryCodes(logisticsCountryFilter).length === 1 ? logisticsCountryFilter : null) : selectedPyPSACountryCode}
                   activeCountryCodes={atlasOverlayMode
                     ? (atlasOverlayCountryCodes.length
                       ? atlasOverlayCountryCodes
                       : normalizeOverlayCountryCodes([gasCountryFilter, waterCountryFilter, liquidsCountryFilter, logisticsCountryFilter]))
-                    : atlasNetworkCarrier === 'gas' ? (gasCountryFilter ? [gasCountryFilter] : (gasStatus?.countries || [])) : atlasNetworkCarrier === 'water' ? (waterCountryFilter ? [waterCountryFilter] : (waterStatus?.countries || [])) : atlasNetworkCarrier === 'liquids' ? (liquidsCountryFilter ? [liquidsCountryFilter] : (liquidsStatus?.countries || [])) : atlasNetworkCarrier === 'logistics' ? (logisticsCountryFilter ? [logisticsCountryFilter] : (logisticsStatus?.countries || [])) : loadedPypsaCountryCodes}
+                    : atlasNetworkCarrier === 'gas' ? (gasCountryFilter ? normalizeOverlayCountryCodes(gasCountryFilter) : (gasStatus?.countries || [])) : atlasNetworkCarrier === 'water' ? (waterCountryFilter ? normalizeOverlayCountryCodes(waterCountryFilter) : (waterStatus?.countries || [])) : atlasNetworkCarrier === 'liquids' ? (liquidsCountryFilter ? normalizeOverlayCountryCodes(liquidsCountryFilter) : (liquidsStatus?.countries || [])) : atlasNetworkCarrier === 'logistics' ? (logisticsCountryFilter ? normalizeOverlayCountryCodes(logisticsCountryFilter) : (logisticsStatus?.countries || [])) : loadedPypsaCountryCodes}
                   focusLocation={emilFocusLocation}
                   viewportCommand={emilViewportCommand}
                   onViewportCommandApplied={handleViewportCommandApplied}
@@ -16361,6 +16809,7 @@ function AppInner() {
                   }}
                   onGridAccessChange={updateGridAccessOverlay}
                   facilities={distillationDecoratedMapFacilities}
+                  aggregatedRegions={atlasNetworkCarrier === 'electricity' ? mixedGranularityPlan?.regions || [] : []}
                   selectedNode={selectedNode}
                   onNodeSelect={setSelectedNode}
                   mapLoaded={mapLoaded}
@@ -16484,6 +16933,7 @@ function AppInner() {
                   linePropertiesByChildName={linePropertiesByChildName}
                   activeDataLayer={activeDataLayer}
                   showGenerationMix={!modelResultStatus.scene && !distillationPreviewStatus.preview && !atlasOverlayMode && atlasNetworkCarrier === 'electricity' && showGenerationMix && pypsaHasGenerationMixData}
+                  resultMarkerScale={modelResultMarkerScale}
                   mapViewMode={mapViewMode}
                   marketPrices={marketPrices}
                   generationMix={generationMix}
@@ -16502,7 +16952,24 @@ function AppInner() {
                   }}
                 />
                 </MapWorkspaceBoundary>
-                <ModelResultLegend scene={modelResultStatus.scene} onClear={clearModelResult} />
+                <ModelResultLegend theme={atlasTheme} scene={modelResultStatus.scene} onClear={clearModelResult}
+                  markerScale={modelResultMarkerScale} onMarkerScaleChange={setModelResultMarkerScale} />
+                {modelComparisonOpen && nohmWorkspaceContext?.mode === 'model' && <section className="atlas-comparison-workspace" aria-label="Compare model results">
+                  <header><h2>Compare model results</h2><button type="button" aria-label="Close result comparison" onClick={() => setModelComparisonOpen(false)}>×</button></header>
+                  <ModelComparisonControls catalogStatus={modelResultCatalogStatus} context={nohmWorkspaceContext}
+                    modelVersion={modelSceneStatus.meta?.version} selection={modelResultSelection}
+                    onScene={showModelComparison} onClear={clearModelResult} />
+                </section>}
+                {modelAssetsOpen && nohmWorkspaceContext?.mode === 'model' && modelSceneStatus.meta?.version && (
+                  <ModelAssetsWorkspace context={nohmWorkspaceContext} modelVersion={modelSceneStatus.meta.version}
+                    selectedId={modelAssetSelectedId} onSelect={setModelAssetSelectedId} onFrame={setModelAssetsFrame}
+                    onClose={() => { setModelAssetsOpen(false); setModelAssetsFrame(null); }} />
+                )}
+                {lolaFlowOpen && nohmWorkspaceContext?.mode === 'model' && modelSceneStatus.meta?.version && (
+                  <LolaFlowWorkspace context={nohmWorkspaceContext} modelVersion={modelSceneStatus.meta.version}
+                    selectedId={lolaFlowSelectedId} onSelect={setLolaFlowSelectedId} onFrame={setLolaFlowFrame}
+                    onClose={() => { setLolaFlowOpen(false); setLolaFlowFrame(null); }} />
+                )}
                 <ModelDistillationLegend preview={distillationPreviewStatus.preview} showContext={showDistillationContext} onClear={clearDistillationPreview} />
                 {/* Right-click context menu: single-action popover positioned at cursor. */}
                 {engine === 'PyPSA Engine' && !atlasOverlayMode && atlasNetworkCarrier === 'electricity' && selectedPyPSAFile && regionContextMenu && !regionPanelVisible && (
@@ -16744,68 +17211,68 @@ function AppInner() {
                   );
                 })()}
 
-                {/* Keep camera controls beside EMIL and Land/Access above it. */}
-                <div className={`absolute bottom-4 right-4 z-[700] ${mapAgentOpen && !atlasAssetPopupOpen ? 'sm:right-[70px]' : ''}`}>
+                {/* The embedded assistant follows Nohm's dock; standalone Atlas keeps its map-corner position. */}
+                <div className={ATLAS_IS_EMBEDDED
+                  ? 'atlas-assistant-dock atlas-assistant-dock--embedded absolute z-[720]'
+                  : `absolute bottom-4 right-4 z-[720] ${mapAgentOpen && !atlasAssetPopupOpen ? 'sm:right-[70px]' : ''}`}>
                   {mapAgentOpen ? (
-                    <section style={atlasAssetPopupOpen ? { display: 'none' } : undefined} aria-label="Map assistant" className="atlas-assistant-panel w-[370px] max-w-[88vw] h-[500px] bg-tj-navy-dark/92 backdrop-blur-md border border-white/10 rounded-2xl shadow-xl flex flex-col overflow-hidden">
-                      <div className="atlas-assistant-header shrink-0 px-4 py-3 border-b border-white/10 flex items-center justify-between">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <div className="text-sm font-semibold text-tj-gold">EMIL</div>
-                            {emilVoice.active && (
-                              <span className="relative flex h-2 w-2" aria-hidden="true">
-                                <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-tj-gold opacity-60" />
-                                <span className="relative inline-flex rounded-full h-2 w-2 bg-tj-gold" />
-                              </span>
-                            )}
-                          </div>
-                          <div
-                            className={`text-[11px] truncate ${emilVoice.error ? 'text-red-300' : emilVoice.active ? 'text-tj-gold' : 'text-tj-slate'}`}
-                            role={emilVoice.error ? 'alert' : 'status'}
-                            aria-live="polite"
-                          >
-                            {emilVoice.statusLabel}
-                          </div>
+                    <section style={atlasAssetPopupOpen ? { display: 'none' } : undefined} aria-label="Map assistant" className="atlas-assistant-panel w-[370px] max-w-[88vw] h-[500px] flex flex-col overflow-hidden">
+                      <header className="atlas-assistant-header shrink-0">
+                        <div className="atlas-assistant-identity">
+                          <span className="atlas-assistant-avatar" aria-hidden="true">
+                            {ATLAS_IS_EMBEDDED
+                              ? <img src={`/brand/readout/Nohm_readout_emil_${emilVoice.active ? 'listening' : 'idle'}_flat.svg`} alt="" />
+                              : <MessageCircle size={20} />}
+                          </span>
+                          <span className="atlas-assistant-name"><small>Ask</small><strong>Emil</strong></span>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="atlas-assistant-actions">
                           {emilVoice.active && (
                             <button type="button" onClick={emilVoice.stop}
                               aria-label="Stop live voice" title="Stop microphone and EMIL speech"
-                              className="h-9 w-9 shrink-0 rounded-lg border border-white/25 bg-white/5 text-white flex items-center justify-center">
+                              className="atlas-assistant-action">
                               <MicOff className="h-4 w-4" />
                             </button>
                           )}
-                          {emilVoice.speaking && (
-                            <button
-                              type="button"
-                              onClick={emilVoice.cancelSpeech}
-                              className="h-9 w-9 rounded-lg border border-red-300/30 bg-red-400/10 text-red-200 flex items-center justify-center"
-                              aria-label="Stop EMIL speaking"
-                              title="Stop EMIL speaking"
-                            >
-                              <VolumeX className="h-4 w-4" />
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => setMapAgentOpen(false)}
-                            className="h-9 px-2 text-xs text-tj-slate hover:text-white"
-                          >
-                            Close
+                          <button type="button" ref={mapAgentSettings.toggleRef}
+                            onClick={mapAgentSettings.toggle}
+                            aria-label="Voice and map settings" aria-expanded={mapAgentSettings.expanded}
+                            aria-controls={mapAgentSettings.panelId} title="Voice and map settings"
+                            className="atlas-assistant-action">
+                            <Settings className="h-4 w-4" />
+                          </button>
+                          <button type="button" onClick={emilVoice.cancelSpeech}
+                            disabled={!emilVoice.speaking}
+                            className="atlas-assistant-action"
+                            aria-label="Stop EMIL speaking" title="Stop EMIL speaking">
+                            <VolumeX className="h-4 w-4" />
+                          </button>
+                          <button type="button" onClick={() => setMapAgentOpen(false)}
+                            className="atlas-assistant-action" aria-label="Close map assistant" title="Close">
+                            <X className="h-4 w-4" />
                           </button>
                         </div>
+                      </header>
+
+                      {ATLAS_IS_EMBEDDED && (
+                        <div className="atlas-assistant-modes" role="tablist" aria-label="Assistant mode">
+                          <button type="button" role="tab" aria-selected={assistantSurface === 'atlas'} className="atlas-assistant-modes__tab" onClick={() => setAssistantSurface('atlas')}>Atlas</button>
+                          <button type="button" role="tab" aria-selected={assistantSurface === 'agent'} className="atlas-assistant-modes__tab" onClick={() => {
+                            if (requestNohmAtlasAssistantMode('agent')) {
+                              setAssistantSurface('agent');
+                              setMapAgentOpen(false);
+                            }
+                          }}>Agent</button>
+                        </div>
+                      )}
+
+                      <div className="atlas-assistant-status" role={emilVoice.error ? 'alert' : 'status'} aria-live="polite">
+                        <MessageCircle size={13} aria-hidden="true" />
+                        <span>Map commands</span>
+                        <span className="atlas-assistant-status__detail">{emilVoice.statusLabel}</span>
                       </div>
 
                       <div className="atlas-assistant-settings" data-cover-conversation={mapAgentSettings.coverConversation}>
-                        <button type="button" ref={mapAgentSettings.toggleRef}
-                          onClick={mapAgentSettings.toggle}
-                          aria-label="Voice and map settings"
-                          aria-expanded={mapAgentSettings.expanded}
-                          aria-controls={mapAgentSettings.panelId}
-                          className="shrink-0 min-h-[32px] flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-tj-slate hover:text-white border-b border-white/10">
-                          <span>{mapAgentSettings.coverConversation ? 'Back to conversation' : 'Voice and map settings'}</span>
-                          <ChevronDown className={`h-3.5 w-3.5 ${mapAgentSettings.expanded ? 'rotate-180' : ''}`} aria-hidden="true" />
-                        </button>
                       <div id={mapAgentSettings.panelId} ref={mapAgentSettings.panelRef} hidden={!mapAgentSettings.expanded}
                         className="atlas-assistant-settings-body min-h-0 overflow-y-auto px-3 py-2.5 border-b border-white/10 bg-black/10 space-y-2">
                         <label className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 cursor-pointer select-none">
@@ -16912,7 +17379,7 @@ function AppInner() {
                         ref={mapConversationScroll.containerRef}
                         onScroll={mapConversationScroll.onScroll}
                         tabIndex={0}
-                        className="min-h-0 flex-1 overflow-y-auto scrollbar-hidden px-3 py-4 space-y-3 bg-gradient-to-b from-white/[0.02] to-transparent"
+                        className="atlas-assistant-thread min-h-0 flex-1 overflow-y-auto scrollbar-hidden"
                         role="log"
                         aria-live="polite"
                         aria-label="Conversation with EMIL"
@@ -16920,30 +17387,26 @@ function AppInner() {
                         {mapAgentMessages.map((msg) => (
                           <div
                             key={msg.id}
-                            className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-6 shadow-sm ${
-                              msg.role === 'user'
-                                ? 'ml-auto bg-tj-gold/14 border border-tj-gold/45 text-tj-gold'
-                                : 'mr-auto bg-white/8 border border-white/12 text-tj-gray'
-                            }`}
+                            className={`atlas-assistant-bubble atlas-assistant-bubble--${msg.role === 'user' ? 'user' : 'assistant'}`}
                           >
                             {msg.text}
                           </div>
                         ))}
                         {mapAgentBusy && (
-                          <div className="mr-auto bg-white/8 border border-white/12 text-tj-slate rounded-2xl px-3.5 py-2.5 text-[12px]">
+                          <div className="atlas-assistant-bubble atlas-assistant-bubble--assistant" role="status">
                             {pypsaBatchProgress
                               ? <AtlasBatchProgress progress={pypsaBatchProgress} onCancel={cancelPyPSAMapBatch} cancelLabel="Cancel EMIL network update" />
                               : 'Working on it...'}
                           </div>
                         )}
                         {emilVoice.partial && (
-                          <div className="ml-auto max-w-[88%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-6 italic bg-tj-gold/7 border border-dashed border-tj-gold/35 text-tj-gold/75" aria-live="off">
+                          <div className="atlas-assistant-bubble atlas-assistant-bubble--partial" aria-live="off">
                             {emilVoice.partial}
                           </div>
                         )}
                       </div>
 
-                      <div className="atlas-assistant-composer shrink-0 p-3 border-t border-white/10">
+                      <div className="atlas-assistant-composer shrink-0">
                         {!mapAgentSettings.coverConversation && !mapConversationScroll.following && (
                           <button
                             type="button"
@@ -16954,33 +17417,29 @@ function AppInner() {
                             {mapConversationScroll.unread ? 'New messages · Jump to latest' : 'Jump to latest'}
                           </button>
                         )}
-                        <div className="flex items-center gap-2.5">
-                          <input
-                            type="text"
+                        <div className="atlas-assistant-composer-row">
+                          <textarea
+                            rows={1}
                             value={mapAgentInput}
                             onChange={(e) => setMapAgentInput(e.target.value)}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+                              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                                 e.preventDefault();
                                 mapAgentSettings.showConversation();
                                 handleMapAgentCommand();
                               }
                             }}
-                            placeholder='Ask EMIL, e.g. “show Spain at NUTS3”'
+                            placeholder="Ask Emil…"
                             aria-label="Message EMIL"
                             ref={mapAgentInputRef}
-                            className="min-w-0 flex-1 px-3.5 py-2.5 text-[13px] border border-white/10 rounded-xl bg-tj-navy-light/45 focus:outline-none focus:ring-1 focus:ring-tj-gold"
+                            className="atlas-assistant-input"
                           />
                           <button
                             type="button"
                             onClick={emilVoice.toggle}
                             aria-pressed={emilVoice.active}
                             aria-busy={emilVoice.phase === 'connecting' || emilVoice.phase === 'transcribing'}
-                            className={`h-11 w-11 shrink-0 rounded-full border flex items-center justify-center ${
-                              emilVoice.active
-                                ? 'bg-tj-gold text-black border-tj-gold shadow-[0_0_0_4px_rgba(229,194,14,0.10)]'
-                                : 'bg-tj-gold/20 text-tj-gold border-tj-gold/40'
-                            }`}
+                            className="atlas-assistant-composer-action"
                             aria-label={
                               emilVoice.fallbackRecording ? 'Stop recording and send to EMIL'
                                 : emilVoice.transport === 'upload' && emilVoice.active ? 'Record a command for EMIL'
@@ -16998,7 +17457,7 @@ function AppInner() {
                             type="button"
                             onClick={() => { mapAgentSettings.showConversation(); handleMapAgentCommand(); }}
                             disabled={mapAgentBusy || !mapAgentInput.trim()}
-                            className="h-10 w-10 rounded-full bg-tj-gold/25 text-tj-gold border border-tj-gold/40 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+                            className="atlas-assistant-composer-action"
                             aria-label="Send assistant message"
                           >
                             <Send className="h-3.5 w-3.5" />
@@ -17007,7 +17466,7 @@ function AppInner() {
                       </div>
                     </section>
                   ) : null}
-                  {(!mapAgentOpen || atlasAssetPopupOpen) && (
+                  {(!mapAgentOpen || atlasAssetPopupOpen) && (!ATLAS_IS_EMBEDDED || presentationMode) && (
                     <EmilVoiceLauncher voice={emilVoice} onOpen={openMapAssistant} />
                   )}
                 </div>

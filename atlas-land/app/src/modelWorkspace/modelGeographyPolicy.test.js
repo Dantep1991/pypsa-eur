@@ -1,4 +1,4 @@
-import { assertModelGeographyOperation, modelGeographyPolicy } from './modelGeographyPolicy';
+import { assertModelGeographyOperation, modelGeographyPolicy, resolveModelCountryScope } from './modelGeographyPolicy';
 
 test('a bound model exposes its source countries without treating them as loadable networks', () => {
   const policy = modelGeographyPolicy({
@@ -27,6 +27,23 @@ test.each([
 });
 
 test('standalone Atlas retains country network controls', () => {
-  expect(modelGeographyPolicy({ mode: 'reference', projectId: 'atlas' })).toBeNull();
+  expect(modelGeographyPolicy({ mode: 'reference' })).toBeNull();
   expect(assertModelGeographyOperation(null, 'add-country-network')).toBe(true);
+});
+
+test('missing metadata or a stale mode flag never bypass project geography guards', () => {
+  const policy = modelGeographyPolicy({ mode: 'reference', projectId: 'DHEM_2026' });
+  expect(policy.canAddCountryNetworks).toBe(false);
+  expect(policy.nativeGeography).toBe('model-native geography');
+  expect(() => assertModelGeographyOperation(policy, 'change-resolution')).toThrow(/cannot.*split/i);
+});
+
+test('model country requests select only existing project countries', () => {
+  const available = ['FR', 'IE', 'IT'];
+  expect(resolveModelCountryScope(available, ['IT'], ['FR', 'IE'])).toEqual(['FR', 'IE']);
+  expect(resolveModelCountryScope(available, ['IT'], ['FR'], 'add')).toEqual(['FR', 'IT']);
+  expect(resolveModelCountryScope(available, ['FR', 'IE'], ['FR'], 'remove')).toEqual(['IE']);
+  expect(resolveModelCountryScope(available, ['FR', 'IE'], ['IT'], 'add')).toEqual([]);
+  expect(() => resolveModelCountryScope(available, [], ['BE'])).toThrow('BE is not in this project model');
+  expect(() => resolveModelCountryScope(available, ['FR'], ['FR'], 'remove')).toThrow(/empty model view/);
 });

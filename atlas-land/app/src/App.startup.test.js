@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, render, cleanup } from '@testing-library/react';
+import { act, render, cleanup, fireEvent } from '@testing-library/react';
 import App from './App';
 import { pypsaCatalogueCacheKey, writePypsaCatalogueCache } from './pypsaCatalogueCache';
 
@@ -116,6 +116,8 @@ test('an offline reload keeps the saved country catalogue usable while reconnect
   try {
     const view = render(<App />);
     await act(async () => { for (let index = 0; index < 12; index += 1) await Promise.resolve(); });
+    const geography = view.getByRole('button', { name: /Geography Domain/ });
+    if (geography.getAttribute('aria-expanded') === 'false') fireEvent.click(geography);
     const countrySelector = view.getByRole('combobox', { name: 'Add country network' });
     expect(countrySelector.disabled).toBe(false);
     expect(view.getByRole('option', { name: 'Belgium (BE)' })).not.toBeNull();
