@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Loader2, Plus, X } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { Loader2, X } from 'lucide-react';
 import ModelControlHelp from './ModelControlHelp';
 
 export default function ModelCountryScopeControls({
@@ -11,7 +11,6 @@ export default function ModelCountryScopeControls({
   onSelect,
   onSelectAll,
 }) {
-  const [pendingCountry, setPendingCountry] = useState('');
   const available = useMemo(
     () => [...new Set((availableCountries || []).map(code => String(code || '').trim().toUpperCase()).filter(Boolean))].sort(),
     [availableCountries],
@@ -25,12 +24,6 @@ export default function ModelCountryScopeControls({
 
   const applySelection = (countries) => {
     onSelect([...new Set(countries)].sort());
-    setPendingCountry('');
-  };
-
-  const addCountry = () => {
-    if (!pendingCountry) return;
-    applySelection([...selected, pendingCountry]);
   };
 
   return (
@@ -45,7 +38,7 @@ export default function ModelCountryScopeControls({
         <div className="flex shrink-0 items-center gap-1.5">
           <ModelControlHelp label="Country scope">
             <p>Filter the countries already in this project model. This previews a subset of its existing nodes and links; it does not load separate country networks.</p>
-            <p>Country selection is available at the native model geography. Switch back to that level before editing a selection.</p>
+            <p>Country selection preserves the current geography, including mixed-resolution views.</p>
           </ModelControlHelp>
           <button
             type="button"
@@ -60,8 +53,8 @@ export default function ModelCountryScopeControls({
 
       <div className="mt-2 flex gap-1.5">
         <select
-          value={pendingCountry}
-          onChange={event => setPendingCountry(event.target.value)}
+          value=""
+          onChange={event => { if (event.target.value) applySelection([...selected, event.target.value]); }}
           disabled={controlsDisabled || !remaining.length}
           className="min-w-0 flex-1 rounded-lg border border-white/10 bg-[#081523] px-2 py-2 text-[10px] text-white disabled:opacity-50"
           aria-label="Add country to model view"
@@ -69,15 +62,7 @@ export default function ModelCountryScopeControls({
           <option value="">Add a country…</option>
           {remaining.map(code => <option key={code} value={code}>{countryName(code)} ({code})</option>)}
         </select>
-        <button
-          type="button"
-          onClick={addCountry}
-          disabled={controlsDisabled || !pendingCountry}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-tj-gold/35 bg-tj-gold/10 text-tj-gold disabled:opacity-40"
-          aria-label="Add country to model view"
-        >
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-        </button>
+        {busy && <span role="status" aria-label="Updating country view"><Loader2 className="h-4 w-4 animate-spin" /></span>}
       </div>
 
       <div className="mt-2 flex flex-wrap gap-1">

@@ -1,12 +1,15 @@
 import { escapeMapText as escapeHtml } from './mapText';
 import { getConnectionCapacity, formatCapacity } from './connectionCapacity';
+import { scenarioPreviewContent } from './scenarioPreviewContent';
 
 const numeric = value => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
 export function connectionTooltipContent(connection = {}, capacity = getConnectionCapacity(connection)) {
   const valueRow = (label, value, unit = '') => `<div class="atlas-line-tooltip__row"><span>${escapeHtml(label)}</span><strong>${numeric(value) ? `${formatCapacity(Number(value))} ${escapeHtml(unit)}` : escapeHtml(value || 'Not reported')}</strong></div>`;
   const endpoint = value => String(value || '').replace(/^(Node|Gas Node):/, '');
   const parts = [`<strong class="atlas-line-tooltip__title">${escapeHtml(connection.name || connection.id || 'Connection')}</strong>`];
-  const from = endpoint(connection.fromNode || connection.from), to = endpoint(connection.toNode || connection.to);
+  if (connection.scenario_preview) parts.push(scenarioPreviewContent(connection.scenario_preview));
+  if (connection.operational_state?.status === 'disabled') parts.push(`<strong>Disabled — zero capacity</strong><div>${escapeHtml(connection.operational_state.reason)}</div><div>${escapeHtml(connection.source_model_name || connection.source_model_version)}</div>`);
+  const from = endpoint(connection.from_label || connection.fromNode || connection.from), to = endpoint(connection.to_label || connection.toNode || connection.to);
   if (from && to) parts.push(`<div>${escapeHtml(from)} ↔ ${escapeHtml(to)}</div>`);
   if (numeric(connection.atlas_result_baseline_value)) {
     parts.push(valueRow('Baseline', connection.atlas_result_baseline_value, connection.atlas_result_unit));

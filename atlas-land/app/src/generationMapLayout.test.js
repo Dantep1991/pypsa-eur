@@ -54,12 +54,20 @@ test('invalid coordinates and non-generators cannot contaminate capacity totals'
 });
 
 test('diameter follows square-root capacity with readable regional floors and compact nodal limits', () => {
-  expect(generationPieDiameter(1, 3, true)).toBe(22);
-  expect(generationPieDiameter(0.25, 3, true)).toBe(11);
-  expect(generationPieDiameter(0.001, 3, true)).toBe(5);
+  expect(generationPieDiameter(1, 3, true)).toBe(36);
+  expect(generationPieDiameter(0.25, 3, true)).toBe(18);
+  expect(generationPieDiameter(0.001, 3, true)).toBe(8);
   expect(generationPieDiameter(1, 3, false)).toBe(9);
   expect(generationPieDiameter(1, 11, false)).toBe(48);
   expect(generationPieDiameter(NaN, 3)).toBe(2);
+});
+
+test('native model generation uses readable regional sizing and bounded user scaling', () => {
+  expect(indexGenerationSites([generator('native', 100, { source_model_project: 'P' })])[0].aggregate).toBe(true);
+  expect(generationPieDiameter(0.25, 3, true, 2)).toBe(36);
+  expect(generationPieDiameter(1, 3, true, 0.5)).toBe(18);
+  expect(generationPieDiameter(1, 3, true, NaN)).toBe(36);
+  expect(generationPieDiameter(1, 3, true, 999)).toBe(72);
 });
 
 test('smaller countries and remote sites remain represented beside a dense high-capacity fleet', () => {

@@ -18,6 +18,7 @@ let mockLineLayerProps;
 let mockOverviewLineProps;
 let mockPointLayerProps;
 let mockBoundaryLayerProps;
+let mockRegionalBoundaryLayerProps;
 let mockClusterLayerProps;
 let mockAutoCompleteLines;
 let mockPendingLineProps;
@@ -56,6 +57,10 @@ jest.mock('./OverviewNetworkCanvasLayer', () => {
     return React.createElement('span', { 'data-testid': 'overview-network-lines' });
   };
 });
+// Flow-canvas lifecycle is covered by ModelResultFlowLayer.test.js. This map
+// mock has no Leaflet panes and exercises topology, camera and hit targets.
+jest.mock('./ModelResultFlowLayer', () => () => null);
+jest.mock('./ModelAssetsMapLayer', () => ({ frame }) => frame ? <span data-testid="model-assets-bubbles" /> : null);
 jest.mock('react-leaflet', () => {
   const React = require('react');
   const Container = ({ children }) => <>{children}</>;
@@ -77,6 +82,7 @@ jest.mock('react-leaflet', () => {
     }), Marker: Layer,
     CircleMarker: Layer, Circle: Layer, Tooltip: Layer, Pane: Container,
     GeoJSON: (props) => {
+      if (props.pane === 'network-boundaries') mockRegionalBoundaryLayerProps = props;
       if (props.pane === 'grid-access-sites') mockAccessLayerProps = props;
       React.useEffect(() => { if (props.pane === 'loaded-country-context') mockCountryMounts += 1; }, []);
       React.useEffect(() => { if (props.data?.features?.[0]?.id === 'region-qa') mockRegionMounts += 1; }, []);
@@ -148,6 +154,7 @@ beforeEach(() => {
   mockOverviewLineProps = null;
   mockPointLayerProps = null;
   mockBoundaryLayerProps = null;
+  mockRegionalBoundaryLayerProps = null;
   mockClusterLayerProps = null;
   mockAutoCompleteLines = true;
   mockPendingLineProps = null;
@@ -181,6 +188,64 @@ const settle = async () => {
   act(() => jest.advanceTimersByTime(200));
 };
 
+test.each(['land', 'access'])('the consolidated %s card offers a return route without disabling its data layer', async child => {
+  const onReturn = jest.fn(), onLand = jest.fn(), onAccess = jest.fn();
+  const view = render(<EnhancedLeafletMapWithVoice {...defaults} consolidatedControls
+    onMapDisplayReturn={onReturn} onLandConstraintsChange={onLand} onGridAccessChange={onAccess}
+    landConstraints={{ enabled: true, panelOpen: child === 'land' }}
+    gridAccess={{ enabled: true, panelOpen: child === 'access' }} />);
+  await settle();
+  const region = view.getByRole('region', { name: child === 'land' ? 'Land and Constraints controls' : 'Grid Access controls' });
+  const back = view.getByRole('button', { name: 'Back to Map display' });
+  expect(region.contains(back)).toBe(true);
+  fireEvent.click(back);
+  expect(onReturn).toHaveBeenCalledTimes(1);
+  expect(onLand).not.toHaveBeenCalled();
+  expect(onAccess).not.toHaveBeenCalled();
+});
+
+test('docked Land and Access actions remain unique and can disable an enabled overlay after its panel closes', async () => {
+  const target = document.createElement('aside'); document.body.appendChild(target);
+  const land = jest.fn(), access = jest.fn();
+  const view = render(<EnhancedLeafletMapWithVoice {...defaults} consolidatedControls overlaysControlHost={target}
+    controlsHidden landConstraints={{ enabled: true, panelOpen: false }} gridAccess={{ enabled: true, panelOpen: false }}
+    onLandConstraintsChange={land} onGridAccessChange={access} />);
+  await settle();
+  const landButton = view.getByRole('button', { name: 'Toggle Land and Constraints overlay' });
+  const accessButton = view.getByRole('button', { name: 'Toggle Grid Access and Queue overlay' });
+  expect(target.contains(landButton)).toBe(true);
+  expect(target.contains(accessButton)).toBe(true);
+  expect(view.getAllByRole('button', { name: 'Toggle Land and Constraints overlay' })).toHaveLength(1);
+  expect(view.getAllByRole('button', { name: 'Toggle Grid Access and Queue overlay' })).toHaveLength(1);
+  fireEvent.click(landButton); fireEvent.click(accessButton);
+  expect(land).toHaveBeenCalledWith({ enabled: false, panelOpen: false });
+  expect(access).toHaveBeenCalledWith({ enabled: false, panelOpen: false });
+  view.rerender(<EnhancedLeafletMapWithVoice {...defaults} consolidatedControls overlaysControlHost={target}
+    onLandConstraintsChange={land} onGridAccessChange={access} />);
+  fireEvent.click(view.getByRole('button', { name: 'Toggle Land and Constraints overlay' }));
+  fireEvent.click(view.getByRole('button', { name: 'Toggle Grid Access and Queue overlay' }));
+  expect(land).toHaveBeenLastCalledWith({ enabled: true, panelOpen: true });
+  expect(access).toHaveBeenLastCalledWith({ enabled: true, panelOpen: true });
+  view.unmount(); target.remove();
+});
+
+test('confirmed disabled base lines render with a distinct theme colour, not the normal carrier colour', async () => {
+  document.documentElement.style.setProperty('--accent-error', 'rgb(214, 69, 90)');
+  const lines = [{ id: 'Line:A-B', from: 'A', to: 'B', coordinates: [[7.5, 51.5], [8.5, 52.5]],
+    color: 'rgb(28, 114, 147)', operational_state: { status: 'disabled' } }];
+  const view = render(<EnhancedLeafletMapWithVoice {...defaults} connections={lines} />);
+  await settle();
+  const style = mockPendingLineProps.data.features[0].properties.style;
+  expect(style.color).toBe('rgb(214, 69, 90)');
+  expect(style.weight).toBeGreaterThanOrEqual(3.5);
+  expect(style.dashArray).toBe('9 6');
+  // Hiding the record removes the visual path and its tooltip/hit target.
+  view.rerender(<EnhancedLeafletMapWithVoice {...defaults} connections={[]} />);
+  await settle();
+  expect(mockPendingLineProps.data.features).toHaveLength(0);
+  document.documentElement.style.removeProperty('--accent-error');
+});
+
 test('result size changes keep point layers, topology, source queries and camera stable', async () => {
   const facilities = [{ ...defaults.facilities[0], latitude: 52, longitude: 8, atlas_result_map_mode: 'bubbles', atlas_result_value: 25, atlas_result_magnitude_ratio: 0.25 }];
   const view = render(<EnhancedLeafletMapWithVoice {...defaults} facilities={facilities} resultMarkerScale={1} />);
@@ -197,6 +262,48 @@ test('result size changes keep point layers, topology, source queries and camera
   expect(mockPendingLineProps.dataKey).toBe(lineKey);
   expect(global.fetch.mock.calls).toHaveLength(calls);
   expect(mockMap.setView).not.toHaveBeenCalled(); expect(mockMap.fitBounds).not.toHaveBeenCalled();
+});
+
+test.each([false, true])('result bubble values remain hoverable above lines and group labels (performance %s)', async performanceMode => {
+  render(<EnhancedLeafletMapWithVoice {...defaults} performanceMode={performanceMode} facilities={[
+    { id: 'a', latitude: 52, longitude: 8, name: 'Zone A', atlas_region_group_name: 'Aggregate A',
+      atlas_result_map_mode: 'bubbles', atlas_result_value: 42.1234, atlas_result_label: 'Price',
+      atlas_result_unit: '$/MWh', atlas_result_period: 'Annual 2050', atlas_result_magnitude_ratio: .3,
+      atlas_result_color: '#22c55e' },
+  ]} />);
+  await settle();
+  const feature = mockPointLayerProps.data.features[0];
+  const layer = { bindTooltip: jest.fn(), bindPopup: jest.fn(), on: jest.fn() };
+  mockPointLayerProps.onEachFeature(feature, layer);
+  const [html, options] = layer.bindTooltip.mock.calls[0];
+  expect(html).toContain('42.1234'); expect(html).toContain('$/MWh'); expect(html).toContain('Annual 2050');
+  expect(options).toMatchObject({ pane: 'network-node-tooltips', atlasTooltipPriority: 20, sticky: true });
+  expect(layer.bindPopup).toHaveBeenCalledWith(html, expect.objectContaining({ className: 'atlas-asset-popup atlas-result-popup' }));
+  expect(options.permanent).not.toBe(true); expect(options.atlasMapLabel).not.toBe(true);
+});
+
+test.each([0, -42, 42])('result %s uses a painted SVG hit target above the Access canvas and pins its value without the inspector', async value => {
+  const svg = jest.spyOn(L, 'svg').mockImplementation(options => new L.SVG(options));
+  try {
+    const onNodeSelection = jest.fn();
+    const view = render(<EnhancedLeafletMapWithVoice {...defaults} onNodeSelection={onNodeSelection} facilities={[
+      { id: 'a', latitude: 52, longitude: 8, name: 'Zone A', atlas_result_map_mode: 'bubbles',
+        atlas_result_value: value, atlas_result_label: 'Price', atlas_result_unit: '$/MWh',
+        atlas_result_period: 'Annual 2050', atlas_result_magnitude_ratio: .3, atlas_result_color: '#dabd1d' },
+    ]} />);
+    await settle();
+    const feature = mockPointLayerProps.data.features[0];
+    const layer = mockPointLayerProps.pointToLayer(feature, L.latLng(52, 8));
+    expect(layer.options.pane).toBe('model-result-nodes');
+    expect(layer.options.renderer).toBeInstanceOf(L.SVG);
+    mockPointLayerProps.onEachFeature(feature, layer);
+    expect(layer.getTooltip().getContent()).toContain(`${value}`);
+    expect(layer.getPopup().getContent()).toContain('$/MWh');
+    expect(layer.getPopup().getContent()).toContain('Annual 2050');
+    await act(async () => { layer.fire('click', { originalEvent: new MouseEvent('click') }); });
+    expect(onNodeSelection).toHaveBeenCalledWith('a');
+    expect(view.queryByLabelText('inspect panel')).toBeNull();
+  } finally { svg.mockRestore(); }
 });
 
 test('names the interactive map and exposes its keyboard shortcuts without clobbering later owners', () => {
@@ -346,6 +453,57 @@ test.each(['full', 'overlay'])('overview retains country representatives and sel
   expect(ids()).toHaveLength(402); expect(mockLineLayerProps.data.features).toHaveLength(399);
 });
 
+test('hiding bubbles removes model-database markers and supply pies without hiding or changing grid links', async () => {
+  const props = { ...defaults, showGenerationMix: true,
+    modelAssetsFrame: { markers: [{ id: 'asset' }] },
+    facilities: [{ ...defaults.facilities[0], latitude: 52, longitude: 8 },
+      { id: 'solar', type: 'Generator', country_code: 'FR', bus: 'FR', carrier: 'solar', p_nom: 100, latitude: 52, longitude: 8 },
+      { id: 'FR-2', type: 'Bus', country_code: 'FR', latitude: 52.2, longitude: 8.2 }],
+    connections: [{ id: 'line', from: 'FR', to: 'FR-2', carrier: 'AC' }] };
+  const view = render(<EnhancedLeafletMapWithVoice {...props} />);
+  await settle();
+  expect(view.queryByTestId('model-assets-bubbles')).not.toBeNull();
+  expect(view.queryByTestId('geojson-generation-mix-pane')).not.toBeNull();
+  const links = mockLineLayerProps.data;
+  view.rerender(<EnhancedLeafletMapWithVoice {...props} showDataBubbles={false} />);
+  await settle();
+  expect(view.queryByTestId('model-assets-bubbles')).toBeNull();
+  expect(view.queryByTestId('geojson-generation-mix-pane')).toBeNull();
+  expect(view.queryByTestId('geojson-network-nodes')).not.toBeNull();
+  expect(mockLineLayerProps.data).toBe(links);
+  view.rerender(<EnhancedLeafletMapWithVoice {...props} />);
+  await settle();
+  expect(view.queryByTestId('model-assets-bubbles')).not.toBeNull();
+  expect(view.queryByTestId('geojson-generation-mix-pane')).not.toBeNull();
+  view.rerender(<EnhancedLeafletMapWithVoice {...props} showNodeMarkers={false} />);
+  await settle();
+  expect(view.queryByTestId('model-assets-bubbles')).toBeNull();
+});
+
+test('result bubbles and result pies obey bubble visibility while normal topology nodes and lines remain', async () => {
+  const props = { ...defaults,
+    facilities: [{ ...defaults.facilities[0], latitude: 52, longitude: 8 },
+      { id: 'result', type: 'Bus', country_code: 'FR', latitude: 52.2, longitude: 8.2,
+        atlas_result_map_mode: 'bubbles', atlas_result_value: 12, atlas_result_magnitude_ratio: 1 },
+      { id: 'result-mix', type: 'Bus', country_code: 'FR', latitude: 52.1, longitude: 8.1,
+        atlas_result_map_mode: 'mix', atlas_result_value: 12, atlas_result_magnitude_ratio: 1,
+        atlas_result_segments: [{ label: 'Solar', value: 12, share: 1, color: '#dabd1d' }] }],
+    connections: [{ id: 'line', from: 'FR', to: 'result' }] };
+  const view = render(<EnhancedLeafletMapWithVoice {...props} />);
+  await settle();
+  expect(mockPointLayerProps.data.features.some(f => f.properties.isResultBubble)).toBe(true);
+  expect(view.queryByTestId('geojson-generation-mix-pane')).not.toBeNull();
+  view.rerender(<EnhancedLeafletMapWithVoice {...props} showDataBubbles={false} />);
+  await settle();
+  expect(mockPointLayerProps.data.features.map(f => f.id)).toEqual(['FR']);
+  expect(view.queryByTestId('geojson-generation-mix-pane')).toBeNull();
+  expect(mockLineLayerProps.data.features).toHaveLength(1);
+  view.rerender(<EnhancedLeafletMapWithVoice {...props} />);
+  await settle();
+  expect(mockPointLayerProps.data.features.some(f => f.properties.isResultBubble)).toBe(true);
+  expect(view.queryByTestId('geojson-generation-mix-pane')).not.toBeNull();
+});
+
 test('aggregate cache nodes and editable handles are never removed by detailed-node sampling', async () => {
   const facilities = Array.from({ length: 240 }, (_, i) => ({ id: `region${i}`, type: 'Bus', country: 'FR',
     latitude: 50, longitude: 10, sourceNetworkFilename: 'base_FR_nuts3.nc' }));
@@ -368,12 +526,12 @@ test('single-generator regional pies survive overview zoom and retain capacity s
   const features = mockMixLayerProps.data.features;
   const size = feature => mockMixLayerProps.pointToLayer(feature, L.latLng(52, 8)).options.icon.options.iconSize[0];
   expect(features.map(f => f.properties.capacityTotal)).toEqual([400, 100]);
-  expect(features.map(size)).toEqual([22, 11]);
+  expect(features.map(size)).toEqual([36, 18]);
   act(() => { mockMap.center = L.latLng(52, 9.9); mockMap.emit('moveend'); });
   await settle();
   expect(mockMixLayerProps.data.features).toHaveLength(1);
   expect(mockMixLayerProps.data.features[0].properties.facility.id).toBe('small');
-  expect(size(mockMixLayerProps.data.features[0])).toBe(11);
+  expect(size(mockMixLayerProps.data.features[0])).toBe(18);
 });
 
 test('generation composition is reused across navigation and its tooltip is prepared on inspection', async () => {
@@ -410,6 +568,42 @@ test('generation composition is reused across navigation and its tooltip is prep
   expect(next.segments).toHaveLength(1);
   expect(next.tooltipContent()).toContain('100.0%');
   expect(next.segments).not.toBe(first.segments);
+});
+
+test('native category pies resize without changing the camera, composition or fetching data', async () => {
+  const facilities = ['category A', 'category B'].map((carrier, index) => ({
+    id: `g${index}`, type: 'Generator', carrier, p_nom: index ? 100 : 300,
+    latitude: 52, longitude: 8, source_model_project: 'P',
+  }));
+  const view = render(<EnhancedLeafletMapWithVoice {...defaults} facilities={facilities} showGenerationMix generationMarkerScale={1} />);
+  act(() => mockMap.setView([52, 8], 3)); await settle();
+  const feature = mockMixLayerProps.data.features[0], segments = feature.properties.segments;
+  const calls = global.fetch.mock.calls.length, cameraCalls = mockMap.setView.mock.calls.length;
+  expect(new Set(segments.map(s => s.color)).size).toBe(2);
+  const diameter = () => mockMixLayerProps.pointToLayer(feature, L.latLng(52, 8)).options.icon.options.iconSize[0];
+  expect(diameter()).toBe(36);
+  view.rerender(<EnhancedLeafletMapWithVoice {...defaults} facilities={facilities} showGenerationMix generationMarkerScale={2} />);
+  await settle();
+  expect(diameter()).toBe(72);
+  expect(mockMixLayerProps.data.features[0].properties.segments).toBe(segments);
+  expect(global.fetch.mock.calls.length).toBe(calls);
+  expect(mockMap.setView.mock.calls.length).toBe(cameraCalls);
+});
+
+test('unresolved Supply and Demand remain inspectable without fabricated zero-size markers', async () => {
+  const facilities = [
+    { id: 'unresolved-generator', component_type: 'Generator', latitude: 52, longitude: 8, p_nom: null },
+    { id: 'unresolved-load', component_type: 'Load', latitude: 52, longitude: 8, p_set: null, map_scale_value: null },
+    { id: 'hydro-store', component_type: 'Store', latitude: 52, longitude: 8 },
+  ];
+  render(<EnhancedLeafletMapWithVoice {...defaults} facilities={facilities} showGenerationMix />);
+  await settle();
+  const points = mockPointLayerProps.data.features;
+  expect(points).toHaveLength(3);
+  const load = points.find(point => point.id === 'unresolved-load').properties;
+  expect(load.demandValueMw).toBeNull();
+  expect(load.isMagnitudeScaled).toBe(false);
+  expect(points.find(point => point.id === 'hydro-store').properties.shape).toBe('square');
 });
 
 test('node frames defer co-location filtering until inspection and exclude hidden components', async () => {
@@ -831,7 +1025,7 @@ test('overlay overview retains every visible link, including bridges and small c
     const rendered = mockLineLayerProps.data.features.map((feature) => feature.properties.connection);
     expect(rendered).toEqual(connections);
     expect(rendered.at(-1).p_nom).toBe(820);
-    expect(stats).toHaveBeenLastCalledWith({ renderedLinks: 820, unmappedLinks: 0, renderingLinks: false, renderError: '', overviewLines: false, generationSitesRendered: 0, generationSitesInView: 0 });
+    expect(stats).toHaveBeenLastCalledWith({ renderedLinks: 820, unmappedLinks: 0, renderingLinks: false, renderError: '', overviewLines: false, generationSitesRendered: 0, generationSitesInView: 0, mappedLocations: 1, mappedConnections: 820 });
   };
   assertComplete();
   for (const zoom of [5, 6, 9, 4]) {
@@ -1045,6 +1239,31 @@ test('pending and failed line replacements retain matching nodes and boundaries;
   expectFrame('first');
   act(() => latest.onProgress({ key: latest.dataKey, renderedLinks: 1, renderingLinks: false, renderError: '' }));
   expectFrame('latest');
+});
+
+test.each(['flow', 'cba'])('%s connection overlay does not wait for an unmounted base network or retain old nodes', async overlay => {
+  const facilities=[{id:'a',component_type:'bus',latitude:50,longitude:10},
+    {id:'b',component_type:'bus',latitude:51,longitude:11}];
+  const connections=[{id:'link',from:'a',to:'b'}], stats=jest.fn();
+  const props={...defaults,facilities,connections,onRenderStatsChange:stats};
+  const view=render(<EnhancedLeafletMapWithVoice {...props}/>);
+  await settle();
+  act(()=>mockMap.setView([50,10],4));
+  await settle();
+  mockAutoCompleteLines=false;
+  const layer=overlay==='flow'?{lolaFlowFrame:{lines:[],maximum:0}}:{cbaScene:{points:[],lines:[],coverage:{mapped:0}}};
+  view.rerender(<EnhancedLeafletMapWithVoice {...props} {...layer} facilities={[facilities[0]]}/>);
+  await settle();
+  expect(view.queryByTestId('network-lines')).toBeNull();
+  expect(stats.mock.calls.at(-1)[0]).toMatchObject({renderingLinks:false,renderError:''});
+  if(overlay==='flow')expect(mockPointLayerProps.data.features.map(feature=>feature.properties.facility.id)).toEqual(['a']);
+  else expect(view.queryByTestId('geojson-network-nodes')).toBeNull();
+  mockAutoCompleteLines=true;
+  view.rerender(<EnhancedLeafletMapWithVoice {...props}/>);
+  await settle();
+  expect(view.getByTestId('network-lines')).toBeDefined();
+  expect(mockPointLayerProps.data.features).toHaveLength(2);
+  expect(stats.mock.calls.at(-1)[0]).toMatchObject({renderingLinks:false,renderError:''});
 });
 
 test('reduced-motion preference applies to Paris, relative commands and map controls without remounting', async () => {
@@ -1413,6 +1632,25 @@ test('co-located component selection is labelled and replaces the popup with uni
   expect(global.fetch).not.toHaveBeenCalled();
 });
 
+test('network summary publishes full mapped coverage, including source routes without nodes', async () => {
+  const onRenderStatsChange = jest.fn();
+  const facilities = [
+    { id: 'a', type: 'Bus', latitude: 50, longitude: 4 },
+    { id: 'co-located', type: 'Generator', latitude: 50, longitude: 4 },
+    { id: 'unmapped', type: 'Bus' },
+  ];
+  const connections = [
+    { id: 'routed', coordinates: [[4, 50], [5, 51]] },
+    { id: 'missing', from: 'a', to: 'unmapped' },
+    { id: 'hidden', coordinates: [[4, 50], [5, 51]], atlas_distillation_hidden: true },
+  ];
+  render(<EnhancedLeafletMapWithVoice {...defaults} facilities={facilities} connections={connections} onRenderStatsChange={onRenderStatsChange} />);
+  await settle();
+  expect(onRenderStatsChange).toHaveBeenLastCalledWith(expect.objectContaining({ mappedLocations: 1, mappedConnections: 1 }));
+  act(() => mockMap.setView([30, 30], 8)); await settle();
+  expect(onRenderStatsChange).toHaveBeenLastCalledWith(expect.objectContaining({ mappedLocations: 1, mappedConnections: 1 }));
+});
+
 test('grid-access errors offer retry without presenting unavailable record counts as zero', async () => {
   const onRetry = jest.fn();
   const view = render(<EnhancedLeafletMapWithVoice {...defaults} gridAccess={{
@@ -1427,4 +1665,28 @@ test('grid-access errors offer retry without presenting unavailable record count
   fireEvent.click(view.getByRole('button', { name: 'Retry grid-access data' }));
   expect(onRetry).toHaveBeenCalledTimes(1);
   expect(mockMap.setView).toHaveBeenCalledTimes(movesBefore);
+});
+
+test('partial regional outlines render and report coverage; hiding or clearing them clears the notice', async () => {
+  const polygon = code => ({ type: 'Feature', properties: { ISO2: code }, geometry: { type: 'Polygon',
+    coordinates: [[[10, 40], [11, 40], [11, 41], [10, 40]]] } });
+  global.fetch = jest.fn(async () => ({ ok: true, json: async () => ({ type: 'FeatureCollection', features: [polygon('AT'), polygon('BG')] }) }));
+  const onRegionBoundaryCoverageChange = jest.fn();
+  const props = { ...defaults, aggregatedRegions: [{ id: 'r', name: 'Region', countryCodes: ['AT', 'BG', 'XK'] }],
+    onRegionBoundaryCoverageChange };
+  const view = render(<EnhancedLeafletMapWithVoice {...props} />); await settle();
+  expect(mockRegionalBoundaryLayerProps.data.features).toHaveLength(1);
+  expect(onRegionBoundaryCoverageChange).toHaveBeenLastCalledWith([
+    { id: 'r', name: 'Region', shownCountries: ['AT', 'BG'], missingCountries: ['XK'], total: 3 },
+  ]);
+  const layer = { bindTooltip: jest.fn() };
+  mockRegionalBoundaryLayerProps.onEachFeature(mockRegionalBoundaryLayerProps.data.features[0], layer);
+  expect(layer.bindTooltip.mock.calls[0][0]).toContain('Outlines shown: 2/3 · Missing outline: XK');
+  const moves = mockMap.setView.mock.calls.length;
+  view.rerender(<EnhancedLeafletMapWithVoice {...props} showGeographicBoundaries={false} />); await settle();
+  expect(onRegionBoundaryCoverageChange).toHaveBeenLastCalledWith([]);
+  expect(view.queryByTestId('geojson-network-boundaries')).toBeNull();
+  view.rerender(<EnhancedLeafletMapWithVoice {...props} aggregatedRegions={[]} />); await settle();
+  expect(onRegionBoundaryCoverageChange).toHaveBeenLastCalledWith([]);
+  expect(mockMap.setView).toHaveBeenCalledTimes(moves);
 });

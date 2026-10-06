@@ -1,0 +1,12 @@
+.model-mixed-creation { display:flex; flex-direction:column; gap:10px; border-top:1px solid var(--control-border, #aaa5); padding-top:16px; color:var(--control-text-primary); }
+.model-mixed-creation h3 { font-size:14px; font-weight:600; }
+.model-mixed-creation p, .model-mixed-creation label, .model-mixed-creation details, .model-mixed-creation dl { font-size:13px; line-height:1.5; }
+.model-mixed-creation small { font-size:12px; color:var(--control-text-secondary); }
+.model-mixed-creation label { display:flex; flex-direction:column; gap:6px; }
+.model-mixed-creation input, .model-mixed-creation button { min-height:38px; border:1px solid var(--control-border, #aaa5); border-radius:8px; padding:8px 12px; background:var(--control-surface); color:var(--control-text-primary); }
+.model-mixed-creation button:disabled { opacity:.5; cursor:not-allowed; }
+.model-mixed-creation dl > div { display:flex; justify-content:space-between; gap:12px; }
+.model-mixed-creation dd { text-align:right; }
+.model-mixed-creation dd small { display:block; }
+.model-mixed-creation [role=alert] { color:var(--status-error, #d34848); }
+.model-mixed-creation a { color:var(--accent-primary); text-decoration:underline; }

@@ -1,0 +1,5 @@
+.model-distillation-legend { position:absolute; z-index:650; bottom:96px; left:50%; transform:translateX(-50%); width:min(350px,calc(100% - 32px)); padding:12px 14px; border:1px solid var(--border-strong); border-radius:var(--radius-lg); background:var(--atlas-map-surface); color:var(--atlas-map-text); box-shadow:var(--atlas-map-shadow); font:12px/1.5 var(--font-sans); pointer-events:auto; }
+.model-distillation-legend p { margin:0; }
+.model-distillation-legend button { color:var(--text-primary); border-color:var(--border-strong); background:var(--control-surface); min-height:30px; }
+.model-distillation-legend .text-white { color:var(--text-primary); }
+@media(max-width:850px) { .model-distillation-legend { bottom:150px; } }

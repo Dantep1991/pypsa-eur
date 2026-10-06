@@ -7,6 +7,9 @@ import * as voiceHook from './hooks/useEmilVoice';
 // Only map rendering is mocked so every published geometry can be inspected.
 let mockMapFrames;
 let mockMapShouldFail;
+// Transaction fixtures supply their own physical links. Keep the separate live
+// cross-border dataset out of these two-country toy topologies.
+jest.mock('./data/electricity-cross-border.json', () => ({ records: [] }));
 jest.mock('./components/EnhancedLeafletMapWithVoice', () => (props) => {
   if (mockMapShouldFail) throw new Error('Map fixture failed');
   mockMapFrames.push(props);
@@ -182,6 +185,28 @@ async function resolveCountry(country, ok = true, scope = 'grid') {
   await flush();
 }
 
+test('Map display bubble visibility is wired to the map and retained when applying a mixed view', async () => {
+  const view = await loadCountries(['BE']);
+  fireEvent.click(view.getByRole('button', { name: 'Map display', exact: true }));
+  fireEvent.click(view.getByRole('button', { name: 'Bubbles & pies' }));
+  await flush();
+  expect(frame().showDataBubbles).toBe(false);
+  expect(frame().showNodeMarkers).toBe(true);
+  expect(window.localStorage.getItem('atlas-map-show-data-bubbles')).toBe('false');
+  fireEvent.click(view.getByRole('button', { name: 'Close Map display' }));
+  fireEvent.click(view.getByRole('button', { name: 'Geography Domain' }));
+  fireEvent.click(view.getByRole('button', { name: /mixed tso rings/i }));
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Build mixed view' })); });
+  await flush();
+  expect(frame().networkResolution).toBe('mixed');
+  expect(frame().showDataBubbles).toBe(false);
+  expect(frame().connections.length).toBeGreaterThan(0);
+  view.unmount();
+  render(<App />);
+  await flush();
+  expect(frame().showDataBubbles).toBe(false);
+});
+
 test('mixed TSO rings publish per-country resolutions as one complete map', async () => {
   const view = await loadCountries(['BE']);
   parseRequests = [];
@@ -319,7 +344,7 @@ test.each([false, true])('Portugal methane overlay preserves the mixed electrici
     networkResolutionByCountry: { ES: 'full', FR: 'bidding_zone', PT: 'nuts3' },
     overlayCarrierScopes: { gas: { countries: ['PT'], domains: ['Grid'] } },
   });
-  expect(view.getByRole('log').textContent).toContain('Verified — Portugal methane overlays');
+  expect(view.getByRole('log').textContent).toContain('Portugal methane overlays the unchanged electricity networks.');
 });
 
 test('explicit France land scope stays independent from the network geography', async () => {
@@ -502,7 +527,7 @@ test.each(['pass', 'repair'])('judge checks corrected geography again; final %s 
   expect(audits[1].afterContext.loadedCountryCodes).toEqual(['BE', 'FR']);
   expect(audits[1].afterContext.visibleMapLayers).toEqual(['Grid', 'Supply']);
   expect(frame().facilities.filter((node) => node.atlas_domain === 'Supply')).toHaveLength(2);
-  expect(view.getByRole('log').textContent).toContain(verdict === 'pass' ? 'Verified — Both countries' : 'Not verified — Mismatch remains.');
+  expect(view.getByRole('log').textContent).toContain(verdict === 'pass' ? 'Both countries and layers match.' : 'Mismatch remains.');
   expect(view.getByRole('log').textContent).not.toContain('Checked and corrected');
   expect(frame().activeCountryCodes).toEqual(['BE', 'FR']); // No second repair loop.
 });
@@ -517,8 +542,8 @@ test.each([0.1, true, '0.99', null, 2])('judge confidence %j cannot certify or t
   act(() => jest.advanceTimersByTime(250));
   await flush();
   expect(frame().activeCountryCodes).toEqual(['BE']);
-  expect(view.getByRole('log').textContent).toContain('Verification could not complete');
-  expect(view.getByRole('log').textContent).not.toContain('Verified —');
+  expect(view.getByRole('log').textContent).toContain('Unable to verify the update.');
+  expect(view.getByRole('log').textContent).not.toContain('Untrusted success claim.');
 });
 
 test('invalid country list cannot partially replace the map or start a legacy build', async () => {
@@ -551,7 +576,7 @@ test('judge network timeout releases the assistant without claiming verification
   act(() => jest.advanceTimersByTime(30000));
   await flush();
   expect(judgeSignal.aborted).toBe(true);
-  expect(view.getByRole('log').textContent).toContain('Verification could not complete');
+  expect(view.getByRole('log').textContent).toContain('Unable to verify the update.');
   expect(view.getByRole('textbox', { name: 'Message EMIL' }).disabled).toBe(false);
   expect(frame().activeCountryCodes).toEqual(['BE']);
 });
@@ -784,6 +809,7 @@ test('a cancelled judge correction cannot continue to later corrections or annou
 
 test('visible supply and demand reload at the new resolution, retain source metadata and do not publish early', async () => {
   const view = await loadCountries();
+  fireEvent.click(view.getByRole('button', { name: 'Map display', exact: true }));
   for (const domain of ['Supply', 'Demand']) {
     fireEvent.click(view.getByRole('button', { name: `${domain} map layer` }));
     await flush();
@@ -792,6 +818,8 @@ test('visible supply and demand reload at the new resolution, retain source meta
   expect(frame().facilities.filter((f) => f.atlas_domain === 'Demand')).toHaveLength(2);
   const before = geometry();
   holdRequests = true;
+  fireEvent.click(view.getByRole('button', { name: 'Close Map display' }));
+  fireEvent.click(view.getByRole('button', { name: 'Geography Domain', exact: true }));
   fireEvent.click(view.getByRole('button', { name: 'NUTS2', exact: true }));
   await flush();
   expect(pending).toHaveLength(3);
@@ -887,7 +915,7 @@ test.each([
   expect(geometry()).toEqual(before);
   expect(parseRequests).toHaveLength(0);
   expect(view.getByRole('button', { name: 'Grid map layer' }).getAttribute('aria-pressed')).toBe('true');
-  expect(view.getByRole('log').textContent).toContain('reasoning service is unavailable. No map changes were made');
+  expect(view.getByRole('log').textContent).toContain('Map assistant unavailable. Please retry.');
   expect(global.fetch.mock.calls.some(([url]) => String(url).endsWith('/api/map-agent/interpret'))).toBe(true);
   expect(global.fetch.mock.calls.some(([url]) => String(url).endsWith('/api/map-agent/judge'))).toBe(false);
   expect(view.getByRole('textbox', { name: 'Message EMIL' }).disabled).toBe(false);
@@ -895,6 +923,7 @@ test.each([
 
 test('compound model plan is not rewritten by a negation in a different clause', async () => {
   const view = await loadCountries();
+  fireEvent.click(view.getByRole('button', { name: 'Map display', exact: true }));
   fireEvent.click(view.getByRole('button', { name: 'Toggle multi-network overlay' }));
   await flush();
   interpreterPlan = [
@@ -902,6 +931,9 @@ test('compound model plan is not rewritten by a negation in a different clause',
     { intent: 'load_country', params: { country: 'France', resolution: 'nuts3', layers: ['Grid'], layer_mode: 'replace' } },
   ];
   await send(view, 'Show me France at NUTS3 with grid only, turn off the carrier overlay.');
+  if (!view.queryByRole('button', { name: 'Toggle multi-network overlay' })) {
+    fireEvent.click(view.getByRole('button', { name: 'Map display', exact: true }));
+  }
   expect(view.getByRole('button', { name: 'Toggle multi-network overlay' }).getAttribute('aria-pressed')).toBe('false');
   expect(view.getByRole('button', { name: 'Grid map layer' }).getAttribute('aria-pressed')).toBe('true');
   expect(frame().activeCountryCodes).toEqual(['FR']);
@@ -923,7 +955,7 @@ test('a stalled interpreter times out, preserves the map and permits a successfu
   act(() => jest.advanceTimersByTime(45000));
   await flush();
   expect(geometry()).toEqual(before);
-  expect(view.getByRole('log').textContent).toContain('reasoning service is unavailable');
+  expect(view.getByRole('log').textContent).toContain('Map assistant unavailable. Please retry.');
   expect(view.getByRole('textbox', { name: 'Message EMIL' }).disabled).toBe(false);
   holdInterpreter = false;
   interpreterPlan = [{ intent: 'add_country', params: { country: 'France' } }];
@@ -961,6 +993,7 @@ test('EMIL preserves older reading position while replying and offers a focused 
 
 test('model display actions change only node dots and boundaries and expose actual state to the judge', async () => {
   const view = await loadCountries(['FR']);
+  fireEvent.click(view.getByRole('button', { name: 'Map display', exact: true }));
   const before = geometry();
   const requestCount = parseRequests.length;
   interpreterPlan = [{ intent: 'set_map_display', params: { geographic_boundaries: false } }];
@@ -971,7 +1004,7 @@ test('model display actions change only node dots and boundaries and expose actu
   expect(view.getByRole('button', { name: 'Node markers', exact: true }).getAttribute('aria-pressed')).toBe('true');
   expect(view.getByRole('button', { name: 'Hide domain controls' })).toBeDefined();
   const auditRequest = global.fetch.mock.calls.filter(([url]) => String(url).endsWith('/api/map-agent/judge')).at(-1);
-  expect(JSON.parse(auditRequest[1].body).afterContext.mapDisplay).toEqual({ nodeMarkers: true, geographicBoundaries: false, domainControls: true });
+  expect(JSON.parse(auditRequest[1].body).afterContext.mapDisplay).toEqual({ nodeMarkers: true, dataBubbles: true, geographicBoundaries: false, domainControls: true });
   interpreterPlan = [{ intent: 'set_map_display', params: { node_markers: false, geographic_boundaries: true } }];
   await send(view, 'Hide dots and restore the boundaries');
   act(() => jest.advanceTimersByTime(250));
@@ -2037,6 +2070,7 @@ test.each(['gas', 'water', 'liquids', 'logistics'])('%s overlay compound geograp
 test.each([false, true])('agent overlay commands retain the conversation panel (already enabled=%s)', async enabled => {
   window.localStorage.setItem('atlas-network-overlay-carriers', '["electricity"]');
   const view = await loadCountries(['FR']);
+  fireEvent.click(view.getByRole('button', { name: 'Map display', exact: true }));
   if (enabled) {
     fireEvent.click(view.getByRole('button', { name: 'Toggle multi-network overlay' }));
     await flush();

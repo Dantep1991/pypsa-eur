@@ -1,3 +1,4 @@
+import { clearModelSceneCache } from './modelSceneCache';
 import {
   adaptModelScene,
   fetchModelScene,
@@ -5,6 +6,7 @@ import {
   modelSceneRequestUrl,
   resolveModelSceneDomains,
 } from './modelScene';
+beforeEach(clearModelSceneCache);
 
 const context = { mode: 'model', projectId: 'TYNDP 2026' };
 const scene = {
@@ -54,7 +56,7 @@ test('model scenes expose only the implemented lazy map domains', () => {
   expect(isModelSceneDomain('Grid')).toBe(true);
   expect(isModelSceneDomain('Supply')).toBe(true);
   expect(isModelSceneDomain('Storage')).toBe(true);
-  expect(isModelSceneDomain('Demand')).toBe(false);
+  expect(isModelSceneDomain('Demand')).toBe(true);
 });
 
 test('bound model layer selection keeps grid data available while changing visible domains', () => {
@@ -65,7 +67,7 @@ test('bound model layer selection keeps grid data available while changing visib
   )).toEqual({
     enabledDomains: ['Supply'],
     layers: ['grid', 'supply'],
-    visibility: { Grid: false, Supply: true, Storage: false },
+    visibility: { Grid: false, Supply: true, Storage: false, Demand: false },
   });
   expect(resolveModelSceneDomains(
     { Grid: false, Supply: true, Storage: false },
@@ -74,10 +76,13 @@ test('bound model layer selection keeps grid data available while changing visib
   )).toEqual({
     enabledDomains: ['Supply', 'Storage'],
     layers: ['grid', 'supply', 'storage'],
-    visibility: { Grid: false, Supply: true, Storage: true },
+    visibility: { Grid: false, Supply: true, Storage: true, Demand: false },
   });
-  expect(() => resolveModelSceneDomains({}, ['Demand'], 'replace')).toThrow(
-    'Demand is not available in the current canonical model scene.',
+  expect(resolveModelSceneDomains({}, ['Demand'], 'replace')).toMatchObject({
+    layers: ['grid', 'demand'], visibility: { Demand: true, Grid: false },
+  });
+  expect(() => resolveModelSceneDomains({}, ['Unknown'], 'replace')).toThrow(
+    'Unknown is not available in the current canonical model scene.',
   );
 });
 
@@ -121,6 +126,52 @@ test('fetchModelScene reports backend errors without JSON parse noise', async ()
     json: async () => ({ detail: 'carrier metadata is missing' }),
   }));
   await expect(fetchModelScene(context, {}, fetchImpl)).rejects.toThrow(/carrier metadata is missing/i);
+});
+
+test('a stalled topology request times out without waiting for transport cooperation', async () => {
+  jest.useFakeTimers();
+  try {
+    let signal;
+    const fetch = jest.fn((_url, options) => { signal = options.signal; return new Promise(() => {}); });
+    const assertion = expect(fetchModelScene(context, { timeoutMs: 10 }, fetch)).rejects.toThrow('timed out');
+    jest.advanceTimersByTime(10);
+    await assertion;
+    expect(signal.aborted).toBe(true);
+  } finally { jest.useRealTimers(); }
+});
+
+test('a stalled optional aggregation catalogue leaves the successfully loaded native map available', async () => {
+  jest.useFakeTimers();
+  try {
+    const fetch = jest.fn(async url => url.includes('aggregation-catalog') ? new Promise(() => {})
+      : { ok: true, json: async () => scene });
+    const request = fetchModelScene(context, { timeoutMs: 10 }, fetch);
+    // Let the topology body and scene adapter finish before expiring the catalogue.
+    for (let index = 0; index < 12; index++) await Promise.resolve();
+    jest.advanceTimersByTime(10);
+    const loaded = await request;
+    expect(loaded.facilities).toHaveLength(3);
+    expect(loaded.meta.warnings.join(' ')).toContain('timed out');
+  } finally { jest.useRealTimers(); }
+});
+
+test('selected Model scope must be confirmed by the API, never silently substituted', async () => {
+  const fetchImpl = jest.fn(async () => ({ ok: true, status: 200, json: async () => scene }));
+  await expect(fetchModelScene({ ...context, modelName: 'Branch' }, {}, fetchImpl)).rejects.toThrow(/did not confirm the selected Model scope/);
+  expect(fetchImpl).toHaveBeenCalledWith(expect.stringContaining('model_name=Branch'), expect.any(Object));
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+
+test('confirmed scenario evidence and requested year survive adaptation', () => {
+  const adapted = adaptModelScene({ ...scene, requested_year: 2050,
+    model_scope: { model_name: 'Branch', scenarios: ['Outage'] },
+    links: scene.links.map(line => ({ ...line, operational_state: {
+      status: 'disabled', reason: 'Max Flow = 0 and Min Flow = 0', model_name: 'Branch',
+      scenarios: ['Outage'], values: { 'Max Flow': 0, 'Min Flow': 0 },
+    } })),
+  }, context.projectId);
+  expect(adapted.meta).toMatchObject({ modelName: 'Branch', requestedYear: 2050, selectedYear: 2030 });
+  expect(adapted.connections[0].operational_state).toMatchObject({ status: 'disabled', model_name: 'Branch' });
 });
 
 test('fetchModelScene uses the configured Atlas API boundary', async () => {

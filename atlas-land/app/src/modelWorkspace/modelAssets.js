@@ -1,13 +1,39 @@
 import { atlasApiUrl } from '../config/api';
 import { adaptVisualisationCatalog, validatedResultRows } from './resultScene';
+import { validateAssetOutputProvenance } from './assetOutputContract';
 
 export const assetClassKey = value => String(value || '').replace(/\s/g, '').toLowerCase();
 
 export async function readAssetApi(path, options = {}, fetchImpl = window.fetch.bind(window)) {
-  const response = await fetchImpl(atlasApiUrl(path), { credentials: 'same-origin', ...options });
-  const payload = await response.json();
-  if (!response.ok) throw new Error(typeof payload.detail === 'string' ? payload.detail : `Model database request failed (${response.status}).`);
-  return payload;
+  const { apiBase, timeoutMs, signal, ...requestOptions } = options;
+  const controller = new AbortController();
+  let timer, rejectCancelled;
+  const cancelled = new Promise((_, reject) => { rejectCancelled = reject; });
+  const abort = () => {
+    controller.abort();
+    rejectCancelled(new DOMException('Model data loading cancelled', 'AbortError'));
+  };
+  if (signal?.aborted) throw new DOMException('Model data loading cancelled', 'AbortError');
+  signal?.addEventListener('abort', abort, { once: true });
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) timer = setTimeout(() => {
+    // Reject even when a transport ignores abort; late responses cannot publish.
+    // A distinct name, so a retry can tell the client timer from a service error that mentions a timeout.
+    rejectCancelled(Object.assign(new Error('Model data request timed out. Please try again.'), { name: 'TimeoutError' }));
+    controller.abort();
+  }, timeoutMs);
+  try {
+    return await Promise.race([cancelled, (async () => {
+      const response = await fetchImpl(atlasApiUrl(path, apiBase), {
+        credentials: 'same-origin', ...requestOptions, signal: controller.signal,
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(typeof payload.detail === 'string' ? payload.detail : `Model database request failed (${response.status}).`);
+      return payload;
+    })()]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
+  }
 }
 
 export function assetPath(projectId, suffix, params) {
@@ -61,7 +87,7 @@ export function inputAssetValues(payload) {
 }
 
 export function assetOutputSeries(payload, objects, context, selection) {
-  if (!payload.runs?.length || payload.project_id !== context.projectId) throw new Error('Outputs require explicit project and result-run provenance.');
+  validateAssetOutputProvenance(payload, context, selection);
   const rows = validatedResultRows(payload, context, selection);
   const byName = new Map();
   objects.forEach(obj => {
@@ -105,16 +131,19 @@ export function modelAssetFrame(objects, values = new Map(), label = '', selecte
       const key = JSON.stringify([p.lat, p.lon]);
       const group = groups.get(key) || { id: key, position: [p.lat, p.lon], nodes: [], objects: [], maximum: 0 };
       if (!group.nodes.some(item => item.id === node.id)) group.nodes.push(node);
-      if (!group.objects.some(item => item.id === obj.id)) group.objects.push({ ...obj, measurement: values.get(obj.id) });
-      group.maximum = Math.max(group.maximum, Math.abs(values.get(obj.id)?.value || 0));
+      const measurement = values.get(obj.id);
+      if (!group.objects.some(item => item.id === obj.id)) group.objects.push({ ...obj, measurement });
+      if (Number.isFinite(measurement?.value)) group.maximum = Math.max(group.maximum, Math.abs(measurement.value));
       groups.set(key, group);
     }
   }
   const markers = [...groups.values()].map(marker => ({ ...marker,
-    measured: marker.objects.filter(obj => obj.measurement?.value != null).length }));
-  const units = new Set([...values.values()].filter(row => row.value != null).map(row => row.unit));
+    measured: marker.objects.filter(obj => Number.isFinite(obj.measurement?.value)).length }));
+  const units = new Set(markers.flatMap(marker => marker.objects)
+    .filter(obj => Number.isFinite(obj.measurement?.value)).map(obj => obj.measurement.unit || ''));
   const maximum = markers.reduce((max, marker) => Math.max(max, marker.maximum), 0);
-  return { markers, maximum, label, selectedId, measurementMode: measurementMode || values.size > 0, hasValues: units.size === 1 };
+  return { markers, maximum, label, selectedId, measurementMode: measurementMode || values.size > 0,
+    hasValues: units.size === 1, incompatibleUnits: units.size > 1 };
 }
 
 export async function fetchAssetOutputsCatalog(projectId, version, className, signal, onProgress = () => {}) {

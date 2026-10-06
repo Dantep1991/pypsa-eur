@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import ModelControlHelp from './ModelControlHelp';
+import ModelRegionalSelection from './ModelRegionalSelection';
 import { GEOGRAPHY_LEVELS, regionAssignment } from '../modelWorkspace/modelAggregation';
 import './ModelAggregationControls.css';
+import { useWorkspaceAgentController, useWorkspaceAgentRegistry } from '../agentWorkspace/react';
+import { enumField } from '../agentWorkspace/registry';
 
 export default function ModelAggregationControls({ catalog, countries, value, status, nativeLabel, onApply }) {
   const [schemeId, setSchemeId] = useState('ec-high-level');
@@ -21,10 +24,37 @@ export default function ModelAggregationControls({ catalog, countries, value, st
     catch (issue) { setError(issue.message); }
   };
   const counts = status?.preview?.meta.preview.counts;
+  const agent = useWorkspaceAgentRegistry();
+  useWorkspaceAgentController('geography', {
+    ready: Boolean(catalog && !busy),
+    fields: {
+      resolution: enumField('Network geography', ['native', ...GEOGRAPHY_LEVELS.filter(([id]) => id !== catalog?.native_resolution && available(id)).map(([id]) => id)]),
+      schemeId: enumField('Regional scheme', schemes.map(row => ({ value: row.id, label: row.name || row.label || row.id }))),
+      regionIds: { ...enumField('Regional groups', schemes.flatMap(item => item.regions.map(row => ({ value: row.id,
+        label: row.name || row.label || row.id, countries: row.countries, schemeId: item.id })))), type: 'list' },
+    },
+    actions: { show: { description: 'Apply native, bidding-zone, country or named regional aggregation.' },
+      configure: { description: 'Select a regional scheme and its groups before applying.' } },
+    state: { resolution: value, schemeId: scheme?.id, regionIds, loading: busy, error: error || status?.error, counts },
+  }, async (action, values) => {
+    const nextScheme = values.schemeId || scheme?.id, nextRegions = values.regionIds || regionIds;
+    setSchemeId(nextScheme); setRegionIds(nextRegions); setError('');
+    const resolution = values.resolution || value;
+    if (resolution === 'regional') {
+      setRegionalOpen(true);
+      regionAssignment(catalog, nextScheme, nextRegions, countries);
+    } else setRegionalOpen(false);
+    if (action === 'show') {
+      onApply(resolution, resolution === 'regional' ? { schemeId: nextScheme, regionIds: nextRegions } : {});
+      const next = await agent.wait('geography', item => item?.ready && (item.state.resolution === resolution || item.state.error));
+      if (next.state.error) throw new Error(next.state.error);
+    }
+    return action === 'configure' ? 'Geography controls selected.' : 'Model geography updated.';
+  });
   return <div className="model-aggregation-controls space-y-2 rounded-xl border border-white/10 p-3" aria-label="Grid aggregation">
     <div className="flex justify-between items-center"><span className="text-[10px] font-semibold">Network geography</span>
       <ModelControlHelp label="Network geography"><p>Only existing nodes in this model version are grouped. No finer data is added. Unmapped nodes remain native.</p>
-        <p>Published planning regions overlap. Select disjoint regions; countries outside the selection remain separate. Sources and editions are shown below.</p>
+        <p>Select multiple published regions. Overlapping selections are combined for this map view, with each country counted once. Countries outside the selection remain separate. Published definitions are unchanged.</p>
         <p>Flows are signed net exchanges across the new boundary. Internal lines are retained in source records. Aggregated capacities are not new operational transfer limits.</p></ModelControlHelp></div>
     <select aria-label="Model network geography" value={regionalOpen ? 'regional' : value} disabled={busy || !catalog}
       className="w-full rounded-lg border border-white/10 bg-transparent px-2 py-2 text-[11px]"
@@ -35,22 +65,9 @@ export default function ModelAggregationControls({ catalog, countries, value, st
       {value === 'mixed' && <option value="mixed" disabled>Mixed TSO view</option>}
     </select>
     {(regionalOpen || value === 'regional') && <>
-      <select aria-label="Regional scheme" value={scheme?.id || ''} className="w-full rounded-lg border border-white/10 bg-transparent p-2 text-[11px]"
-        onChange={event => { setSchemeId(event.target.value); setRegionIds([]); setError(''); }}>
-        {schemes.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}
-      </select>
-      <div className="space-y-1" aria-label="Published regions">{scheme?.regions.map(region => {
-        const present = region.countries.filter(country => countries.includes(country));
-        const overlaps = chosen.some(item => item.id !== region.id && item.countries.some(country => present.includes(country)));
-        return <label key={region.id} className={`flex gap-2 text-[10px] ${!present.length || overlaps ? 'opacity-50' : ''}`}>
-          <input type="checkbox" checked={regionIds.includes(region.id)} disabled={!present.length || overlaps}
-            onChange={event => setRegionIds(previous => event.target.checked ? [...previous, region.id] : previous.filter(id => id !== region.id))} />
-          <span>{region.name} <span className="text-tj-slate">({present.length})</span></span>
-        </label>;
-      })}</div>
-      <button type="button" className="w-full rounded-lg border border-tj-gold/40 bg-tj-gold/15 p-2 text-[11px] font-semibold" disabled={!regionIds.length || busy} onClick={apply}>Apply regions</button>
-      <details className="text-[9px] text-tj-slate"><summary>Membership & sources</summary>{chosen.map(region => <p key={region.id} className="mt-1">
-        {region.name}: {region.countries.filter(country => countries.includes(country)).join(', ')} · {region.edition} · <a href={region.source_url} target="_blank" rel="noreferrer">Source</a></p>)}</details>
+      <ModelRegionalSelection catalog={catalog} countries={countries} schemeId={scheme?.id} regionIds={regionIds} busy={busy}
+        onChange={selection => { setSchemeId(selection.schemeId); setRegionIds(selection.regionIds); setError(''); }} />
+      <button type="button" className="model-aggregation-apply w-full rounded-lg border p-2 text-[11px] font-semibold" disabled={!chosen.length || busy} onClick={apply}>{busy ? 'Applying regions…' : 'Apply regions'}</button>
     </>}
     {counts && <p className="text-[9px] text-tj-slate">{counts.sourceNodes} → {counts.projectedNodes} nodes · {counts.projectedLinks} interfaces · {counts.internalizedLinks} internal lines</p>}
     {!!status?.preview?.meta.preview.missingMappings?.length && <p className="text-[9px] text-tj-slate">{status.preview.meta.preview.missingMappings.length} unmapped nodes kept native.</p>}

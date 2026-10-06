@@ -100,7 +100,8 @@ test('native flow loads matching-run limit series at the selected dates', async 
   expect(fetchImpl).toHaveBeenCalledTimes(3);
   expect(scene.lines[0].reportedLimits.get(row.time_bucket)).toEqual({ unit: 'MW', forward: 100, reverse: 100 });
   expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toMatchObject({run_ids:['run'],granularity:'hour',
-    date_from:'2050-01-01',date_to:'2050-01-01T23:59:59',entity_names:['Exact']});
+    date_from:'2050-01-01',date_to:'2050-01-01T23:59:59',entity_names:['Exact'],use_cache:true,response_format:'flow_series'});
+  expect(scene.analysis_query.response_format).toBeUndefined();
 });
 
 test('a foreign capacity quantity cannot be used as a declared limit', async () => {

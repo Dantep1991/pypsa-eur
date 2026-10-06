@@ -7,6 +7,8 @@ import { fetchLolaFlowScene, fetchLolaFlowTopology } from '../modelWorkspace/lol
 import {fetchFlowYear} from '../modelWorkspace/flowHistory';
 import {fetchFlowHistory} from '../modelWorkspace/flowHistoryView';
 import {RESULT_SERIES_COLORS} from '../modelWorkspace/resultColors';
+import {createWorkspaceRegistry} from '../agentWorkspace/registry';
+import {WorkspaceAgentProvider} from '../agentWorkspace/react';
 
 const capacityToggle=()=>within(document.getElementById('flow-panel-capacity')).getByLabelText('Near capacity',{exact:true});
 const historyToggle=()=>within(screen.getByRole('region',{name:'Connection history'})).getByLabelText('Near capacity',{exact:true});
@@ -39,6 +41,109 @@ beforeEach(() => {
   props = { context, modelVersion: 'v1', selectedId: '', onSelect: jest.fn(), onFrame: jest.fn(), onClose: jest.fn() };
 });
 
+test('the agent can request stopped playback while loading its first flows', async () => {
+  const registry = createWorkspaceRegistry();
+  registry.bind('Example:v1', {});
+  render(<WorkspaceAgentProvider value={registry}><LolaFlowWorkspace {...props} /></WorkspaceAgentProvider>);
+  await waitFor(() => expect(registry.controllers.get('flow')?.ready).toBe(true));
+  let done = false, failure, reply;
+  act(() => { registry.controllers.get('flow').execute('show', { playing: false }).then(
+    value => { reply = value; done = true; }, error => { failure = error; done = true; }); });
+  for (let index = 0; !done && index < 100; index++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 25)); });
+  expect(failure).toBeUndefined();
+  expect(done).toBe(true);
+  expect(reply).toBe('1 connections shown.');
+  expect(registry.controllers.get('flow').state.playing).toBe(false);
+});
+
+test('flow reload preserves an existing selected connection', async () => {
+  render(<LolaFlowWorkspace {...props} selectedId={scene.lines[0].id} />);
+  await waitFor(() => expect(screen.getByText('Load flows')).toBeEnabled());
+  fireEvent.click(screen.getByText('Load flows'));
+  await screen.findByRole('region', { name: 'Connection history' });
+  expect(props.onSelect).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByText('Load flows'));
+  await waitFor(() => expect(fetchLolaFlowScene).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.getByText('Load flows')).toBeEnabled());
+  expect(props.onSelect).not.toHaveBeenCalled();
+});
+
+test('flow reload preserves its current reported time period', async () => {
+  const periods = ['2050-01-01T00:00:00Z', '2050-01-01T01:00:00Z'];
+  fetchLolaFlowScene.mockResolvedValue({ ...scene, periods,
+    selection: { ...scene.selection, granularity: 'hour' } });
+  render(<LolaFlowWorkspace {...props} />);
+  await waitFor(() => expect(screen.getByText('Load flows')).toBeEnabled());
+  fireEvent.click(screen.getByText('Load flows'));
+  await screen.findByRole('region', { name: 'Connection history' });
+  fireEvent.change(screen.getByLabelText('Flow period'), { target: { value: '1' } });
+  fireEvent.click(screen.getByText('Load flows'));
+  await waitFor(() => expect(fetchLolaFlowScene).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.getByText('Load flows')).toBeEnabled());
+  expect(screen.getByLabelText('Flow period')).toHaveValue('1');
+});
+
+test('flow reload clears a connection not present in the selected run', async () => {
+  render(<LolaFlowWorkspace {...props} selectedId="Line:not-in-this-run" />);
+  await waitFor(() => expect(screen.getByText('Load flows')).toBeEnabled());
+  fireEvent.click(screen.getByText('Load flows'));
+  await screen.findByRole('region', { name: 'Connection history' });
+  expect(props.onSelect).toHaveBeenLastCalledWith('');
+});
+
+test('shared catalogue is reused after closing/reopening, with no second discovery', async () => {
+  const shared = { state: 'ready', catalog: { ...catalog, project_id: 'Example', model_version: 'v1' } };
+  const view = render(<LolaFlowWorkspace {...props} catalogStatus={shared} />);
+  expect(screen.queryByText(/Reading result catalogues/)).toBeNull();
+  await waitFor(() => expect(screen.getByText('Load flows')).toBeEnabled());
+  expect(fetchModelResultCatalog).not.toHaveBeenCalled();
+  expect(screen.getByRole('region', { name: 'Grid flow workspace' })).toBeInTheDocument();
+  view.unmount();
+  render(<LolaFlowWorkspace {...props} catalogStatus={shared} />);
+  await waitFor(() => expect(screen.getByText('Load flows')).toBeEnabled());
+  expect(fetchModelResultCatalog).not.toHaveBeenCalled();
+});
+
+test('workspace and History animation toggles control the same frame setting', async () => {
+  render(<LolaFlowWorkspace {...props} />);
+  await waitFor(() => expect(screen.getByText('Load flows')).toBeEnabled());
+  fireEvent.click(screen.getByText('Load flows'));
+  await screen.findByRole('region', { name: 'Connection history' });
+  expect(screen.getByLabelText('Animate chart transfers')).toBeChecked();
+  fireEvent.click(screen.getByLabelText('Animate chart transfers'));
+  expect(screen.getByLabelText('Animate direction')).not.toBeChecked();
+  expect(props.onFrame.mock.calls.at(-1)[0].animated).toBe(false);
+  fireEvent.click(screen.getByLabelText('Animate direction'));
+  expect(screen.getByLabelText('Animate chart transfers')).toBeChecked();
+  expect(props.onFrame.mock.calls.at(-1)[0].animated).toBe(true);
+});
+
+test('speed changes map and History motion without requerying, changing values or playing the timeline', async () => {
+  render(<LolaFlowWorkspace {...props} />);
+  await waitFor(() => expect(screen.getByText('Load flows')).toBeEnabled());
+  fireEvent.click(screen.getByText('Load flows'));
+  await screen.findByRole('region', { name: 'Connection history' });
+  const speed = screen.getByRole('slider', { name: 'Flow animation speed' });
+  expect(speed).toHaveValue('1');
+  expect(speed).toHaveAttribute('min', '0.25');
+  expect(speed).toHaveAttribute('max', '3');
+  fireEvent.change(speed, { target: { value: '.25' } });
+  expect(props.onFrame.mock.calls.at(-1)[0]).toMatchObject({ animationSpeed: .25, animated: true });
+  expect(props.onFrame.mock.calls.at(-1)[0].lines[0].value).toBe(12);
+  fireEvent.change(speed, { target: { value: '3' } });
+  expect(screen.getByLabelText('Flow animation speed value')).toHaveTextContent('3×');
+  expect(props.onFrame.mock.calls.at(-1)[0].animationSpeed).toBe(3);
+  expect(fetchLolaFlowScene).toHaveBeenCalledTimes(1);
+  expect(fetchFlowHistory).not.toHaveBeenCalled();
+  expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
+  fireEvent.click(screen.getByLabelText('Animate chart transfers'));
+  expect(speed).toBeDisabled();
+  fireEvent.click(screen.getByLabelText('Animate direction'));
+  expect(speed).toBeEnabled();
+  expect(speed).toHaveValue('3');
+  expect(props.onFrame.mock.calls.at(-1)[0]).toMatchObject({ animationSpeed: 3, animated: true });
+});
+
 test.each(['day','week','month'])('History and map navigation preserve the loaded %s contract',async granularity=>{
   const flow={...catalog.runs[0].quantities[0],available_granularities:['hour','day','week','month','year'],
     units_by_granularity:{hour:'MW',day:'GWh',week:'GWh',month:'GWh',year:'GWh'}};
@@ -55,9 +160,7 @@ test.each(['day','week','month'])('History and map navigation preserve the loade
   await waitFor(()=>expect(screen.getByText('Show period on map')).toBeEnabled());
   expect(screen.getByLabelText('History resolution')).toHaveTextContent(`${{day:'Daily',week:'Weekly',month:'Monthly'}[granularity]} · Flow · GWh`);
   fireEvent.click(screen.getByText('Show period on map'));
-  await waitFor(()=>expect(fetchLolaFlowScene).toHaveBeenCalledTimes(2));
-  expect(fetchLolaFlowScene.mock.calls[1][1]).toMatchObject({granularity,propertyName:'Flow',unit:'GWh',dateFrom:'2050-01-01',
-    dateTo:granularity==='day'?'2050-01-01':granularity==='week'?'2050-01-02':'2050-01-31'});
+  expect(fetchLolaFlowScene).toHaveBeenCalledTimes(1); // Already loaded: no re-read.
   expect(screen.getByLabelText('Flow time resolution').value).toBe(granularity);
 });
 
@@ -186,8 +289,8 @@ test('Near capacity is one shared bidirectional setting for map and History, wit
   fireEvent.click(screen.getByRole('tab',{name:'Time & display'}));
   fireEvent.click(screen.getByText('Load flows'));
   await waitFor(()=>expect(fetchLolaFlowScene).toHaveBeenCalledTimes(2));
-  await waitFor(()=>expect(historyToggle()).not.toBeChecked());
-  expect(capacityToggle()).not.toBeChecked();
+  await waitFor(()=>expect(historyToggle()).toBeChecked());
+  expect(capacityToggle()).toBeChecked();
 });
 
 const quality = { schema: 'nohm.results.quality.v1', policy: 'reject', conflicted_entity_count: 1,
@@ -215,7 +318,8 @@ test('native hourly defaults to one day, Daily remains available, and uses perio
   expect(screen.getByLabelText('Animate direction')).not.toBeVisible();
   fireEvent.click(screen.getByRole('tab',{name:'Time & display'}));
   fireEvent.change(screen.getByLabelText('Flow time resolution'),{target:{value:'day'}});
-  expect(screen.getByLabelText('Flow end date').value).toBe('2050-01-07');
+  expect(screen.getByLabelText('Flow end date').value).toBe('2050-01-01');
+  await waitFor(()=>expect(fetchLolaFlowScene).toHaveBeenCalledTimes(2));
 });
 
 test('valid-record retry requires an explicit click, reports exclusions and is not sticky', async () => {
@@ -291,7 +395,39 @@ test.each([false,true])('Annual selects %s native-net availability, enables limi
   expect(capacityToggle()).toBeChecked();
   fireEvent.change(screen.getByLabelText('Flow time resolution'),{target:{value:'hour'}});
   await waitFor(()=>expect(screen.getByText('Load flows')).not.toBeDisabled());
-  fireEvent.click(screen.getByText('Load flows'));
   await waitFor(()=>expect(fetchLolaFlowScene).toHaveBeenCalledTimes(2));
   expect(fetchLolaFlowScene.mock.calls[1][1]).toMatchObject({propertyName:'Flow',granularity:'hour',unit:'MW',derivedNetFlow:false});
+});
+
+test('map cursor, history inspect and playback share one period; both resolution controls reload the native quantity', async () => {
+  const flow={...catalog.runs[0].quantities[0],available_granularities:['hour','day'],
+    units_by_granularity:{hour:'MW',day:'GWh'}};
+  fetchModelResultCatalog.mockResolvedValue({runs:[{...catalog.runs[0],quantities:[flow]}]});
+  const periods=['2050-01-01T00:00:00Z','2050-01-01T01:00:00Z','2050-01-01T02:00:00Z'];
+  fetchLolaFlowScene.mockImplementation(async(_context,selection)=>({...scene,selection,
+    periods:selection.granularity==='hour'?periods:['2050-01-01','2050-01-02'],unit:selection.unit,
+    lines:[{...scene.lines[0],values:new Map(periods.map((p,i)=>[p,i+1]))}]}));
+  fetchFlowHistory.mockImplementation(async(_context,source)=>source);
+  render(<LolaFlowWorkspace {...props}/>);
+  await waitFor(()=>expect(screen.getByText('Load flows')).toBeEnabled());
+  fireEvent.click(screen.getByText('Load flows'));
+  await waitFor(()=>expect(screen.getByLabelText('History inspected period')).toHaveAttribute('max','8759'));
+  fireEvent.change(screen.getByLabelText('Flow period'),{target:{value:'2'}});
+  expect(screen.getByLabelText('History inspected period')).toHaveValue('2');
+  fireEvent.change(screen.getByLabelText('History inspected period'),{target:{value:'1'}});
+  expect(screen.getByLabelText('Flow period')).toHaveValue('1');
+  expect(props.onFrame.mock.calls.at(-1)[0].period).toBe(periods[1]);
+  expect(fetchLolaFlowScene).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByText('Play timeline'));
+  await waitFor(()=>expect(screen.getByLabelText('Flow period')).toHaveValue('2'),{timeout:1500});
+  expect(screen.getByLabelText('History inspected period')).toHaveValue('2');
+  fireEvent.click(screen.getByText('Pause'));
+  fireEvent.change(screen.getByLabelText('History aggregation'),{target:{value:'day'}});
+  await waitFor(()=>expect(fetchLolaFlowScene).toHaveBeenCalledTimes(2));
+  expect(fetchLolaFlowScene.mock.calls[1][1]).toMatchObject({granularity:'day',unit:'GWh',dateFrom:'2050-01-01',dateTo:'2050-01-01'});
+  expect(screen.getByLabelText('Flow time resolution')).toHaveValue('day');
+  await waitFor(()=>expect(screen.getByLabelText('History aggregation')).toBeEnabled());
+  fireEvent.change(screen.getByLabelText('Flow time resolution'),{target:{value:'hour'}});
+  await waitFor(()=>expect(fetchLolaFlowScene).toHaveBeenCalledTimes(3));
+  expect(screen.getByLabelText('History aggregation')).toHaveValue('hour');
 });

@@ -79,3 +79,16 @@ test('empty composition is cached without repeatedly reading generators', () => 
   expect(resolve(source)).toBeNull();
   expect(reads).toBe(1);
 });
+
+test('mixed-view Supply tooltips show a human-readable geography, values, shares and dated context', () => {
+  const mix = createGenerationMixResolver(() => '#00ff00')(site([
+    generator('wind', 300, { bus: 'atlas-aggregate:node:country%3AFR', bus_label: 'FR',
+      properties: [{ Property: 'Input date', Value: '2030-01-01' }, { Property: 'Input basis', Value: 'Selected model' }] }),
+    generator('solar', 100),
+  ]));
+  expect(mix.tooltipContent()).toContain('<strong>FR</strong>');
+  expect(mix.tooltipContent()).toContain('Installed capacity: 400 MW');
+  expect(mix.tooltipContent()).toContain('75.0% (300 MW)');
+  expect(mix.tooltipContent()).toContain('2030-01-01 · Selected model');
+  expect(mix.tooltipContent()).not.toContain('atlas-aggregate');
+});

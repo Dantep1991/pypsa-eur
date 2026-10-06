@@ -102,7 +102,7 @@ function loopbackUpstream(value, label = 'Preview backend') {
 
 function createPreviewServer({
   buildDir, mount = '/atlas', apiPrefix = '/atlas-api', backend = 'http://127.0.0.1:5003',
-  modelBackend = '', stripApiPrefix = true, allowedOrigins = [],
+  modelBackend = '', theoBackend = '', stripApiPrefix = true, allowedOrigins = [],
 }) {
   const root = fs.realpathSync(buildDir);
   if (!fs.statSync(path.join(root, 'index.html')).isFile()) throw new Error('Build has no index.html.');
@@ -114,6 +114,7 @@ function createPreviewServer({
   }
   const upstream = loopbackUpstream(backend);
   const modelUpstream = modelBackend ? loopbackUpstream(modelBackend, 'Preview model backend') : null;
+  const theoUpstream = theoBackend ? loopbackUpstream(theoBackend, 'Preview Theo backend') : null;
   const configuredAllowedOrigins = normalizeAllowedOrigins(allowedOrigins);
   const frameAncestors = ["'self'", ...configuredAllowedOrigins].join(' ');
   const staticSecurityHeaders = Object.freeze({
@@ -202,8 +203,10 @@ function createPreviewServer({
     if (rawPathname === proxyMount || rawPathname.startsWith(`${proxyMount}/`)) {
       const proxiedPath = stripApiPrefix ? (rawPathname.slice(proxyMount.length) || '/') : rawPathname;
       const usesModelBackend = proxiedPath.startsWith('/api/atlas/projects')
-        || proxiedPath.startsWith('/api/solutions');
-      const selectedUpstream = modelUpstream && usesModelBackend
+        || proxiedPath.startsWith('/api/solutions') || proxiedPath.startsWith('/api/emil/database/');
+      const upstreamPath = modelUpstream && proxiedPath.startsWith('/api/emil/database/')
+        ? proxiedPath.replace('/api/emil/database/', '/api/database/') : proxiedPath;
+      const selectedUpstream = theoUpstream && proxiedPath.startsWith('/api/theo/') ? theoUpstream : modelUpstream && usesModelBackend
         ? modelUpstream
         : upstream;
       const headers = forwardedHeaders(req.headers);
@@ -211,7 +214,7 @@ function createPreviewServer({
       // Preserve browser Origin and cookies. Never substitute a permitted Origin.
       const proxy = http.request(selectedUpstream, {
         method: req.method,
-        path: `${proxiedPath}${query}`,
+        path: `${upstreamPath}${query}`,
         headers,
       }, response => {
         res.writeHead(response.statusCode, forwardedHeaders(response.headers));
@@ -287,6 +290,7 @@ if (require.main === module) {
     buildDir: path.resolve(__dirname, '..', process.env.NOHM_ATLAS_PREVIEW_BUILD || 'build-preview'),
     mount, apiPrefix, backend: process.env.NOHM_ATLAS_PREVIEW_BACKEND || 'http://127.0.0.1:5003',
     modelBackend: process.env.NOHM_ATLAS_PREVIEW_MODEL_BACKEND || '',
+    theoBackend: process.env.NOHM_ATLAS_PREVIEW_THEO_BACKEND || '',
     allowedOrigins: String(process.env.NOHM_ATLAS_PREVIEW_ALLOWED_ORIGINS || '')
       .split(',').map(value => value.trim()).filter(Boolean),
   });

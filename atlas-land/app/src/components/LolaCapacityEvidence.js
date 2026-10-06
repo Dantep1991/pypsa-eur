@@ -1,5 +1,7 @@
 import React,{useEffect,useMemo,useRef,useState} from 'react';
 import {fetchFlowYear,hourlyEvidenceSelection,capacityAtThreshold} from '../modelWorkspace/flowHistory';
+import {useWorkspaceAgentController} from '../agentWorkspace/react';
+import {boolField,numberField} from '../agentWorkspace/registry';
 
 export default function LolaCapacityEvidence({projectId,scene,onEvidence,nearPercent=99}) {
   const [status,setStatus]=useState({state:'idle'}),[threshold,setThreshold]=useState(5);
@@ -24,10 +26,32 @@ export default function LolaCapacityEvidence({projectId,scene,onEvidence,nearPer
   };
   const available=hourlyEvidenceSelection(scene);
   const values=stats?[...stats.values()]:[];
+  const cancel=()=>{controllerRef.current?.abort();setStatus({state:'cancelled'});};
+  useWorkspaceAgentController('flow_capacity',{
+    ready:true,
+    fields:{enabled:boolField('Colour map by hours near capacity'),threshold:numberField('Highlight percentage of comparable hours',0,100)},
+    actions:{calculate:{description:'Start the full-year capacity-hours calculation. Returns immediately with actual progress; do not claim it has finished until state is ready.'},
+      configure:{description:'Change colouring or the threshold using completed hourly evidence; no reread.'},cancel:{description:'Cancel capacity analysis without applying partial evidence.'}},
+    state:{status:status.state,progress:status.state==='loading'?status:null,error:status.error,
+      available:Boolean(available),evidence:Boolean(evidence),enabled,threshold,nearPercent,
+      highlighted:values.filter(item=>item.share!=null&&item.share>=threshold/100).length,connections:values.length},
+  },async(action,updates)=>{
+    if(action==='cancel'){cancel();return 'Capacity analysis cancelled.';}
+    if(updates.enabled===true&&!evidence)throw new Error('Calculate capacity hours before enabling its map colours.');
+    if(updates.enabled!=null)setEnabled(updates.enabled);
+    if(updates.threshold!=null)setThreshold(updates.threshold);
+    if(action==='calculate'){
+      if(!available)throw new Error('No compatible hourly quantity is registered for this selection.');
+      if(evidence){setEnabled(true);return 'Cached capacity hours shown.';}
+      if(status.state!=='loading')calculate();
+      return 'Calculating capacity hours. Progress is shown in Capacity.';
+    }
+    return 'Capacity display updated.';
+  });
   return <div className="lola-capacity-analysis">
     <p className="lola-flow-note">Full-year hours near capacity, across all mapped connections. First calculation may take several minutes; results are reused in this session.</p>
     {!evidence&&<button className="lola-flow-primary" disabled={!available||status.state==='loading'} onClick={calculate}>Calculate capacity hours</button>}
-    {status.state==='loading'&&<div role="status" className="lola-capacity-progress"><span>{status.completed}/{status.total||'…'} windows · {status.phase}</span><progress max={status.total||1} value={status.completed||0}/><button onClick={()=>{controllerRef.current.abort();setStatus({state:'cancelled'});}}>Cancel capacity analysis</button></div>}
+    {status.state==='loading'&&<div role="status" className="lola-capacity-progress"><span>{status.completed}/{status.total||'…'} windows · {status.phase}</span><progress max={status.total||1} value={status.completed||0}/><button onClick={cancel}>Cancel capacity analysis</button></div>}
     {status.state==='error'&&<p role="alert">{status.error}</p>}
     {status.state==='cancelled'&&<p>Cancelled. No partial result applied.</p>}
     {!available&&<p>No compatible hourly quantity is registered for this selection.</p>}

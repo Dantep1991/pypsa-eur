@@ -1,0 +1,9 @@
+.model-portal-controls { display:grid; gap:8px; margin-bottom:12px; }
+.model-portal-link { display:flex; align-items:center; gap:12px; width:100%; min-height:48px; padding:12px; border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--control-surface); color:var(--text-primary); text-align:left; font:500 14px/1.4 var(--font-sans); }
+.model-portal-link:hover { background:var(--bg-hover); border-color:var(--accent-primary-ui); }
+.model-portal-link:focus-visible { outline:2px solid var(--accent-primary-ui); outline-offset:2px; }
+.model-portal-link:disabled { opacity:.5; cursor:not-allowed; }
+.model-portal-link > span { flex:1; }
+.model-portal-link__icon { flex-shrink:0; color:var(--accent-primary-text); }
+.model-portal-link__arrow { flex-shrink:0; color:var(--text-muted); }
+.model-portal-controls p { margin:0; font-size:12px; color:var(--text-muted); }

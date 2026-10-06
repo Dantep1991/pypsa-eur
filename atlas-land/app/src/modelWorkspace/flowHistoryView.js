@@ -1,4 +1,4 @@
-import {fetchFlowYear, historySamples} from './flowHistory';
+import {fetchFlowYear, historySamples, accumulateCapacityEvidence} from './flowHistory';
 import {fetchLolaFlowScene, selectedFlowSamples, FLOW_RESOLUTIONS} from './lolaFlowData';
 import {flowPeriodMetrics} from './flowPeriodMetrics';
 
@@ -17,6 +17,19 @@ export async function fetchFlowHistory(context, scene, name, options = {}, fetch
   // Annual already contains the exact native/derived net observation, with its
   // own units and directional limits. Do not replace it with an hourly mean.
   if (resolution === 'year') return scene;
+  const year = String(scene.selection.period);
+  if (scene.selection.dateFrom === `${year}-01-01` && scene.selection.dateTo === `${year}-12-31`) {
+    const lines = scene.lines.filter(line => line.name === name);
+    if (!lines.length) throw new Error('History connection is absent from the loaded flows.');
+    const history = {...scene, lines};
+    if (resolution === 'hour') {
+      const stats = new Map(); accumulateCapacityEvidence(stats, history);
+      const expectedHours = (Date.UTC(Number(year)+1,0,1)-Date.UTC(Number(year),0,1))/3600000;
+      stats.forEach(item => {item.expectedHours=expectedHours;item.share=item.validHours?item.nearHours/item.validHours:null;});
+      return {...history, stats};
+    }
+    return history;
+  }
   if (resolution === 'hour') return fetchFlowYear(context, scene, [name], options, fetchScene);
   const selection = {...scene.selection, dateFrom:`${scene.selection.period}-01-01`,
     dateTo:`${scene.selection.period}-12-31`};

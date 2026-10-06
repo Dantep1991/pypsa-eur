@@ -2,6 +2,7 @@ import {
   adaptDistillationPreview,
   decorateDistillationRecord,
   distillationPreviewRequestUrl,
+  fetchDistillationPreview,
 } from './distillationPreview';
 
 const payload = {
@@ -26,6 +27,13 @@ test('builds an explicit model-version and country-scoped request', () => {
   )).toBe('/api/atlas/projects/TYNDP_2026_Scenarios/distillation-preview?countries=ES%2CFR&carrier=electricity&layers=grid%2Csupply&version=v3.0.0&year=2030');
 });
 
+test('a subset request carries exact selected Model identity and rejects a mismatched response', async () => {
+  const context = { mode: 'model', projectId: payload.project_id, modelName: 'Branch' };
+  expect(distillationPreviewRequestUrl(context, { countries: ['ES'] })).toContain('model_name=Branch');
+  await expect(fetchDistillationPreview(context, { countries: ['ES'], modelVersion: payload.model_version },
+    async () => ({ ok: true, json: async () => ({ ...payload, model_scope: { model_name: 'Base' } }) }))).rejects.toThrow(/selected Model/);
+});
+
 test('validates reconciled, read-only previews and indexes source identities', () => {
   const preview = adaptDistillationPreview(payload, 'TYNDP_2026_Scenarios', 'v3.0.0');
   expect(preview.classificationByEntityId.get('Line:ES00-FR00').status).toBe('boundary_crossing');
@@ -39,7 +47,7 @@ test('shows retained objects, marks cut links, and can ghost or hide excluded co
   const preview = adaptDistillationPreview(payload);
   const link = decorateDistillationRecord({ id: 'Line:ES00-FR00', properties: [] }, preview, false);
   expect(link.atlas_distillation_status).toBe('boundary_crossing');
-  expect(link.atlas_distillation_color).toBe('#f59e0b');
+  expect(link.atlas_distillation_color).toBe('#F2A65A');
   expect(link.dash_array).toBe('8 5');
   expect(link.atlas_distillation_hidden).toBe(false);
 
@@ -48,4 +56,12 @@ test('shows retained objects, marks cut links, and can ghost or hide excluded co
   const ghosted = decorateDistillationRecord({ id: 'Node:FR00', properties: [] }, preview, true);
   expect(ghosted.atlas_distillation_hidden).toBe(false);
   expect(ghosted.atlas_distillation_opacity).toBe(0.16);
+});
+
+test('legacy preview APIs remain read-only version previews without inventing Model scope confirmation', async () => {
+  const preview = await fetchDistillationPreview({ mode: 'model', projectId: payload.project_id, modelName: 'Base' },
+    { countries: ['ES'], modelVersion: payload.model_version }, async () => ({ ok: true, json: async () => payload }));
+  expect(preview.model_scope_verified).toBe(false);
+  expect(preview.model_scope).toBeUndefined();
+  expect(preview.capabilities.mutates_source).toBe(false);
 });

@@ -1,14 +1,16 @@
 import { atlasApiUrl } from '../config/api';
+import { RESULT_SERIES_COLORS } from './resultColors';
 
 export const DISTILLATION_PREVIEW_SCHEMA = 'nohm.atlas.distillation-preview.v1';
 
 const text = value => String(value ?? '').trim();
 const statusStyle = Object.freeze({
-  retained: { color: '', opacity: 1, dashArray: '' },
-  excluded: { color: '#64748b', opacity: 0.16, dashArray: '' },
-  boundary_crossing: { color: '#f59e0b', opacity: 0.98, dashArray: '8 5' },
-  unresolved: { color: '#a78bfa', opacity: 0.42, dashArray: '3 5' },
+  retained: { color: RESULT_SERIES_COLORS[3], opacity: 1, dashArray: '' },
+  excluded: { color: RESULT_SERIES_COLORS[7], opacity: 0.16, dashArray: '' },
+  boundary_crossing: { color: RESULT_SERIES_COLORS[2], opacity: 0.98, dashArray: '8 5' },
+  unresolved: { color: RESULT_SERIES_COLORS[7], opacity: 0.42, dashArray: '3 5' },
 });
+export const distillationStatusColor = status => statusStyle[status]?.color;
 
 export function distillationPreviewRequestUrl(context, options = {}) {
   const projectId = text(context?.projectId);
@@ -21,6 +23,7 @@ export function distillationPreviewRequestUrl(context, options = {}) {
     layers: layers.join(',') || 'grid',
   });
   if (text(options.modelVersion)) query.set('version', text(options.modelVersion));
+  if (text(context.modelName)) query.set('model_name', text(context.modelName));
   if (text(options.year) && Number.isInteger(Number(options.year))) query.set('year', String(Number(options.year)));
   return `/api/atlas/projects/${encodeURIComponent(projectId)}/distillation-preview?${query.toString()}`;
 }
@@ -78,7 +81,13 @@ export async function fetchDistillationPreview(context, options = {}, fetchImpl 
   const url = distillationPreviewRequestUrl(context, options);
   if (!url) throw new Error('Choose at least one country before previewing a geographical subset.');
   const response = await fetchImpl(atlasApiUrl(url, options.apiBase), { signal: options.signal, credentials: 'same-origin' });
-  return adaptDistillationPreview(await readJson(response), context.projectId, options.modelVersion);
+  const preview = adaptDistillationPreview(await readJson(response), context.projectId, options.modelVersion);
+  // Older read-only preview APIs classify the version's source identities, not
+  // scenario-effective values. Do not invent a Model confirmation for them.
+  if (text(context.modelName) && preview.model_scope && preview.model_scope.model_name !== text(context.modelName)) {
+    throw new Error('The subset preview does not match the selected Model.');
+  }
+  return { ...preview, model_scope_verified: Boolean(preview.model_scope?.model_name) };
 }
 
 export function decorateDistillationRecord(record, preview, showContext = false) {

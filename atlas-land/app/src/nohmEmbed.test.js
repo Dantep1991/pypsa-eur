@@ -122,6 +122,16 @@ test('project identity keeps stale reference URLs and bridge contexts model-boun
   expect(readNohmAtlasWorkspaceContextFromLocation({ search: '?nohm-context=1&mode=reference' }).projectId).toBeNull();
 });
 
+test('explicit catalogue presentation retains its project and exact dataset binding across the URL', () => {
+  const search = '?nohm-context=1&mode=catalogue&project=Integration&networkCatalogue=pypsa-eur&catalogueProject=Integration';
+  const context = readNohmAtlasWorkspaceContextFromLocation({ search });
+  expect(context.mode).toBe('catalogue');
+  expect(context.projectId).toBe('Integration');
+  expect(context.networkCatalogue).toEqual({ id: 'pypsa-eur', projectId: 'Integration' });
+  expect(readNohmAtlasWorkspaceContextFromLocation({ search: search.replace('catalogueProject=Integration', 'catalogueProject=Other') }).mode).toBe('model');
+  expect(normalizeNohmAtlasWorkspaceContext({ mode: 'catalogue', projectId: 'Integration' }).mode).toBe('model');
+});
+
 test('Atlas accepts only a builder preview bound to the exact loaded model', () => {
   const callbacks = new Map();
   const dispatched = [];
@@ -702,7 +712,12 @@ test('embedded Atlas requests only allowlisted host-owned portals', () => {
     target: 'economic-assessment',
   }, target.location.origin);
   expect(requestNohmAtlasPortal('admin', target)).toBe(false);
-  expect(parent.postMessage).toHaveBeenCalledTimes(11);
+  expect(requestNohmAtlasPortal('synapse-network', target)).toBe(true);
+  expect(parent.postMessage).toHaveBeenLastCalledWith({
+    type: NOHM_ATLAS_PORTAL_REQUEST_MESSAGE, protocolVersion: 1,
+    source: 'nohm-atlas', target: 'synapse-network',
+  }, target.location.origin);
+  expect(parent.postMessage).toHaveBeenCalledTimes(12);
 });
 
 test('scheduled readiness waits until the rendered frame', () => {
@@ -719,4 +734,37 @@ test('scheduled readiness waits until the rendered frame', () => {
   expect(parent.postMessage).not.toHaveBeenCalled();
   callbacks.shift()();
   expect(parent.postMessage).toHaveBeenCalledTimes(1);
+});
+test('Model scope survives embedded URL parsing without interpreting its name', () => {
+  expect(readNohmAtlasWorkspaceContextFromLocation({ search: '?nohm-context=1&project=Fixture&version=v2&modelName=Branch' }).modelName).toBe('Branch');
+});
+
+test('run bridge rejects the previous Model after selection changes within the same version', () => {
+  const callbacks = new Map();
+  const dispatched = [];
+  const parent = { postMessage: jest.fn() };
+  const target = {
+    parent, location: { origin: 'https://nohm.example.test' },
+    document: { documentElement: { setAttribute: jest.fn() } },
+    requestAnimationFrame: jest.fn(), removeEventListener: jest.fn(),
+    addEventListener: (name, callback) => callbacks.set(name, callback),
+    CustomEvent: class CustomEvent { constructor(type, options) { this.type = type; this.detail = options.detail; } },
+    dispatchEvent: event => dispatched.push(event),
+    __NOHM_ATLAS_WORKSPACE_CONTEXT__: { mode: 'model', projectId: 'Fixture', version: 'v1', modelName: 'Base' },
+  };
+  startNohmEmbedBridge(target);
+  const runState = { projectId: 'Fixture', modelVersion: 'v1', modelName: 'Base', status: 'completed',
+    runCount: 1, activeCount: 0, versionActiveCount: 2,
+    latest: { runId: 'base', modelName: 'Base', status: 'completed' } };
+  const send = state => callbacks.get('message')({ source: parent, origin: target.location.origin,
+    data: { type: NOHM_ATLAS_RUN_STATE_MESSAGE, protocolVersion: 1, source: 'nohm-shell', runState: state } });
+  send(runState);
+  expect(dispatched).toHaveLength(1);
+  expect(dispatched[0].detail.runState.modelName).toBe('Base');
+  expect(dispatched[0].detail.runState.versionActiveCount).toBe(2);
+  target.__NOHM_ATLAS_WORKSPACE_CONTEXT__.modelName = 'Other';
+  send(runState);
+  send({ ...runState, modelName: null });
+  expect(dispatched).toHaveLength(1);
+  expect(normalizeNohmAtlasRunState({ ...runState, latest: { ...runState.latest, modelName: 'Other' } })).toBeNull();
 });

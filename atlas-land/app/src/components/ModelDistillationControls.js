@@ -1,9 +1,12 @@
-import React, { useMemo, useState } from 'react';
-import { Check, Loader2, Plus, RotateCcw, X } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Loader2, RotateCcw, X } from 'lucide-react';
+import { readSubsetView, saveSubsetView } from '../modelWorkspace/savedSubsetView';
+import './ModelDistillationControls.css';
 
 const formatCount = value => Number(value || 0).toLocaleString();
 
 export default function ModelDistillationControls({
+  context = {},
   availableCountries,
   selectedCountries,
   onSelectionChange,
@@ -13,8 +16,9 @@ export default function ModelDistillationControls({
   onPreview,
   onClear,
   countryName,
+  automatic = false,
 }) {
-  const [pendingCountry, setPendingCountry] = useState('');
+  const [saved, setSaved] = useState(null), [saveStatus, setSaveStatus] = useState('');
   const selected = selectedCountries || [];
   const remaining = useMemo(
     () => (availableCountries || []).filter(code => !selected.includes(code)),
@@ -24,22 +28,35 @@ export default function ModelDistillationControls({
   const busy = previewStatus?.state === 'loading';
   const counts = preview?.counts?.by_status || {};
 
-  const addCountry = () => {
-    if (!pendingCountry || selected.includes(pendingCountry)) return;
-    onSelectionChange([...selected, pendingCountry].sort());
-    setPendingCountry('');
+  useEffect(() => {
+    setSaveStatus('');
+    try { setSaved(readSubsetView(window.localStorage, context, availableCountries || [])); }
+    catch (_) { setSaved(null); }
+  }, [context.projectId, context.version, context.modelName, availableCountries]);
+  const save = () => {
+    try { setSaved(saveSubsetView(window.localStorage, preview, context, showContext)); setSaveStatus('View saved in this browser. Original model unchanged.'); }
+    catch (error) { setSaveStatus(error.message); }
+  };
+  const restore = async () => {
+    setSaveStatus('');
+    onSelectionChange([...saved.countries]);
+    const fresh = await onPreview([...saved.countries]);
+    if (fresh) {
+      onShowContextChange(saved.showContext);
+      setSaveStatus(fresh.source.scene_fingerprint === saved.sourceFingerprint ? 'Saved view restored.' : 'Selection restored using the latest source data.');
+    }
   };
 
   return (
-    <div className="space-y-2.5">
-      <div>
+    <div className="model-distillation-controls space-y-2.5">
+      {!automatic && <p className="model-distillation-intro">Keep the selected countries on the map. Boundary links stay visible; the rest is hidden.</p>}
+      {!automatic && <div>
         <span className="mb-1 block text-[9px] uppercase tracking-wider text-tj-slate">Retain countries</span>
         <div className="flex gap-1.5">
-          <select value={pendingCountry} onChange={event => setPendingCountry(event.target.value)} disabled={busy || !remaining.length} className="min-w-0 flex-1 rounded-lg border border-white/10 bg-[#081523] px-2 py-2 text-[10px] text-white disabled:opacity-50" aria-label="Country to retain">
+          <select value="" onChange={event => { if (event.target.value) onSelectionChange([...selected, event.target.value].sort()); }} disabled={busy || !remaining.length} className="min-w-0 flex-1 rounded-lg border border-white/10 bg-[#081523] px-2 py-2 text-[10px] text-white disabled:opacity-50" aria-label="Country to retain">
             <option value="">Add country…</option>
             {remaining.map(code => <option key={code} value={code}>{countryName(code)} ({code})</option>)}
           </select>
-          <button type="button" onClick={addCountry} disabled={busy || !pendingCountry} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-tj-gold/35 bg-tj-gold/10 text-tj-gold disabled:opacity-40" aria-label="Add retained country"><Plus className="h-3.5 w-3.5" /></button>
         </div>
         <div className="mt-1.5 flex flex-wrap gap-1">
           {selected.length ? selected.map(code => (
@@ -48,35 +65,40 @@ export default function ModelDistillationControls({
             </button>
           )) : <span className="text-[9px] text-tj-slate">Choose one or more countries.</span>}
         </div>
-      </div>
+      </div>}
+
+      {automatic && busy && <p role="status">Loading country map preview…</p>}
 
       {previewStatus?.state === 'error' && <div role="alert" className="rounded-lg border border-red-400/25 bg-red-500/10 px-2.5 py-2 text-[9px] leading-3.5 text-red-200">{previewStatus.error}</div>}
 
       {preview && (
         <>
-          <div className="grid grid-cols-4 gap-1 text-center text-[9px]">
-            <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/[0.06] p-1.5"><span className="block font-semibold text-emerald-200">{formatCount(counts.retained)}</span><span className="text-tj-slate">Retained</span></div>
-            <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.06] p-1.5"><span className="block font-semibold text-amber-200">{formatCount(counts.boundary_crossing)}</span><span className="text-tj-slate">Boundary</span></div>
-            <div className="rounded-lg border border-slate-400/20 bg-slate-400/[0.05] p-1.5"><span className="block font-semibold text-slate-200">{formatCount(counts.excluded)}</span><span className="text-tj-slate">Excluded</span></div>
-            <div className="rounded-lg border border-violet-300/20 bg-violet-300/[0.05] p-1.5"><span className="block font-semibold text-violet-200">{formatCount(counts.unresolved)}</span><span className="text-tj-slate">Unresolved</span></div>
-          </div>
+          <dl className="model-distillation-counts">
+            <div><dt>Inside selection</dt><dd>{formatCount(counts.retained)}</dd></div>
+            <div><dt>Connections to outside</dt><dd>{formatCount(counts.boundary_crossing)}</dd></div>
+            <div><dt>Outside selection</dt><dd>{formatCount(counts.excluded)}</dd></div>
+            <div><dt>Country mapping unavailable</dt><dd>{formatCount(counts.unresolved)}</dd></div>
+          </dl>
           <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-white/10 bg-black/20 px-2.5 py-2">
             <input type="checkbox" checked={showContext} onChange={event => onShowContextChange(event.target.checked)} className="mt-0.5 accent-tj-gold" />
-            <span><span className="block text-[10px] font-medium text-white">Ghost excluded context</span><span className="block text-[9px] leading-3.5 text-tj-slate">Compare the filtered subset with excluded and unresolved source objects.</span></span>
+            <span><span className="block text-[10px] font-medium text-white">Show rest of model faintly</span></span>
           </label>
-          <div className="flex items-start gap-2 rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-[9px] leading-3.5 text-tj-slate">
-            <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-300" />
-            <span>{formatCount(preview.counts?.reconciliation?.classified_total)} identities reconciled · {preview.model_version} · preview only</span>
-          </div>
+          {!automatic && <details><summary>What do these counts mean?</summary><p>Counts cover source nodes, connections and loaded assets, not just visible markers. Inside: all connected nodes are in your selection. Boundary: an object connects inside and outside. Outside: none of its nodes are selected. Unavailable: a country or node membership cannot be established; Atlas does not guess.</p></details>}
         </>
       )}
 
-      <div className="flex gap-2">
+      {!automatic && <div className="flex gap-2">
         <button type="button" onClick={onPreview} disabled={busy || !selected.length} className="atlas-primary-action flex-1 rounded-lg border border-tj-gold/40 bg-tj-gold px-3 py-2 text-[10px] font-semibold text-tj-navy-dark disabled:cursor-not-allowed disabled:opacity-40">
           {busy ? <span className="inline-flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" />Classifying…</span> : preview ? 'Refresh preview' : 'Preview subset'}
         </button>
         {preview && <button type="button" onClick={onClear} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-2.5 py-2 text-[10px] text-slate-200 hover:bg-white/5 disabled:opacity-40"><RotateCcw className="h-3 w-3" />Full model</button>}
-      </div>
+      </div>}
+      {!automatic && <div className="model-distillation-save">
+        {preview && <button type="button" onClick={save} disabled={busy}>Save view</button>}
+        {saved && <button type="button" onClick={restore} disabled={busy}>Restore saved view</button>}
+      </div>}
+      {saveStatus && <p role="status">{saveStatus}</p>}
+      {!automatic && <small>Map preview only. Saving remembers this selection; it does not create a runnable model.</small>}
     </div>
   );
 }

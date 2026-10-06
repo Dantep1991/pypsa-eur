@@ -1,8 +1,10 @@
 import { atlasApiUrl } from '../config/api';
 import { generationEnergyValues, resultMagnitudeRatio, resultMapModes } from './resultPresentation';
-import { RESULT_SERIES_COLORS, flowReversalColor } from './resultColors';
+import { RESULT_SERIES_COLORS, flowReversalColor, resultPalette } from './resultColors';
 import { withAnnualNetFlow, subtractReverseFlow } from './annualFlow';
-import { objectResultTarget, fetchResultAssets, attachAssetPositions, attachPipelinePositions, fetchResultTopology } from './resultAssetProjection';
+import { objectResultTarget, fetchResultAssets, attachAssetPositions, attachPipelinePositions, fetchResultTopology, reconcileResultNodes } from './resultAssetProjection';
+import { cachedResultCatalog } from './resultCatalogCache';
+import { selectedResultCategories } from './resultCategories';
 
 export const MODEL_RESULT_CATALOG_SCHEMA = 'nohm.atlas.result-catalog.v2';
 export const MODEL_RESULT_SCENE_SCHEMA = 'nohm.atlas.result-scene.v2';
@@ -64,6 +66,7 @@ function hydrateMetric(metric, payload, schemaMetadata = {}) {
     countries: unique(dimensions.countries),
     nodes: unique(dimensions.nodes),
     available_granularities: unique(metric?.available_granularities),
+    periods: unique(metric?.reported_periods),
     supports_flow_map: Boolean(metric?.supports_flow_map) || (className === 'Gas Pipeline'
       && ['Flow In', 'Flow Out', 'Flow', 'Net Flow'].includes(text(metric.property_name))),
   };
@@ -95,6 +98,8 @@ export function adaptVisualisationCatalog(
     const compatible = run?.binding_status !== 'unresolved' && Boolean(text(modelVersion))
       && versions.length > 0 && versions.every(version => version === text(modelVersion));
     const targetYear = text(run?.target_year);
+    const reportedPeriods = matched ? unique(metricPayload?.run?.reported_periods) : [];
+    const periods = reportedPeriods.length ? reportedPeriods : targetYear ? [targetYear] : [];
     return {
       ...run,
       label: text(run?.display_name) || text(run?.run_id),
@@ -103,11 +108,11 @@ export function adaptVisualisationCatalog(
       binding_reason: compatible ? '' : versions.length
         ? `Run topology: ${versions.join(', ')}; loaded topology: ${text(modelVersion)}.`
         : 'The run has no confirmed model-version binding.',
-      periods: targetYear ? [targetYear] : [],
+      periods,
       period_granularity: 'annual',
       quantities: withAnnualNetFlow(quantities.map(quantity => ({
         ...quantity,
-        periods: targetYear ? [targetYear] : [],
+        periods: quantity.periods.length ? quantity.periods : periods,
       }))),
     };
   });
@@ -153,7 +158,15 @@ export function adaptModelResultScene(payload, expectedProjectId = '', expectedM
   return { ...payload, values, valueByEntityId };
 }
 
-export async function fetchModelResultCatalog(context, modelVersion, options = {}, fetchImpl = window.fetch.bind(window)) {
+export async function fetchModelResultCatalog(context, modelVersion, options = {}, fetchImpl = window.fetch) {
+  const url = modelResultCatalogRequestUrl(context);
+  if (!url) throw new Error('A bound model project is required to load Atlas results.');
+  const key = JSON.stringify([atlasApiUrl(url, options.apiBase),
+    modelVersion, Boolean(options.includeAssetCatalog), options.schemaCategories || {}, options.schemaCategoryObjects || {}]);
+  return cachedResultCatalog(fetchImpl, key, options, () => loadModelResultCatalog(context, modelVersion, options, fetchImpl));
+}
+
+async function loadModelResultCatalog(context, modelVersion, options, fetchImpl) {
   const runsUrl = modelResultCatalogRequestUrl(context);
   if (!runsUrl) throw new Error('A bound model project is required to load Atlas results.');
   const requestOptions = { signal: options.signal, credentials: 'same-origin' };
@@ -199,6 +212,16 @@ export async function fetchModelResultCatalog(context, modelVersion, options = {
         }).runs[0];
       adapted.push(item);
       completed += 1;
+      // Make verified runs usable while unrelated archives are still reading.
+      // Never copy their quantities to a run whose own inventory is pending.
+      const available = new Map(adapted.map(row => [row.run_id, row]));
+      options.onPartialCatalog?.(adaptModelResultCatalog({
+        schema: MODEL_RESULT_CATALOG_SCHEMA, source: 'emil_visualisation_domain',
+        project_id: context.projectId, model_version: modelVersion,
+        runs: runs.filter(row => available.has(row.run_id)).map(row => available.get(row.run_id)),
+        pending_runs: runs.filter(row => !available.has(row.run_id)).map(row => ({ run_id: row.run_id, label: row.display_name || row.run_id })),
+        warnings: runsPayload.warnings || [],
+      }, context.projectId, modelVersion));
       options.onProgress?.({ phase: 'catalog', completed, total: runs.length });
     }
   };
@@ -217,10 +240,10 @@ function stripCanonicalPrefix(value) {
   return text(value).replace(/^(Node|Line):/i, '');
 }
 
-function queryPayload(selection) {
+export function resultQueryPointers(selection) {
   const lineTarget = text(selection.className) === 'Line';
   const scopeNode = stripCanonicalPrefix(selection.scopeId);
-  const selectedCategory = text(selection.category);
+  const selectedCategories = selectedResultCategories(selection);
   const categoryObjects = unique(selection.categoryObjects);
   return {
     run_ids: [text(selection.runId)],
@@ -230,12 +253,12 @@ function queryPayload(selection) {
     property_name: text(selection.propertyName),
     group_by: lineTarget ? 'line' : selection.mapMode === 'mix' || objectResultTarget(selection) || selection.className === 'Node' ? 'object' : 'node',
     countries: [],
-    nodes: scopeNode && !objectResultTarget(selection) ? [scopeNode] : [],
+    nodes: scopeNode && !objectResultTarget(selection) && !selection.entityNames ? [scopeNode] : [],
     // Visualisation CSV categories are output dimensions, not the governed
     // model_schema categories shown by Atlas.  Filter by the exact canonical
     // model objects belonging to the selected schema category instead.
     categories: [],
-    entity_names: selection.entityNames || (selectedCategory
+    entity_names: selection.entityNames || (selectedCategories.length
       ? (categoryObjects.length ? categoryObjects : ['__atlas_no_schema_objects__'])
       : []),
     aggregation_method: 'auto',
@@ -247,6 +270,8 @@ function queryPayload(selection) {
     limit: 20000,
   };
 }
+
+const queryPayload = resultQueryPointers;
 
 export function validatedResultRows(payload, context, selection) {
   if (payload?.project_id && text(payload.project_id) !== text(context?.projectId)) {
@@ -318,6 +343,7 @@ export function adaptVisualisationQuery(payload, context, selection) {
     source: 'emil_visualisation_domain',
     project_id: text(context?.projectId),
     model_version: text(selection.modelVersion),
+    analysis_query: queryPayload(selection),
     run: { run_id: text(selection.runId), label: runLabel },
     selection: {
       id: `${text(selection.className)}.${text(selection.propertyName)}`,
@@ -325,6 +351,7 @@ export function adaptVisualisationQuery(payload, context, selection) {
       class_name: text(selection.className),
       property_name: text(selection.propertyName),
       category: text(selection.category),
+      categories: selectedResultCategories(selection),
       period: text(selection.period),
       period_label: text(selection.period) ? `Annual ${text(selection.period)}` : 'Annual result',
       map_target: lineTarget || selection.className === 'Gas Pipeline' ? 'link' : 'node',
@@ -383,19 +410,22 @@ export async function fetchModelResultScene(context, selection, options = {}, fe
   let assets, topology;
   if (['Line', 'Gas Pipeline'].includes(selection.className)) {
     topology = await fetchResultTopology(context, selection, options, fetchImpl);
-    if (selection.category) selection = { ...selection,
-      categoryObjects: topology.lines.filter(line => line.category === selection.category).map(line => line.name) };
+    const categories = selectedResultCategories(selection);
+    if (categories.length) selection = { ...selection,
+      categoryObjects: topology.lines.filter(line => categories.includes(line.category)).map(line => line.name) };
   }
   if (objectResultTarget(selection) || selection.className === 'Node') {
     options.onProgress?.({ phase: 'coordinates', completed: 0, total: 1 });
     assets = await fetchResultAssets(context, selection.modelVersion, selection.className, options, fetchImpl);
-    if (selection.category) selection = { ...selection, categoryObjects: assets.objects.filter(obj => obj.category === selection.category).map(obj => obj.name) };
+    const categories = selectedResultCategories(selection);
+    if (categories.length) selection = { ...selection, categoryObjects: assets.objects.filter(obj => categories.includes(obj.category)).map(obj => obj.name) };
     if (selection.scopeId) {
-      const candidates = assets.objects.filter(obj => (!selection.category || obj.category === selection.category)
+      const candidates = assets.objects.filter(obj => (!categories.length || categories.includes(obj.category))
         && obj.nodes.some(node => (node.position?.canonical_reference || `Node:${node.name}`) === selection.scopeId));
       selection = { ...selection, entityNames: candidates.length ? candidates.map(obj => obj.name) : ['__atlas_no_schema_objects__'] };
     }
   }
+  options.onProgress?.({ phase: 'query', completed: 0, total: 1 });
   const response = await fetchImpl(atlasApiUrl(url, options.apiBase), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -414,7 +444,7 @@ export function projectModelResultScene(scene, facilities = [], connections = []
   const mappedNodes = new Set(facilities.filter(record => record.latitude != null && record.longitude != null
     && Number.isFinite(Number(record.latitude)) && Number.isFinite(Number(record.longitude)))
     .map(record => text(record.id)));
-  const spatialNodes = (scene.spatial_nodes || []).filter(node => mappedNodes.has(node.canonical_reference)
+  const spatialNodes = reconcileResultNodes(scene.spatial_nodes || [], facilities).filter(node => mappedNodes.has(node.canonical_reference)
     || (node.is_reference_topology && Number.isFinite(node.latitude) && Number.isFinite(node.longitude)));
   spatialNodes.forEach(node => mappedNodes.add(node.id));
   const mappedIds = scene.selection?.map_target === 'link'
@@ -422,13 +452,14 @@ export function projectModelResultScene(scene, facilities = [], connections = []
       && mappedNodes.has(text(record.to || record.toNode))).map(record => text(record.id))) : mappedNodes;
   const values = scene.values.filter(row => row.spatial_binding_valid !== false && mappedIds.has(text(row.entity_id)));
   const numbers = values.map(row => row.value);
+  const projectedIds = new Set(values.map(row => row.entity_id));
   return {
     ...scene, values, spatial_nodes: spatialNodes,
-    spatial_links: (scene.spatial_links || []).filter(link => values.some(row => row.entity_id === link.id)),
+    spatial_links: (scene.spatial_links || []).filter(link => projectedIds.has(link.id)),
     valueByEntityId: new Map(values.map(row => [row.entity_id, row])),
     legend: { ...scene.legend,
-      minimum: numbers.length ? Math.min(...numbers) : 0,
-      maximum: numbers.length ? Math.max(...numbers) : 0,
+      minimum: numbers.length ? numbers.reduce((min, value) => Math.min(min, value), Infinity) : 0,
+      maximum: numbers.length ? numbers.reduce((max, value) => Math.max(max, value), -Infinity) : 0,
       maximum_magnitude: numbers.reduce((max, value) => Math.max(max, Math.abs(value)), 0),
       scale_scope: 'mapped_objects',
     },
@@ -436,9 +467,6 @@ export function projectModelResultScene(scene, facilities = [], connections = []
       excluded_row_count: scene.values.length - values.length },
   };
 }
-
-const SEQUENTIAL = ['#ef4444', '#f97316', '#facc15', '#84cc16', '#22c55e'];
-const DIVERGING = ['#ef4444', '#fca5a5', '#e5e7eb', '#86efac', '#22c55e'];
 
 function hexToRgb(hex) {
   const value = Number.parseInt(hex.slice(1), 16);
@@ -467,7 +495,7 @@ export function modelResultRatio(value, legend = {}) {
 }
 
 export function modelResultColor(value, legend = {}) {
-  return interpolatePalette(legend.scale === 'diverging' ? DIVERGING : SEQUENTIAL, modelResultRatio(value, legend));
+  return interpolatePalette(resultPalette(legend), modelResultRatio(value, legend));
 }
 
 export function decorateModelResultRecord(record, resultScene, theme = 'dark') {
@@ -540,6 +568,7 @@ export function defaultModelResultSelection(catalog) {
     runLabel: run.label || run.run_id,
     runModelVersion: run.result_model_version,
     category: '',
+    categories: [],
     categoryObjects: [],
     quantityId: quantity.id,
     reportFamily: quantity.report_family,

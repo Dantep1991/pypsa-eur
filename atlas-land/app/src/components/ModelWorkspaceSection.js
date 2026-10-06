@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import ModelControlHelp from './ModelControlHelp';
+import { WorkspaceLauncher, useWorkspacePanels } from './AtlasWorkspacePanels';
 
 export default function ModelWorkspaceSection({
   title,
@@ -11,13 +12,20 @@ export default function ModelWorkspaceSection({
   badge = '',
   ariaLabel,
   help,
+  onOpen,
+  disabled,
+  disabledReason,
 }) {
+  const panels = useWorkspacePanels();
   const [open, setOpen] = useState(defaultOpen);
+  if (panels) return <WorkspaceLauncher title={title} Icon={Icon} onOpen={onOpen} disabled={disabled} disabledReason={disabledReason} badge={badge} help={help}>{children}</WorkspaceLauncher>;
   return (
     <section className="border-t border-white/10" aria-label={ariaLabel || title}>
       <div className="flex items-start">
         <button
           type="button"
+          disabled={disabled}
+          title={disabledReason}
           onClick={() => setOpen(previous => !previous)}
           aria-expanded={open}
           className="flex min-w-0 flex-1 items-start gap-2 px-3 py-3 text-left transition hover:bg-white/[0.025]"

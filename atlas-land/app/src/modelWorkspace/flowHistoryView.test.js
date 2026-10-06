@@ -4,6 +4,14 @@ const line={id:'Line:A',name:'A',from_node:'From',to_node:'To',values:new Map([[
 const scene={selection:{period:'2052',runId:'run',modelVersion:'v1',className:'Line',propertyName:'Flow',
   availableGranularities:['hour','day','week','month','year'],granularity:'day'},lines:[line],periods:[...line.values.keys()],unit:'GWh',direction:1};
 
+test('full-year map already supplies history, retaining missing hours without another read',async()=>{
+  const source={...scene,unit:'MW',selection:{...scene.selection,granularity:'hour',dateFrom:'2052-01-01',dateTo:'2052-12-31'}};
+  const fetchScene=jest.fn();
+  const history=await fetchFlowHistory({projectId:'Example'},source,'A',{},fetchScene);
+  expect(fetchScene).not.toHaveBeenCalled();
+  expect(history.stats.get(line.id)).toMatchObject({reportedHours:1,expectedHours:8784});
+});
+
 test.each(['day','week','month'])('%s history queries the native resolution, exact connection, full year and unchanged units',async granularity=>{
   const source={...scene,selection:{...scene.selection,granularity}};
   const fetchScene=jest.fn(async(_context,selection)=>({...source,selection}));

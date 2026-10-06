@@ -333,6 +333,7 @@ shared Nohm client available using the environment contract above:
 
 ```powershell
 $env:NOHM_ATLAS_PORT='5003'
+$env:NOHM_ATLAS_PREVIEW_PORT='3001'
 $env:NOHM_ATLAS_ALLOWED_ORIGINS='http://127.0.0.1:3001'
 python scripts/run_atlas_backend_stable.py
 ```
@@ -362,6 +363,13 @@ of exact HTTP loopback origins; wildcard, remote, credentialed and path-bearing
 values are rejected. Match the build variables and
 candidate origin when changing mounts/ports. Use a separate shell for the normal
 root build so these preview build variables do not carry over unintentionally.
+
+Set the same `NOHM_ATLAS_PREVIEW_PORT` in the API and frontend shells. The API
+launcher appends that exact `127.0.0.1` origin to its configured allowlist; it does
+not trust arbitrary loopback ports. A wrong allowlist can leave model reads
+working while live voice, upload transcription and agent POST requests fail.
+The `voice-roundtrip.cjs` release check sends the real browser Origin so it detects
+this mismatch instead of passing as an originless command-line client.
 
 Natural-language map commands now require a valid model plan. The browser no
 longer uses keyword fallbacks or overwrites model actions with keyword-derived

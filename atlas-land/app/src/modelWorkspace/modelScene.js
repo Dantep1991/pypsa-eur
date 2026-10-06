@@ -1,8 +1,11 @@
 import { atlasApiUrl } from '../config/api';
 import { bindAggregationCatalog } from './modelAggregation';
+import { loadModelDisplayLayers } from './modelDisplayLayers';
+import { readAssetApi } from './modelAssets';
+import { readModelSceneCache, saveModelSceneCache } from './modelSceneCache';
 
 export const MODEL_SCENE_SCHEMA = 'nohm.atlas.model-scene.v1';
-export const MODEL_SCENE_DOMAINS = Object.freeze(['Grid', 'Supply', 'Storage']);
+export const MODEL_SCENE_DOMAINS = Object.freeze(['Grid', 'Supply', 'Storage', 'Demand']);
 
 export function isModelSceneDomain(domain) {
   return MODEL_SCENE_DOMAINS.includes(text(domain));
@@ -28,6 +31,7 @@ export function resolveModelSceneDomains(currentVisibility = {}, requestedDomain
       'grid',
       ...(enabled.has('Supply') ? ['supply'] : []),
       ...(enabled.has('Storage') ? ['storage'] : []),
+      ...(enabled.has('Demand') ? ['demand'] : []),
     ],
     visibility: Object.fromEntries(MODEL_SCENE_DOMAINS.map((domain) => [domain, enabled.has(domain)])),
   };
@@ -47,6 +51,7 @@ export function modelSceneRequestUrl(context, { layers = ['grid'], year = null }
     layers: [...new Set(layers.map((value) => text(value).toLowerCase()).filter(Boolean))].join(',') || 'grid',
   });
   if (text(context.version)) query.set('version', text(context.version));
+  if (text(context.modelName)) query.set('model_name', text(context.modelName));
   if (text(year) && Number.isInteger(Number(year))) query.set('year', String(Number(year)));
   return `/api/atlas/projects/${encodeURIComponent(projectId)}/scene?${query.toString()}`;
 }
@@ -93,6 +98,7 @@ function mappedNodeFacility(node, scene) {
     is_virtual: false,
     source_model_project: scene.project_id,
     source_model_version: scene.version,
+    source_model_name: scene.model_scope?.model_name || null,
     membership: {
       collection: 'Canonical model schema',
       parentClass: 'Node',
@@ -149,7 +155,7 @@ function assetFacility(asset, scene, nodeById) {
   };
 }
 
-function modelConnection(link, scene) {
+export function modelConnection(link, scene) {
   const capacity = finite(link?.capacity?.value);
   const capacityUnit = text(link?.capacity?.unit);
   return {
@@ -172,6 +178,8 @@ function modelConnection(link, scene) {
     is_reference_topology: true,
     source_model_project: scene.project_id,
     source_model_version: scene.version,
+    source_model_name: scene.model_scope?.model_name || null,
+    operational_state: link.operational_state || null,
     membership: {
       collection: 'Canonical model schema',
       parentClass: 'Line',
@@ -181,6 +189,7 @@ function modelConnection(link, scene) {
     },
     properties: [
       { Property: 'Source ID', Value: link.source_id || link.id, Units: '' },
+      ...(link.operational_state?.status === 'disabled' ? [{ Property: 'Operational state', Value: 'Disabled', Units: '' }] : []),
       { Property: 'Model category', Value: link.category || '', Units: '' },
       { Property: 'From node', Value: link.from_node || '', Units: '' },
       { Property: 'To node', Value: link.to_node || '', Units: '' },
@@ -224,6 +233,10 @@ export function adaptModelScene(scene, expectedProjectId = '', expectedVersion =
     connections,
     focus,
     meta: {
+      modelName: scene.model_scope?.model_name || null,
+      requestedYear: scene.requested_year ?? scene.selected_year,
+      inputYear: Array.isArray(scene.available_years) && !scene.available_years.length && !scene.model_scope?.model_name
+        ? null : scene.requested_year ?? scene.selected_year,
       projectId: scene.project_id,
       version: scene.version,
       temporary: scene.temporary === true,
@@ -247,31 +260,45 @@ export function adaptModelScene(scene, expectedProjectId = '', expectedVersion =
 }
 
 export async function fetchModelScene(context, options = {}, fetchImpl = window.fetch.bind(window)) {
-  const url = modelSceneRequestUrl(context, options);
+  const displayLayers = options.layers || ['grid'];
+  // Fetch native topology once, then hydrate every asset layer through the
+  // cached database reader below. Requesting Supply/Storage here as well repeats
+  // thousands of memberships/capacities before reading those same inputs again.
+  const url = modelSceneRequestUrl(context, { ...options, layers: ['grid'] });
   if (!url) throw new Error('A bound model project is required to load an Atlas model scene.');
-  const response = await fetchImpl(atlasApiUrl(url, options.apiBase), { signal: options.signal, credentials: 'same-origin' });
+  if (options.signal?.aborted) throw new DOMException('Layer loading cancelled', 'AbortError');
+  const cacheKey = JSON.stringify([options.apiBase || '', url, displayLayers]);
+  const cached = readModelSceneCache(cacheKey);
+  if (cached) {
+    options.onProgress?.({ completed: 1, total: 1, current: 'Cached model layers ready' });
+    return cached;
+  }
   let payload;
   try {
-    payload = await response.json();
-  } catch (_) {
-    throw new Error(`Atlas could not read the model scene (HTTP ${response.status}).`);
+    payload = await readAssetApi(url, { signal: options.signal, apiBase: options.apiBase,
+      timeoutMs: options.timeoutMs || 30000 }, fetchImpl);
+  } catch (error) {
+    if (error.name === 'AbortError') throw error;
+    throw new Error(`Atlas could not load the bound model: ${error.message}`);
   }
-  if (!response.ok) {
-    const detail = typeof payload?.detail === 'string' ? payload.detail : `HTTP ${response.status}`;
-    throw new Error(`Atlas could not load the bound model: ${detail}`);
+  if (text(context.modelName) && payload?.model_scope?.model_name !== text(context.modelName)) {
+    throw new Error('The model API did not confirm the selected Model scope. Refresh the updated Nohm model service before continuing.');
   }
-  const scene = adaptModelScene(payload, context.projectId, context.version);
+  const scene = await loadModelDisplayLayers(adaptModelScene(payload, context.projectId, context.version),
+    displayLayers, options, fetchImpl);
   const catalogUrl = `/api/atlas/projects/${encodeURIComponent(context.projectId)}/aggregation-catalog?version=${encodeURIComponent(scene.meta.version)}`;
   let catalog;
   try {
-    const catalogResponse = await fetchImpl(atlasApiUrl(catalogUrl, options.apiBase), { signal: options.signal, credentials: 'same-origin' });
-    if (!catalogResponse.ok) throw new Error(`HTTP ${catalogResponse.status}`);
-    catalog = await catalogResponse.json();
+    catalog = await readAssetApi(catalogUrl, { signal: options.signal, apiBase: options.apiBase,
+      timeoutMs: options.timeoutMs || 30000 }, fetchImpl);
   } catch (error) {
     if (options.signal?.aborted || error.name === 'AbortError') throw error;
     // A missing crosswalk disables aggregation, never the source model itself.
     return { ...scene, meta: { ...scene.meta, warnings: [...scene.meta.warnings,
       `Geography aggregation unavailable: ${error.message}. Native topology retained.`] } };
   }
-  return bindAggregationCatalog(scene, catalog);
+  const bound = bindAggregationCatalog(scene, catalog);
+  if (options.signal?.aborted) throw new DOMException('Layer loading cancelled', 'AbortError');
+  saveModelSceneCache(cacheKey, bound);
+  return bound;
 }

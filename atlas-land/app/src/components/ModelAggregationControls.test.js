@@ -15,7 +15,16 @@ test('unknown native resolution never enables bidding-zone projection', () => {
   expect(screen.getByRole('option', { name: 'Country' }).disabled).toBe(false);
 });
 
-test('aggregation is explicit and official overlaps cannot be selected together', () => {
+test('Joule e-Highway native geography retains a selectable bidding-zone view', () => {
+  const onApply = jest.fn();
+  render(<ModelAggregationControls catalog={{ ...catalog, native_resolution: 'ehighway' }} countries={['FR', 'ES']}
+    value="native" nativeLabel="e-Highway zones" status={{ state: 'idle' }} onApply={onApply} />);
+  expect(screen.getByRole('option', { name: 'Bidding Zone' }).disabled).toBe(false);
+  fireEvent.change(screen.getByLabelText('Model network geography'), { target: { value: 'bidding_zone' } });
+  expect(onApply).toHaveBeenCalledWith('bidding_zone');
+});
+
+test('multiple published regions can be selected and application has a clear enabled state', () => {
   const onApply = jest.fn();
   render(<ModelAggregationControls catalog={catalog} countries={['FR', 'ES', 'PT', 'BE']} value="native" nativeLabel="Bidding zones" status={{ state: 'idle' }} onApply={onApply} />);
   expect(screen.getByRole('option', { name: /NUTS3/ }).disabled).toBe(true);
@@ -24,7 +33,9 @@ test('aggregation is explicit and official overlaps cannot be selected together'
   fireEvent.change(screen.getByLabelText('Model network geography'), { target: { value: 'regional' } });
   expect(screen.getByRole('button', { name: 'Apply regions' }).disabled).toBe(true);
   fireEvent.click(screen.getByLabelText(/South-West Europe/));
-  expect(screen.getByLabelText(/North Sea/).disabled).toBe(true);
+  expect(screen.getByLabelText(/North Sea/).disabled).toBe(false);
+  fireEvent.click(screen.getByLabelText(/North Sea/));
+  expect(screen.getByRole('button', { name: 'Apply regions' }).disabled).toBe(false);
   fireEvent.click(screen.getByRole('button', { name: 'Apply regions' }));
-  expect(onApply).toHaveBeenLastCalledWith('regional', { schemeId: 'ec-high-level', regionIds: ['south'] });
+  expect(onApply).toHaveBeenLastCalledWith('regional', { schemeId: 'ec-high-level', regionIds: ['south', 'north'] });
 });

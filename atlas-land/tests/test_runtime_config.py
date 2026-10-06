@@ -15,6 +15,33 @@ runtime = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runtime)
 
 
+def test_preview_origin_is_not_enabled_without_explicit_preview_port():
+    env = {'NOHM_ATLAS_ALLOWED_ORIGINS': 'https://nohm.example'}
+    assert runtime.configure_atlas_preview_origin(env) is None
+    assert env == {'NOHM_ATLAS_ALLOWED_ORIGINS': 'https://nohm.example'}
+
+
+def test_preview_uses_exact_configured_origin_and_retains_existing_origins():
+    env = {'NOHM_ATLAS_PREVIEW_PORT': '3207', 'NOHM_ATLAS_ALLOWED_ORIGINS': 'https://nohm.example'}
+    assert runtime.configure_atlas_preview_origin(env) == 'http://127.0.0.1:3207'
+    assert runtime.configure_atlas_preview_origin(env) == 'http://127.0.0.1:3207'
+    assert env['NOHM_ATLAS_ALLOWED_ORIGINS'] == 'https://nohm.example,http://127.0.0.1:3207'
+
+
+def test_dedicated_preview_does_not_trust_other_loopback_ports():
+    env = {'NOHM_ATLAS_PREVIEW_PORT': '3207'}
+    runtime.configure_atlas_preview_origin(env)
+    assert env['NOHM_ATLAS_ALLOWED_ORIGINS'] == 'http://127.0.0.1:3207'
+
+
+@pytest.mark.parametrize('port', ['0', '65536', '*', '3207.evil.example', '3207/evil', '-1', '１２３４'])
+def test_invalid_preview_port_fails_closed_without_mutating_origins(port):
+    env = {'NOHM_ATLAS_PREVIEW_PORT': port, 'NOHM_ATLAS_ALLOWED_ORIGINS': 'https://nohm.example'}
+    with pytest.raises(ValueError, match='NOHM_ATLAS_PREVIEW_PORT'):
+        runtime.configure_atlas_preview_origin(env)
+    assert env['NOHM_ATLAS_ALLOWED_ORIGINS'] == 'https://nohm.example'
+
+
 def test_portable_sibling_layout(tmp_path):
     backend = tmp_path / 'Models' / '2026' / 'nova-energy-analyst'
     backend.mkdir(parents=True)

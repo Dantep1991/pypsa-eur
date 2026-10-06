@@ -37,6 +37,12 @@
       "no-useless-escape": "off"
     }
   },
+  "jest": {
+    "transformIgnorePatterns": [
+      "node_modules[/\\\\](?!(react-leaflet|@react-leaflet)[/\\\\]).+\\.(js|jsx|mjs|cjs|ts|tsx)$",
+      "^.+\\.module\\.(css|sass|scss)$"
+    ]
+  },
   "browserslist": {
     "production": [
       ">0.2%",

@@ -75,6 +75,10 @@ export function connectionCapacityScales(connections) {
 export function formatCapacity(value) {
   if (value == null || !Number.isFinite(Number(value))) return '—';
   const numeric = Number(value);
+  const magnitude = Math.abs(numeric);
+  if (magnitude > 0 && magnitude < 0.1) return new Intl.NumberFormat(undefined, {
+    maximumSignificantDigits: 3, notation: magnitude < 0.0001 ? 'scientific' : 'standard',
+  }).format(numeric);
   return numeric.toLocaleString(undefined, { maximumFractionDigits: numeric >= 100 ? 0 : numeric >= 10 ? 1 : 2 });
 }
 

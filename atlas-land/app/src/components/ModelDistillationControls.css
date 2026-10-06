@@ -1,0 +1,13 @@
+.model-distillation-controls { color:var(--text-primary); font-size:13px; line-height:1.5; }
+.model-distillation-controls .model-distillation-intro { margin:0 0 12px; color:var(--text-muted); }
+.model-distillation-controls .model-distillation-counts { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:12px 0; }
+.model-distillation-counts div { padding:10px; border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--control-surface); }
+.model-distillation-counts dt { font-size:12px; color:var(--text-muted); }
+.model-distillation-counts dd { margin:4px 0 0; font-size:20px; font-weight:600; font-variant-numeric:tabular-nums; }
+.model-distillation-controls details { color:var(--text-muted); }
+.model-distillation-controls summary { cursor:pointer; font-size:12px; color:var(--text-primary); }
+.model-distillation-save { display:flex; gap:8px; }
+.model-distillation-save button { padding:8px 12px; border:1px solid var(--border-strong); border-radius:var(--radius-md); color:var(--text-primary); background:var(--control-surface); }
+.model-distillation-controls small { display:block; font-size:12px; color:var(--text-muted); }
+.model-distillation-controls [role=status] { color:var(--accent-primary-text); }
+.model-distillation-controls input[type=checkbox] { accent-color:var(--accent-primary); }

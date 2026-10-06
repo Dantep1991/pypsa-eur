@@ -1,4 +1,6 @@
 import React, { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback } from 'react';
+import useScenarioMapPalette from '../hooks/useScenarioMapPalette';
+import { operationalConnectionStyle } from '../modelWorkspace/connectionVisibility';
 import { MapContainer, TileLayer, Marker, useMap, useMapEvents, CircleMarker, Circle, Tooltip, GeoJSON, Pane } from 'react-leaflet';
 import L from 'leaflet';
 import { Plus, Minus, Maximize2, RotateCcw, Leaf, MousePointer2, X, Zap } from 'lucide-react';
@@ -23,6 +25,10 @@ import ConnectionCapacityLegend from './ConnectionCapacityLegend';
 import GridAccessLegend from './GridAccessLegend';
 import LandSampleSummary from './LandSampleSummary';
 import AtlasPresentation from './AtlasPresentation';
+import AtlasControlPortal from './AtlasControlPortal';
+import MapDisplayBackButton from './MapDisplayBackButton';
+import { announceModelSelection } from '../modelWorkspace/modelSelection';
+import { mappedNetworkCoverage } from '../mapCoverage';
 import { getConnectionCapacity, connectionCapacityScales, capacityColor, formatCapacity } from '../connectionCapacity';
 import { createSpatialFeatureKey } from '../spatialFeatureKey';
 import { createAtlasCanvas } from '../atlasCanvas';
@@ -30,17 +36,22 @@ import { rankNetworkNodes } from '../networkNodeRanking';
 import { indexOverviewNodes, selectOverviewNodes } from '../overviewNodeSampling';
 import { atlasRecordCountryCodes } from '../atlasNetworkOverlay';
 import { networkFitPoints, countryFitFeatures } from '../networkFitExtent';
-import { regionBoundaryCollection, nodeHoverText } from '../regionBoundaries';
+import { regionBoundaryCollection, regionBoundaryTooltip } from '../regionBoundaries';
 import { landCountryScope } from '../landCountryScope';
 import { escapeMapText as escapeHtml, publishedNumber } from '../mapText';
 import { buildGridAccessPopupContent } from '../gridAccessPopup';
 import { bindMapHoverTooltip } from '../mapHoverTooltip';
+import { hasResultValue, resultTooltipContent } from '../resultTooltipContent';
+import SingleMapTooltip from './SingleMapTooltip';
 import { indexGenerationSites, selectGenerationSites, generationPieDiameter } from '../generationMapLayout';
 import { createGenerationMixResolver } from '../generationMix';
+import { generationCategoryColours, generationCategoryKey } from '../generationMixColors';
+import useGenerationMarkerSize from '../hooks/useGenerationMarkerSize';
 import { directionalResultLines, resultCircleRadius, resultPieDiameter, resultLineWidth } from '../modelWorkspace/resultPresentation';
 import { useResultMarkerSize } from '../hooks/useResultMarkerSize';
 import ModelResultFlowLayer from './ModelResultFlowLayer';
 import LolaFlowMapLayer from './LolaFlowMapLayer';
+import AtlasCbaMapLayer from './AtlasCbaMapLayer';
 import ModelAssetsMapLayer from './ModelAssetsMapLayer';
 import NetworkLineSelectionBridge from './NetworkLineSelectionBridge';
 import { connectionTooltipContent } from '../connectionTooltipContent';
@@ -195,7 +206,8 @@ const MapViewBridge = ({ onViewChange }) => {
 };
 
 // Standalone color resolver — used by both the map and the popup
-const getFacilityColor = (facility) => {
+const getFacilityColor = (facility, palette = {}) => {
+  if (facility?.atlas_scenario_color && palette[facility.scenario_preview?.status]) return palette[facility.scenario_preview.status];
   if (facility?.atlas_distillation_color) return facility.atlas_distillation_color;
   if (facility?.atlas_result_color) return facility.atlas_result_color;
   if (facility?.carrier_color) return facility.carrier_color;
@@ -362,6 +374,8 @@ const RegionContextBridge = ({ onContextMenu }) => {
 };
 
 const EnhancedLeafletMapContent = ({
+  cbaScene = null,
+  cbaMarkerScale = 1,
   lolaFlowFrame = null,
   modelAssetsFrame = null,
   onModelAssetSelect,
@@ -371,6 +385,8 @@ const EnhancedLeafletMapContent = ({
   onOpenResultComparison,
   presentationScope = 'studio',
   onPresentationMode,
+  onToolPanelOpenChange,
+  toolPanelDismissRequest,
   captureScene,
   restoreScene,
   agentActivity,
@@ -387,7 +403,8 @@ const EnhancedLeafletMapContent = ({
   onConnectionClick,
   linePropertiesByChildName,
   activeDataLayer = 'facilities',
-  showGenerationMix = false,
+  showGenerationMix: generationMixEnabled = false,
+  generationMarkerScale = 1,
   mapViewMode = 'our-model',
   marketPrices = {},
   generationMix = {},
@@ -398,6 +415,7 @@ const EnhancedLeafletMapContent = ({
   pypsaLoading = false,
   geoJsonOverlays = [],
   aggregatedRegions = [],
+  onRegionBoundaryCoverageChange = null,
   regionalClusterOverlay = null,
   activeCountryCode = '',
   activeCountryCodes = [],
@@ -410,6 +428,7 @@ const EnhancedLeafletMapContent = ({
   networkResolution = '',
   resultMarkerScale = 1,
   showNodeMarkers = true,
+  showDataBubbles = true,
   showGeographicBoundaries = true,
   onMapViewChange = null,
   onRenderStatsChange = null,
@@ -421,6 +440,12 @@ const EnhancedLeafletMapContent = ({
   onRegionCenterChange = null,
   landConstraints = null,
   controlsHidden = false,
+  consolidatedControls = false,
+  overlaysControlHost = null,
+  presentationControlHost = null,
+  onMapDisplayReturn = null,
+  mapDisplayResetRequest = 0,
+  showComparisonAction = true,
   panelsHidden = false,
   popupDismissRequest = 0,
   onPopupVisibilityChange = null,
@@ -429,11 +454,14 @@ const EnhancedLeafletMapContent = ({
   gridAccess = null,
   onGridAccessChange = null,
 }) => {
+  const showGenerationMix = generationMixEnabled && showDataBubbles;
+  const scenarioPalette = useScenarioMapPalette();
   const [zoomLevel, setZoomLevel] = useState(5); // matches immutable MapContainer initial zoom
   const [mapInstance, setMapInstance] = useState(null);
   const [inspectMode, setInspectMode] = useState(false);
   const [presentationSelection, setPresentationSelection] = useState(null);
   useEffect(() => { setPresentationSelection(null); }, [facilities, connections]);
+  useEffect(() => { announceModelSelection(presentationSelection); }, [presentationSelection, presentationScope]);
   // Own every vector renderer, including custom panes, so a queued redraw
   // cannot outlive the map. Keep their panes mounted across filter changes.
   const atlasRenderers = useMemo(() => ({
@@ -446,6 +474,9 @@ const EnhancedLeafletMapContent = ({
     access: createAtlasCanvas({ pane: 'grid-access-sites' }),
     region: createAtlasCanvas({ pane: 'region-overlay-pane' }),
   }), []);
+  // SVG only receives events on painted shapes. Result bubbles must sit above
+  // Access's full-extent canvas, without blocking the rest of the network.
+  const resultNodeRenderer = useMemo(() => L.svg({ pane: 'model-result-nodes' }), []);
   const [lineRenderProgress, setLineRenderProgress] = useState(null);
   const [lineRetirementProgress, setLineRetirementProgress] = useState(null);
   const [renderDiagnosticsEnabled] = useState(() => mapDiagnosticsEnabled(
@@ -494,6 +525,11 @@ const EnhancedLeafletMapContent = ({
   const [landInspectMode, setLandInspectMode] = useState(false);
   const [landInspection, setLandInspection] = useState(null);
   const [landViewportStats, setLandViewportStats] = useState(null);
+  useEffect(() => {
+    if (!mapDisplayResetRequest) return;
+    setInspectMode(false); setPresentationSelection(null);
+    setLandInspectMode(false); setLandInspection(null);
+  }, [mapDisplayResetRequest]);
   const landTileLayerRef = useRef(null);
   const landOpacityRangeRef = useRef(null);
   const landOpacityLabelRef = useRef(null);
@@ -675,7 +711,8 @@ const EnhancedLeafletMapContent = ({
 
   const europeGeometryRequired = Boolean(
     pypsaLoading
-    || (showGeographicBoundaries && (Array.isArray(activeCountryCodes) ? activeCountryCodes.length : 0))
+    || (showGeographicBoundaries && ((Array.isArray(activeCountryCodes) ? activeCountryCodes.length : 0)
+      || aggregatedRegions.length))
     || (landConfig.enabled && landConfig.countries.length)
     || (Array.isArray(viewportCommand?.countryCodes) && viewportCommand.countryCodes.length)
   );
@@ -704,6 +741,9 @@ const EnhancedLeafletMapContent = ({
   }, [europeGeoJson, loadedCountryCodeSet]);
   const countryOverview = zoomLevel <= 5;
   const aggregatedBoundaries = useMemo(() => regionBoundaryCollection(europeGeoJson, aggregatedRegions), [europeGeoJson, aggregatedRegions]);
+  useEffect(() => {
+    onRegionBoundaryCoverageChange?.(showGeographicBoundaries && europeGeoJson ? aggregatedBoundaries.incomplete : []);
+  }, [aggregatedBoundaries, europeGeoJson, showGeographicBoundaries, onRegionBoundaryCoverageChange]);
   const countryBoundaryStyle = useCallback((feature) => {
     const code = String(feature?.properties?.ISO2 || '').trim().toUpperCase();
     const active = code === String(activeCountryCode || '').trim().toUpperCase();
@@ -920,7 +960,7 @@ const EnhancedLeafletMapContent = ({
     });
     // Diameter follows sqrt(capacity / largest capacity), so circle area is
     // proportional to installed MW. The bounds shrink sharply when zoomed out.
-    const size = displayDiameter ?? generationPieDiameter(sizeRatio, zoomLevel, aggregate);
+    const size = displayDiameter ?? generationPieDiameter(sizeRatio, zoomLevel, aggregate, generationMarkerScale);
     const signature = safeSegments
       .map((segment) => `${segment.key}:${segment.share.toFixed(4)}:${segment.color}`)
       .join('|');
@@ -946,7 +986,7 @@ const EnhancedLeafletMapContent = ({
     });
     generationMixIconCacheRef.current.set(cacheKey, icon);
     return icon;
-  }, [zoomLevel]);
+  }, [zoomLevel, generationMarkerScale]);
 
   // --- Region-solve halo classification ---------------------------------------
   // Buses / lines inside `regionManifest.solved_buses` get full opacity; buses
@@ -1013,6 +1053,10 @@ const EnhancedLeafletMapContent = ({
   // produced one render of new links with old endpoints and decoded every
   // route a second time when the copied state caught up.
   const allNodes = useMemo(() => [...facilities, ...editableNodes], [facilities, editableNodes]);
+  const generationPieIds = useMemo(() => new Set(showGenerationMix ? allNodes.filter(node => !node?.editable
+    && String(node?.component_type || node?.type || '').toLowerCase() === 'generator'
+    && (Number(node.p_nom_opt) > 0 || Number(node.p_nom) > 0 || Number(node.total_dispatch_MWh) > 0)
+  ).map(node => node.id) : []), [allNodes, showGenerationMix]);
 
   const isAggregateCacheNode = useCallback((node) => (
     Boolean(node?.atlas_region_group_name) || /_(?:bidding_zone|ehighway|nuts[123]|c\d+)\.nc$/i.test(String(node?.sourceNetworkFilename || ''))
@@ -1030,8 +1074,7 @@ const EnhancedLeafletMapContent = ({
   const lodNodes = useMemo(() => {
     let candidates = allNodes.filter(node => {
       const lat = publishedNumber(node?.latitude), lng = publishedNumber(node?.longitude);
-      const representedByPie = showGenerationMix && !node?.editable
-        && String(node?.component_type || node?.type || '').toLowerCase() === 'generator';
+      const representedByPie = generationPieIds.has(node.id);
       return !representedByPie && lat != null && lng != null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
     });
     if (markerViewportBounds) {
@@ -1058,7 +1101,7 @@ const EnhancedLeafletMapContent = ({
     });
     const selectedDetailedIds = new Set(selectedDetailedNodes.map((node) => node));
     return candidates.filter((node) => isAggregateCacheNode(node) || node?.editable || selectedDetailedIds.has(node));
-  }, [allNodes, zoomLevel, markerViewportBounds, isAggregateCacheNode, rankedDetailedNodes, networkResolution, selectedNode, selectedNodes, showGenerationMix]);
+  }, [allNodes, zoomLevel, markerViewportBounds, isAggregateCacheNode, rankedDetailedNodes, networkResolution, selectedNode, selectedNodes, generationPieIds]);
 
   const capacityScales = useMemo(() => connectionCapacityScales(connections || []), [connections]);
   const capacityScalesByUnit = useMemo(() => new Map(capacityScales.map(scale => [scale.units, scale])), [capacityScales]);
@@ -1136,6 +1179,9 @@ const EnhancedLeafletMapContent = ({
   const drawableConnections = useMemo(() => connections.filter((connection) => (
     Boolean(connectionGeometries.get(connection))
   )), [connections, connectionGeometries]);
+  const { mappedLocations, mappedConnections } = useMemo(
+    () => mappedNetworkCoverage(allNodes.filter(node => !node.atlas_distillation_hidden), drawableConnections.filter(line => !line.atlas_distillation_hidden)), [allNodes, drawableConnections],
+  );
   useEffect(() => {
     const container = mapInstance?.getContainer?.();
     if (!container?.setAttribute) return;
@@ -1221,9 +1267,10 @@ const EnhancedLeafletMapContent = ({
         const resultMagnitude = Number(connection.atlas_result_magnitude_ratio);
         const hasResult = Number.isFinite(resultRatio) && connection.atlas_result_color;
         const hasDistillationStyle = Boolean(connection.atlas_distillation_color);
-        const color = hasDistillationStyle ? connection.atlas_distillation_color : hasResult ? connection.atlas_result_color : overlayStyle?.color || (capacityRatio != null
+        const disabledStyle = operationalConnectionStyle(connection, scenarioPalette);
+        const color = disabledStyle?.color || (connection.atlas_scenario_color && scenarioPalette[connection.scenario_preview?.status]) || (hasDistillationStyle ? connection.atlas_distillation_color : hasResult ? connection.atlas_result_color : overlayStyle?.color || (capacityRatio != null
           ? capacityColor(capacityRatio)
-          : (halo.dashOverride ? '#fbbf24' : (connection.color || '#38bdf8')));
+          : (halo.dashOverride ? '#fbbf24' : (connection.color || '#38bdf8'))));
         const sourceWeight = Number.isFinite(Number(connection.weight)) ? Number(connection.weight) : 0;
         const topologyWeight = connection.is_reference_topology
           ? Math.max(zoomLineWeight, Math.min(sourceWeight || zoomLineWeight, zoomLineWeight * 1.65))
@@ -1256,11 +1303,11 @@ const EnhancedLeafletMapContent = ({
             midLng: midpoint[0],
             style: {
               color,
-              weight,
-              opacity,
-              dashArray: overlayStyle
+              weight: disabledStyle ? Math.max(disabledStyle.weight, weight) : connection.atlas_scenario_color ? Math.max(3.5, weight) : weight,
+              opacity: disabledStyle ? Math.min(disabledStyle.opacity, distillationOpacity) : connection.atlas_scenario_color ? Math.max(0.85, opacity) : opacity,
+              dashArray: disabledStyle?.dashArray || (connection.scenario_preview?.status === 'unresolved' ? '2 5' : overlayStyle
                 ? overlayStyle.dashArray || undefined
-                : connection.dash_array || halo.dashOverride || (connection.is_cross_border ? '6 5' : undefined),
+                : connection.dash_array || halo.dashOverride || (connection.is_cross_border ? '6 5' : undefined)),
             },
           },
           geometry: {
@@ -1279,18 +1326,21 @@ const EnhancedLeafletMapContent = ({
     lineStyleZoom,
     performanceMode,
     networkResolution,
+    scenarioPalette,
   ]);
 
   const geoJsonNodeFeatureCollection = useMemo(() => {
     const features = (lodNodes || []).filter((facility) => {
       if (facility.atlas_distillation_hidden) return false;
+      if (!showDataBubbles && facility.atlas_result_map_mode === 'bubbles') return false;
       if (facility.atlas_result_map_mode === 'mix' && facility.atlas_result_value > 0) return false;
       if (!showGenerationMix || facility.editable) return true;
-      const componentType = String(facility?.component_type || facility?.type || '').toLowerCase();
       // The pie layer represents all generators at this bus. Hiding the
       // overlapping generator triangles avoids showing one carrier colour as
       // though it represented the complete bus mix.
-      return componentType !== 'generator';
+      // Unknown/zero input capacity has no pie segment. Keep its real model
+      // location inspectable rather than dropping the asset from the map.
+      return !generationPieIds.has(facility.id);
     }).map((facility) => {
       const lat = parseFloat(facility.latitude);
       const lng = parseFloat(facility.longitude);
@@ -1307,34 +1357,34 @@ const EnhancedLeafletMapContent = ({
       const overlayStyle = networkResolution === 'overlay'
         ? ATLAS_NETWORK_CARRIER_META[overlayCarrier]
         : null;
-      const color = facility.atlas_region_group_name ? '#0d9488' : overlayStyle?.color || getFacilityColor(facility);
+      const color = facility.atlas_region_group_name ? '#0d9488' : overlayStyle?.color || getFacilityColor(facility, scenarioPalette);
       const shape = (() => {
         if (facility.is_virtual) return 'diamond';
         const t = String(facility.component_type || facility.type || '').toLowerCase();
         if (t === 'generator') return 'triangle';
-        if (t === 'storageunit' || t === 'storage') return 'square';
+        if (t === 'storageunit' || t === 'storage' || t === 'store') return 'square';
         if (t === 'bus' || t === 'load') return 'hex';
         return 'circle';
       })();
       const isDemand = String(facility?.component_type || facility?.type || '').toLowerCase() === 'load';
       // Infrastructure datasets can expose an explicitly normalised map
       // scale without pretending that operational throughput is electric MW.
-      const demandValueMw = Number(facility?.map_scale_value ?? facility?.p_set);
+      const demandValueMw = publishedNumber(facility?.map_scale_value ?? facility?.p_set);
       const demandSizeRatio = isDemand && Number.isFinite(demandValueMw) && demandValueMw > 0
         ? Math.min(1, demandValueMw / demandScaleReferenceMw)
         : null;
-      const explicitMapScaleRatio = Number(facility?.map_scale_ratio);
+      const explicitMapScaleRatio = publishedNumber(facility?.map_scale_ratio);
       const magnitudeSizeRatio = Number.isFinite(explicitMapScaleRatio) && explicitMapScaleRatio >= 0
         ? Math.min(1, explicitMapScaleRatio)
         : demandSizeRatio;
-      const isMagnitudeScaled = Number.isFinite(Number(magnitudeSizeRatio));
+      const isMagnitudeScaled = magnitudeSizeRatio != null && Number.isFinite(magnitudeSizeRatio);
       const sourceExtraOpacity = busHaloOpacity(facility.id);
       const distillationOpacity = Number(facility.atlas_distillation_opacity);
       const extraOpacity = Number.isFinite(distillationOpacity)
         ? Math.min(sourceExtraOpacity, Math.max(0, Math.min(1, distillationOpacity)))
         : sourceExtraOpacity;
       const sourceNetworkFilename = String(facility?.sourceNetworkFilename || '');
-      const nodeEmphasis = facility.atlas_region_group_name || /_(?:bidding_zone|ehighway|nuts1)\.nc$/i.test(sourceNetworkFilename)
+      const nodeEmphasis = facility.atlas_scenario_color ? 5 : facility.atlas_region_group_name || /_(?:bidding_zone|ehighway|nuts1)\.nc$/i.test(sourceNetworkFilename)
         ? 2
         : /_(?:nuts[23]|c\d+)\.nc$/i.test(sourceNetworkFilename)
           ? 1
@@ -1381,7 +1431,7 @@ const EnhancedLeafletMapContent = ({
       };
     }).filter(Boolean);
     return { type: 'FeatureCollection', features };
-  }, [lodNodes, editableNodes, busHaloOpacity, selectedNode, selectedNodes, showGenerationMix, visibleNodeIds, visibleLocationCounts, demandScaleReferenceMw, networkResolution]);
+  }, [lodNodes, editableNodes, busHaloOpacity, selectedNode, selectedNodes, showDataBubbles, showGenerationMix, generationPieIds, visibleNodeIds, visibleLocationCounts, demandScaleReferenceMw, networkResolution, scenarioPalette]);
 
   const generationSites = useMemo(() => showGenerationMix ? indexGenerationSites(allNodes) : [], [showGenerationMix, allNodes]);
   const generationOverviewIndex = useMemo(() => indexOverviewNodes(generationSites, site => [...site.countries]), [generationSites]);
@@ -1398,7 +1448,8 @@ const EnhancedLeafletMapContent = ({
     return selectGenerationSites(generationSites, zoomLevel, viewport, { index: generationOverviewIndex, selectedIds: [selectedNode, ...(Array.isArray(selectedNodes) ? selectedNodes : [])] });
   }, [generationSites, generationOverviewIndex, zoomLevel, markerViewportBounds, selectedNode, selectedNodes]);
 
-  const resolveGenerationMix = useMemo(() => createGenerationMixResolver(getFacilityColor), []);
+  const generationColours = useMemo(() => generationCategoryColours(generationSites.flatMap(site => site.generators)), [generationSites]);
+  const resolveGenerationMix = useMemo(() => createGenerationMixResolver(item => generationColours.get(generationCategoryKey(item))), [generationColours]);
   const generationMixFeatureCollection = useMemo(() => {
     const features = [];
     for (const site of generationSiteSelection.sites) {
@@ -1489,7 +1540,10 @@ const EnhancedLeafletMapContent = ({
   // Empty is also a committed network frame. Keep the owner mounted when all
   // links are filtered out so it can retire the old graph cooperatively, and
   // keep nodes/boundaries in step with that swap rather than publishing early.
-  const managesNetworkLines = mapViewMode === 'our-model';
+  // Flow/CBA owns the connection drawing instead of BatchedNetworkLayer.
+  // Waiting for that unmounted owner would freeze the committed node/pie
+  // frame and leave the old country scope visible indefinitely.
+  const managesNetworkLines = mapViewMode === 'our-model' && !lolaFlowFrame && !cbaScene;
   const renderedLinks = managesNetworkLines ? lineRenderProgress?.renderedLinks || 0 : 0;
   const renderingLinks = managesNetworkLines && (lineRenderProgress?.key !== networkRenderKey || lineRenderProgress?.renderingLinks === true);
   const renderError = managesNetworkLines && lineRenderProgress?.key === networkRenderKey ? lineRenderProgress?.renderError || '' : '';
@@ -1509,6 +1563,7 @@ const EnhancedLeafletMapContent = ({
   const resultMixLayerRef = useRef(null);
   useResultMarkerSize(nodeLayerRef, displayedFrame?.nodeKey, resultMixLayerRef,
     displayedFrame?.resultMixKey, resultMarkerScale, createGenerationMixIcon);
+  useGenerationMarkerSize(resultMixLayerRef, displayedFrame?.mixKey, createGenerationMixIcon);
   const makeSelectedNodeIcon = useCallback((p, selected) => createColoredIcon(
     p.color || '#3b82f6', selected, Boolean(p.isEditable), Boolean(p.hasMultipleObjects),
     p.objectCount || 1, p.shape || 'circle', p.extraOpacity ?? 1, zoomLevel,
@@ -1518,8 +1573,8 @@ const EnhancedLeafletMapContent = ({
   const generationSitesRendered = displayedFrame?.mix.features.length || 0;
   const generationSitesInView = displayedFrame?.mix.inView || 0;
   useEffect(() => {
-    onRenderStatsChange?.({ renderedLinks, unmappedLinks, renderingLinks, renderError, overviewLines, generationSitesRendered, generationSitesInView });
-  }, [onRenderStatsChange, renderedLinks, unmappedLinks, renderingLinks, renderError, overviewLines, generationSitesRendered, generationSitesInView]);
+    onRenderStatsChange?.({ renderedLinks, unmappedLinks, renderingLinks, renderError, overviewLines, generationSitesRendered, generationSitesInView, mappedLocations, mappedConnections });
+  }, [onRenderStatsChange, renderedLinks, unmappedLinks, renderingLinks, renderError, overviewLines, generationSitesRendered, generationSitesInView, mappedLocations, mappedConnections]);
 
 
   return (
@@ -1540,6 +1595,7 @@ const EnhancedLeafletMapContent = ({
         style={{ height: '100%', width: '100%', minHeight: '400px', backgroundColor: 'var(--atlas-map-canvas)' }}
         className="z-0"
       >
+        <SingleMapTooltip />
         <MapInstanceBridge onReady={setMapInstance} />
         <Pane name="loaded-country-context" style={{ zIndex: 260 }} />
         <Pane name="regional-clusters" style={{ zIndex: 270, opacity: 0.48, willChange: 'opacity' }} />
@@ -1547,6 +1603,8 @@ const EnhancedLeafletMapContent = ({
         <Pane name="network-boundaries" style={{ zIndex: 275, display: showGeographicBoundaries ? undefined : 'none' }} />
         <Pane name="land-country-context" style={{ zIndex: 265 }} />
         <Pane name="network-nodes" style={{ zIndex: 600, display: showNodeMarkers ? undefined : 'none' }} />
+        <Pane name="model-result-nodes" style={{ zIndex: 680 }} />
+        <Pane name="network-node-tooltips" style={{ zIndex: 750 }} />
         <MapDisplayPaneBridge nodes={showNodeMarkers} boundaries={showGeographicBoundaries} />
         <Pane name="grid-access-sites" style={{ zIndex: 675 }} />
         <Pane name="region-overlay-pane" style={{ zIndex: 330 }} />
@@ -1618,7 +1676,7 @@ const EnhancedLeafletMapContent = ({
           <GeoJSON key={`aggregated-regions-${JSON.stringify(aggregatedRegions)}`}
             data={aggregatedBoundaries} pane="network-boundaries" renderer={atlasRenderers.boundaries}
             style={feature => ({ color: feature.properties.color, fillColor: feature.properties.color, weight: 2, opacity: 0.85, fillOpacity: 0.13 })}
-            onEachFeature={(feature, layer) => layer.bindTooltip(escapeHtml(`${feature.properties.name} · Countries: ${feature.properties.countries}`), { sticky: true })}
+            onEachFeature={(feature, layer) => layer.bindTooltip(escapeHtml(regionBoundaryTooltip(feature)), { sticky: true })}
           />
         )}
 
@@ -1881,11 +1939,11 @@ const EnhancedLeafletMapContent = ({
           </>
         )}
 
-        <NetworkLineSelectionBridge enabled={managesNetworkLines && !lolaFlowFrame && !landInspectMode}
+        <NetworkLineSelectionBridge enabled={managesNetworkLines && !lolaFlowFrame && !cbaScene && !landInspectMode}
           data={displayedFrame?.links} onSelect={setPresentationSelection} />
 
         {/* Render connections as GeoJSON */}
-        {managesNetworkLines && !lolaFlowFrame && (
+        {managesNetworkLines && !lolaFlowFrame && !cbaScene && (
           <>
             <Pane name="line-capacity-tooltip-pane" style={{ zIndex: 735 }} />
             {useOverviewLineCanvas ? <OverviewNetworkCanvasLayer
@@ -1930,7 +1988,7 @@ const EnhancedLeafletMapContent = ({
         )}
 
         {/* Render facilities as GeoJSON points */}
-        {showNodeMarkers && displayedFrame?.nodes.features.length > 0 && (
+        {showNodeMarkers && !cbaScene && displayedFrame?.nodes.features.length > 0 && (
           <GeoJSON
             key={displayedFrame.nodeKey}
             ref={nodeLayerRef}
@@ -1944,7 +2002,7 @@ const EnhancedLeafletMapContent = ({
                   radius: resultCircleRadius(p.facility.atlas_result_map_mode, p.resultMagnitudeRatio, resultMarkerScale),
                   color: p.color, fillColor: p.color, fillOpacity: p.isResultBubble && !(p.resultMagnitudeRatio > 0) ? 0 : 0.82,
                   weight: p.isSelected ? 2.5 : 1.25,
-                  pane: 'network-nodes', renderer: atlasRenderers.nodes,
+                  pane: 'model-result-nodes', renderer: resultNodeRenderer,
                 });
               }
               if (p.nodeEmphasis >= 2) {
@@ -1997,17 +2055,23 @@ const EnhancedLeafletMapContent = ({
             onEachFeature={(feature, layer) => {
               const p = feature?.properties || {};
               const facility = p.facility || {};
-              if (facility.atlas_region_group_name) {
-                layer.bindTooltip(escapeHtml(facility.atlas_region_group_name), { permanent: true, direction: 'top', opacity: 0.95 });
+              if (facility.atlas_region_group_name && !hasResultValue(facility)) {
+                layer.bindTooltip(escapeHtml(facility.atlas_region_group_name), { permanent: true, atlasMapLabel: true, direction: 'top', opacity: 0.95 });
               } else {
-                const result = Number.isFinite(facility.atlas_result_value)
-                  ? `<br/>${escapeHtml(facility.atlas_result_label)}: ${formatCapacity(facility.atlas_result_value)} ${escapeHtml(facility.atlas_result_unit)}<br/>${escapeHtml(facility.atlas_result_period)}` : '';
-                layer.bindTooltip(escapeHtml(nodeHoverText(facility)) + result, { direction: 'top', opacity: 0.95 });
+                const content = resultTooltipContent(facility);
+                const tooltipOptions = { direction: 'top', opacity: 0.98, sticky: true,
+                  pane: 'network-node-tooltips', className: 'line-capacity-tooltip atlas-result-tooltip',
+                  atlasTooltipPriority: hasResultValue(facility) ? 20 : 5 };
+                if (hasResultValue(facility)) {
+                  bindMapHoverTooltip(layer, content, tooltipOptions);
+                  layer.bindPopup(content, { ...ATLAS_ASSET_POPUP_OPTIONS, className: 'atlas-asset-popup atlas-result-popup' });
+                } else layer.bindTooltip(content, tooltipOptions);
               }
               layer.on('click', (e) => {
                 if (e?.originalEvent) L.DomEvent.stopPropagation(e.originalEvent);
                 if (e?.originalEvent) e.originalEvent.atlasAssetSelected = true;
-                setPresentationSelection({ kind: 'node', record: facility });
+                // A result click pins its value card, not a competing full inspector.
+                setPresentationSelection(hasResultValue(facility) ? null : { kind: 'node', record: facility });
                 if (mapViewMode === 'our-model') {
                   if (onNodeSelection) onNodeSelection(facility.id);
                 } else {
@@ -2020,8 +2084,9 @@ const EnhancedLeafletMapContent = ({
 
         <ModelResultFlowLayer lines={resultFlowLines} />
         <LolaFlowMapLayer frame={lolaFlowFrame} onSelect={onLolaFlowSelect} />
-        <ModelAssetsMapLayer frame={modelAssetsFrame} onSelect={onModelAssetSelect} />
-        {showNodeMarkers && (displayedFrame?.resultMix.features.length > 0 || (showGenerationMix && displayedFrame?.mix.features.length > 0)) && (
+        <AtlasCbaMapLayer scene={cbaScene} markerScale={cbaMarkerScale} />
+        {showNodeMarkers && showDataBubbles && <ModelAssetsMapLayer frame={modelAssetsFrame} onSelect={onModelAssetSelect} />}
+        {showNodeMarkers && showDataBubbles && !cbaScene && (displayedFrame?.resultMix.features.length > 0 || (showGenerationMix && displayedFrame?.mix.features.length > 0)) && (
           <>
           <Pane name="generation-mix-tooltip-pane" style={{ zIndex: 720 }} />
           <Pane name="generation-mix-pane" style={{ zIndex: 650 }}>
@@ -2042,7 +2107,8 @@ const EnhancedLeafletMapContent = ({
                 return L.marker(latlng, {
                   icon,
                   pane: 'generation-mix-pane',
-                  keyboard: false,
+                  title: `${p.facility?.bus_label || p.facility?.bus || p.facility?.name || 'Supply'} · ${p.basis || 'Generation mix'}: ${Number(p.total || 0).toLocaleString()} ${p.unit || ''}`,
+                  keyboard: true,
                   autoPanOnFocus: false,
                   riseOnHover: true,
                 });
@@ -2056,12 +2122,16 @@ const EnhancedLeafletMapContent = ({
                     opacity: 0.96,
                     sticky: true,
                     pane: 'generation-mix-tooltip-pane',
+                    atlasTooltipPriority: 20,
+                  });
+                  if (hasResultValue(facility)) layer.bindPopup(p.tooltipContent, {
+                    ...ATLAS_ASSET_POPUP_OPTIONS, className: 'atlas-asset-popup atlas-result-popup',
                   });
                 }
                 layer.on('click', (event) => {
                   if (event?.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
                   if (event?.originalEvent) event.originalEvent.atlasAssetSelected = true;
-                  setPresentationSelection({ kind: 'node', record: facility });
+                  setPresentationSelection(hasResultValue(facility) ? null : { kind: 'node', record: facility });
                   if (onNodeSelection && facility.id) onNodeSelection(facility.id);
                 });
               }}
@@ -2070,17 +2140,21 @@ const EnhancedLeafletMapContent = ({
           </>
         )}
       </MapContainer>
-      <AtlasPresentation key={presentationScope} map={mapInstance} facilities={facilities} connections={connections}
+      <AtlasPresentation consolidatedControls={consolidatedControls} controlHost={presentationControlHost} showComparisonAction={showComparisonAction} key={presentationScope} map={mapInstance} facilities={facilities} connections={connections}
         registerAgentController={registerAgentController}
         onOpenResultComparison={onOpenResultComparison}
         countries={activeCountryCodes} resolution={networkResolution} captureScene={captureScene} restoreScene={restoreScene}
         presentationMode={presentationMode} onPresentationMode={onPresentationMode} busy={pypsaLoading || renderingLinks}
+        onToolPanelOpenChange={onToolPanelOpenChange} toolPanelDismissRequest={toolPanelDismissRequest}
+        mapDisplayResetRequest={mapDisplayResetRequest}
         agentBusy={agentBusy} agentActivity={agentActivity} selection={presentationSelection} onSelect={setPresentationSelection}
+        onAskModify={() => announceModelSelection(presentationSelection, true)}
         inspectMode={inspectMode} onInspectMode={setInspectMode} onLandConstraintsChange={onLandConstraintsChange}
         onGridAccessChange={onGridAccessChange} gridAccessData={gridAccessConfig.data} theme={atlasTheme} />
-      <div style={controlsHidden || panelsHidden ? { display: 'none' } : undefined} className="absolute top-[148px] sm:top-24 right-[58px] z-[565] flex items-start gap-2">
+      <div style={(!consolidatedControls && controlsHidden) || panelsHidden ? { display: 'none' } : undefined} className="absolute top-[148px] sm:top-24 right-[58px] z-[565] flex items-start gap-2">
         {landConfig.panelOpen && (
           <div role="region" aria-label="Land and Constraints controls" className="atlas-land-controls w-[250px] overflow-y-auto rounded-2xl border border-emerald-300/20 bg-[#071421]/96 p-3 text-[10px] text-slate-300 shadow-2xl backdrop-blur-xl">
+            {consolidatedControls && <MapDisplayBackButton onClick={onMapDisplayReturn} />}
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-[9px] uppercase tracking-[0.16em] text-emerald-300">Siting evidence</p>
@@ -2282,10 +2356,13 @@ const EnhancedLeafletMapContent = ({
             <p className="mt-3 border-t border-white/8 pt-2 text-[8px] leading-3 text-slate-500">Screening only—not parcel availability, ownership, permitting or legal advice. Verify current national and local records before siting.</p>
           </div>
         )}
+        <AtlasControlPortal consolidated={consolidatedControls} target={overlaysControlHost}>
         <button
           type="button"
           onClick={() => updateLandConfig(
-            !landConfig.enabled
+            consolidatedControls
+              ? { enabled: !landConfig.enabled, panelOpen: !landConfig.enabled }
+              : !landConfig.enabled
               ? { enabled: true, panelOpen: true }
               : !landConfig.panelOpen
                 ? { panelOpen: true }
@@ -2299,10 +2376,12 @@ const EnhancedLeafletMapContent = ({
           <Leaf className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Land</span>
         </button>
+        </AtlasControlPortal>
       </div>
-      <div style={controlsHidden || panelsHidden ? { display: 'none' } : undefined} className="absolute top-[194px] sm:top-[138px] right-[58px] z-[566] flex items-start gap-2">
+      <div style={(!consolidatedControls && controlsHidden) || panelsHidden ? { display: 'none' } : undefined} className="absolute top-[194px] sm:top-[138px] right-[58px] z-[566] flex items-start gap-2">
         {gridAccessConfig.panelOpen && (
           <div role="region" aria-label="Grid Access controls" className="atlas-access-controls w-[270px] overflow-y-auto rounded-2xl border border-sky-300/20 bg-[#071421]/96 p-3 text-[10px] text-slate-300 shadow-2xl backdrop-blur-xl">
+            {consolidatedControls && <MapDisplayBackButton onClick={onMapDisplayReturn} />}
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-[9px] uppercase tracking-[0.16em] text-sky-300">Connection intelligence</p>
@@ -2435,10 +2514,13 @@ const EnhancedLeafletMapContent = ({
             </p>
           </div>
         )}
+        <AtlasControlPortal consolidated={consolidatedControls} target={overlaysControlHost}>
         <button
           type="button"
           onClick={() => updateGridAccessConfig(
-            !gridAccessConfig.enabled
+            consolidatedControls
+              ? { enabled: !gridAccessConfig.enabled, panelOpen: !gridAccessConfig.enabled }
+              : !gridAccessConfig.enabled
               ? { enabled: true, panelOpen: true }
               : !gridAccessConfig.panelOpen
                 ? { panelOpen: true }
@@ -2452,6 +2534,7 @@ const EnhancedLeafletMapContent = ({
           <Zap className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Access</span>
         </button>
+        </AtlasControlPortal>
       </div>
       {mapViewMode === 'our-model' && displayedFrame?.capacityStylingEnabled && !displayedFrame.hasResultLinks && (
         <ConnectionCapacityLegend scales={displayedFrame.capacityScales} />

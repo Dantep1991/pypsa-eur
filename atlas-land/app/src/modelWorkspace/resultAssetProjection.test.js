@@ -38,3 +38,12 @@ test('native nodes and energy pies retain their established aggregation contract
   expect(objectResultTarget({ className: 'Gas Node' })).toBe(true);
   expect(objectResultTarget({ className: 'Generator', mapMode: 'mix' })).toBe(false);
 });
+
+test('import result coordinates retain their country for map scope filtering', () => {
+  const imports = { source: 'model_schema/v1', objects: [{ name: 'EG00', class_name: 'Node',
+    nodes: [{ name: 'EG00', position: { lat: 30.044, lon: 31.236, country: 'EG',
+      canonical_reference: 'Node:EG00', method: 'declared_project_geography' } }] }] };
+  const result = attachAssetPositions({ ...scene, values: [{ entity_id: 'Node:EG00', value: 10 }] }, imports);
+  expect(result.spatial_nodes[0]).toMatchObject({ id: 'Node:EG00', country: 'EG', latitude: 30.044 });
+  expect(projectModelResultScene(result, []).values).toHaveLength(1);
+});

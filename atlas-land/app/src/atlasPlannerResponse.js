@@ -10,6 +10,8 @@ export function readAtlasPlannerResponse(data, visibleLayers = []) {
   const actions = Array.isArray(data.actions)
     ? data.actions.slice(0, 12)
     : typeof data.intent === 'string' ? [{ intent: data.intent, params: data.params || {} }] : [];
+  // Delegation owns the whole request; never apply a partial map plan first.
+  if (actions.some(action => action?.intent === 'delegate_to_agent') && actions.length !== 1) return unavailable;
   const clarificationOnly = actions.length > 0 && actions.every(action => action?.intent === 'ask_clarification');
   const plan = confidence >= 0.45 || clarificationOnly
     ? normalizeAtlasModelPlan(actions.filter(action => action && typeof action.intent === 'string'), visibleLayers)

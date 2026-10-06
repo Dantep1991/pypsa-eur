@@ -91,6 +91,23 @@ test('cancelled query cannot publish a stale history and can be retried',async()
   view.unmount();expect(fetchFlowYear.mock.calls[1][3].signal.aborted).toBe(true);
 });
 
+test('reported map samples remain inspectable while full-year history is loading',()=>{
+  fetchFlowHistory.mockImplementation(()=>new Promise(()=>{}));
+  const onChoosePeriod=jest.fn();
+  render(<LolaFlowHistoryDock context={{projectId:'Test'}} scene={scene} line={line} onChoosePeriod={onChoosePeriod}/>);
+  expect(screen.getByText(/Loading full-year history/)).toBeInTheDocument();
+  expect(screen.getByText('Show period on map')).toBeEnabled();
+  fireEvent.click(screen.getByText('Show period on map'));
+  expect(onChoosePeriod).toHaveBeenCalledWith(scene.periods[0]);
+});
+
+test('a missing preview observation cannot be shown while history loads',()=>{
+  fetchFlowHistory.mockImplementation(()=>new Promise(()=>{}));
+  const missing={...line,values:new Map([[scene.periods[0],null]])};
+  render(<LolaFlowHistoryDock context={{projectId:'Test'}} scene={{...scene,lines:[missing]}} line={missing} onChoosePeriod={jest.fn()}/>);
+  expect(screen.getByText('Show period on map')).toBeDisabled();
+});
+
 test('switching connections never renders old history with missing statistics for the new line',async()=>{
   const result={...scene,warnings:[],stats:new Map([[line.id,{reportedHours:1,expectedHours:8760,validHours:1,nearHours:1,share:1}]])};
   fetchFlowYear.mockResolvedValueOnce(result).mockImplementation(()=>new Promise(()=>{}));
@@ -104,4 +121,27 @@ test('switching connections never renders old history with missing statistics fo
   view.rerender(<LolaFlowHistoryDock {...props}/>);
   await screen.findByText(/1 \/ 8,760 reported hours/);
   expect(fetchFlowYear).toHaveBeenCalledTimes(2);
+});
+
+test('hourly history switches day/week/month/year locally without new queries, and keeps aggregation on line changes',async()=>{
+  const fullLine={...line,values:new Map([['2050-01-01T00:00:00Z',100],['2050-01-01T01:00:00Z',-20]])};
+  const full={...scene,lines:[fullLine],periods:[...fullLine.values.keys()],stats:new Map()};
+  fetchFlowHistory.mockResolvedValue(full);
+  const props={context:{projectId:'Test'},scene,line,onChoosePeriod:jest.fn()};
+  const view=render(<LolaFlowHistoryDock {...props}/>);
+  await waitFor(()=>expect(screen.getByRole('combobox',{name:'History aggregation'})).toBeEnabled());
+  for(const [resolution,count] of [['day',365],['week',53],['month',12],['year',1]]) {
+    fireEvent.change(screen.getByLabelText('History aggregation'),{target:{value:resolution}});
+    expect(screen.getByLabelText('History zoom')).toHaveAttribute('max',String(count));
+    expect(screen.getByLabelText('History resolution')).toHaveTextContent('Mean Flow · MW');
+    expect(screen.getByText(/40 MW/)).toBeInTheDocument();
+  }
+  expect(fetchFlowHistory).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByText('Show first period on map'));
+  expect(props.onChoosePeriod).toHaveBeenCalledWith('2050-01-01T00:00:00Z');
+  const other={...line,id:'Line:B',name:'B'};
+  fetchFlowHistory.mockResolvedValue({...full,lines:[{...fullLine,...other}]});
+  view.rerender(<LolaFlowHistoryDock {...props} line={other} scene={{...scene,lines:[line,other]}}/>);
+  await waitFor(()=>expect(screen.getByLabelText('History aggregation')).toBeEnabled());
+  expect(screen.getByLabelText('History aggregation')).toHaveValue('year');
 });

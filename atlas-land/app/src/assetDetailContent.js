@@ -1,4 +1,5 @@
 import { escapeMapText as escapeHtml, publishedNumber } from "./mapText";
+import { scenarioPreviewContent } from './scenarioPreviewContent';
 
 // Shared, escaped content for the tabbed sidebar and legacy popup consumers.
 let popupCardSequence = 0;
@@ -339,7 +340,7 @@ export const buildGeoJsonPopupContent = (facility, section = null) => {
 
     let active = 'overview';
     const renderPanel = () => {
-      if (active === 'overview') panel.innerHTML = renderOverview(item, locationItems);
+      if (active === 'overview') panel.innerHTML = scenarioPreviewContent(item.scenario_preview) + renderOverview(item, locationItems);
       else if (active === 'costs') panel.innerHTML = renderCosts(item);
       else panel.innerHTML = renderTimeSeries(item);
       Array.from(tabsWrap.children).forEach((node) => {
@@ -396,7 +397,7 @@ export const buildGeoJsonPopupContent = (facility, section = null) => {
   const locationItems = sameLocation.length > 0
     ? [facility, ...sameLocation.filter((item) => String(item?.id || '') !== facilityId)]
     : [facility];
-  if (section === "overview") return renderOverview(facility, locationItems);
+  if (section === "overview") return scenarioPreviewContent(facility.scenario_preview) + renderOverview(facility, locationItems);
   if (section === "costs") return renderCosts(facility);
   if (section === "time") return renderTimeSeries(facility);
   if (typeof document === 'undefined') {
@@ -456,5 +457,3 @@ export const buildGeoJsonPopupContent = (facility, section = null) => {
   renderCurrent();
   return root;
 };
-
-

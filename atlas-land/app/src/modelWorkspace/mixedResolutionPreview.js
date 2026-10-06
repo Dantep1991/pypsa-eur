@@ -1,3 +1,5 @@
+import { buildModelAggregation, GEOGRAPHY_LEVELS, regionAssignment } from './modelAggregation';
+
 const text = value => String(value ?? '').trim();
 const countryCode = value => text(value).toUpperCase();
 const finite = value => {
@@ -7,6 +9,15 @@ const finite = value => {
 
 export const MODEL_MIXED_RESOLUTION_PREVIEW_SCHEMA = 'nohm.atlas.model-mixed-resolution-preview.v1';
 export const MODEL_MIXED_RESOLUTION_TIERS = Object.freeze(['native', 'country']);
+
+export function supportedModelMixedResolutionTiers(catalog) {
+  const nativeIndex = GEOGRAPHY_LEVELS.findIndex(([id]) => id === catalog?.native_resolution);
+  const regional = catalog?.regional_registry?.schemes?.some(scheme => scheme.regions?.length) ? ['regional'] : [];
+  if (nativeIndex < 0) return [...MODEL_MIXED_RESOLUTION_TIERS, ...regional];
+  return ['native', ...['bidding_zone', 'country'].filter(tier => (
+    GEOGRAPHY_LEVELS.findIndex(([id]) => id === tier) >= nativeIndex
+  )), ...regional];
+}
 
 function sourceNodes(scene) {
   return (scene?.facilities || []).filter(facility => facility?.component_type === 'Bus');
@@ -39,11 +50,26 @@ export function buildModelResolutionProfile(scene, options = {}) {
   if (!focusCountry || !adjacency.has(focusCountry)) {
     throw new Error('Choose a country that exists in the loaded model.');
   }
-  const adjacentTier = text(options.adjacentTier || 'native').toLowerCase();
-  const outerTier = text(options.outerTier || 'country').toLowerCase();
-  if (!MODEL_MIXED_RESOLUTION_TIERS.includes(adjacentTier)
-      || !MODEL_MIXED_RESOLUTION_TIERS.includes(outerTier)) {
-    throw new Error('This model only supports its native topology and a country-level visual aggregation.');
+  const levelCount = options.levelCount ?? 3;
+  if (!Number.isInteger(levelCount) || levelCount < 2 || levelCount > 5) throw new Error('Choose between 2 and 5 resolution levels.');
+  const supportedTiers = supportedModelMixedResolutionTiers(scene?.meta?.aggregationCatalog);
+  const resolutions = options.resolutions || Array.from({ length: levelCount }, (_, index) => (
+    index === 0 ? 'native' : index === 1 && levelCount > 2 ? options.adjacentTier || 'native' : options.outerTier || 'country'
+  ));
+  if (!Array.isArray(resolutions) || resolutions.length !== levelCount
+      || resolutions.some(tier => !supportedTiers.includes(tier))) {
+    throw new Error('This model only supports its native topology and declared coarser geography.');
+  }
+  // Distance is measured in cross-border grid connections in this model,
+  // not geographic proximity or a different reference network.
+  const distances = new Map([[focusCountry, 0]]), queue = [focusCountry];
+  for (let index = 0; index < queue.length; index += 1) {
+    const country = queue[index];
+    (adjacency.get(country) || []).forEach(neighbour => {
+      if (distances.has(neighbour)) return;
+      distances.set(neighbour, distances.get(country) + 1);
+      queue.push(neighbour);
+    });
   }
   const adjacent = new Set(adjacency.get(focusCountry) || []);
   const outer = new Set();
@@ -55,12 +81,19 @@ export function buildModelResolutionProfile(scene, options = {}) {
   const other = countries.filter(country => (
     country !== focusCountry && !adjacent.has(country) && !outer.has(country)
   ));
-  const tierByCountry = Object.fromEntries(countries.map(country => [
-    country,
-    country === focusCountry ? 'native' : adjacent.has(country) ? adjacentTier : outerTier,
-  ]));
+  const levels = resolutions.map((tier, index) => ({
+    tier, countries: countries.filter(country => Math.min(distances.get(country) ?? Infinity, levelCount - 1) === index),
+  }));
+  const tierByCountry = Object.fromEntries(levels.flatMap(level => level.countries.map(country => [country, level.tier])));
+  const regionalCountries = countries.filter(country => tierByCountry[country] === 'regional');
+  const regionalOptions = regionalCountries.length ? { schemeId: options.schemeId, regionIds: [...(options.regionIds || [])] } : {};
+  if (regionalCountries.length) regionAssignment(scene.meta.aggregationCatalog, regionalOptions.schemeId, regionalOptions.regionIds, regionalCountries);
   return {
     focusCountry,
+    levelCount,
+    resolutions: [...resolutions],
+    ...regionalOptions,
+    levels,
     rings: {
       focus: [focusCountry],
       adjacent: [...adjacent].sort(),
@@ -70,7 +103,7 @@ export function buildModelResolutionProfile(scene, options = {}) {
     tierByCountry,
     adjacency: Object.fromEntries([...adjacency.entries()]),
     capabilities: {
-      supportedTiers: [...MODEL_MIXED_RESOLUTION_TIERS],
+      supportedTiers,
       canAggregate: true,
       canDisaggregate: false,
     },
@@ -373,7 +406,11 @@ function buildModelResolutionPreview(scene, profile) {
 }
 
 export function buildModelMixedResolutionPreview(scene, options = {}) {
-  return buildModelResolutionPreview(scene, buildModelResolutionProfile(scene, options));
+  const profile = buildModelResolutionProfile(scene, options);
+  return scene?.meta?.aggregationCatalog
+    ? buildModelAggregation(scene, 'mixed', { resolutionByCountry: profile.tierByCountry, profile,
+      ...(profile.resolutions.includes('regional') ? { schemeId: profile.schemeId, regionIds: profile.regionIds } : {}) })
+    : buildModelResolutionPreview(scene, profile);
 }
 
 export function buildModelUniformResolutionPreview(scene, tier = 'country') {

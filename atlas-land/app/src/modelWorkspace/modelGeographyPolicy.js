@@ -1,7 +1,10 @@
+import { supportedModelMixedResolutionTiers } from './mixedResolutionPreview';
 const text = (value) => String(value ?? '').trim();
 
 export function modelGeographyPolicy(context, sceneMeta = null) {
   if (!text(context?.projectId)) return null;
+  if (context.mode === 'catalogue' && context.networkCatalogue?.id === 'pypsa-eur'
+      && context.networkCatalogue.projectId === text(context.projectId)) return null;
   const projectName = text(context.projectName) || text(context.projectId);
   const nativeGeography = text(context?.nativeGeography?.label) || 'model-native geography';
   const sourceCountries = Array.isArray(sceneMeta?.countries)
@@ -14,9 +17,11 @@ export function modelGeographyPolicy(context, sceneMeta = null) {
     nativeGeography,
     nativeResolution: context?.nativeGeography?.resolved ? text(context.nativeGeography.id) || 'native' : 'native',
     sourceCountries,
+    resolutions: sceneMeta?.aggregationCatalog ? supportedModelMixedResolutionTiers(sceneMeta.aggregationCatalog) : ['native'],
+    canAggregate: Boolean(sceneMeta?.aggregationCatalog),
     canAddCountryNetworks: false,
     canIncreaseResolution: false,
-    message: `This Atlas is bound to ${projectName} at ${nativeGeography}. Atlas can filter or distil its existing nodes, but it cannot add a separate full-granularity country network or split the topology to a finer level yet.`,
+    message: `This Atlas is bound to ${projectName} at ${nativeGeography}. Use its declared geography aggregation controls; it cannot add a separate full-granularity country network or split the source topology.`,
   };
 }
 

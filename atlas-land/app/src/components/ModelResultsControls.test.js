@@ -13,6 +13,7 @@ const catalogStatus = {
     runs: [{
       run_id: 'run-1',
       label: 'Run 1',
+      result_model_version: 'v3.0.0',
       compatible: true,
       periods: ['2030'],
       period_granularity: 'annual',
@@ -70,6 +71,43 @@ const renderControls = (overrides = {}) => render(<ModelResultsControls
   {...overrides}
 />);
 
+test('multiple category chips add, remove and restore all with automatic map updates', () => {
+  const onShow = jest.fn();
+  function StatefulControls() {
+    const [selection, setSelection] = React.useState({ runId: 'run-1', quantityId: 'Node.Price', className: 'Node', period: '2030', categories: [] });
+    return <ModelResultsControls catalogStatus={catalogStatus} selection={selection} onSelectionChange={setSelection}
+      onShow={onShow} onClear={jest.fn()} resultStatus={{ state: 'ready', scene: {} }} />;
+  }
+  render(<StatefulControls />);
+  const select = screen.getByRole('combobox', { name: 'Result category' });
+  fireEvent.change(select, { target: { value: 'eMarket' } });
+  fireEvent.change(select, { target: { value: 'Offshore' } });
+  expect(onShow).toHaveBeenLastCalledWith(expect.objectContaining({ category: '', categories: ['eMarket', 'Offshore'], categoryObjects: ['BE00', 'FR00', 'BE01'] }));
+  expect(screen.getByRole('button', { name: 'Remove result category eMarket' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Remove result category Offshore' })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Remove result category eMarket' }));
+  expect(onShow).toHaveBeenLastCalledWith(expect.objectContaining({ category: 'Offshore', categories: ['Offshore'], categoryObjects: ['BE01'] }));
+  fireEvent.change(select, { target: { value: '__all__' } });
+  expect(onShow).toHaveBeenLastCalledWith(expect.objectContaining({ categories: [], categoryObjects: [] }));
+  expect(screen.queryByRole('button', { name: /Remove result category/ })).not.toBeInTheDocument();
+  expect(onShow).toHaveBeenCalledTimes(4);
+});
+
+test('changing quantity retains only compatible selected categories', () => {
+  const onShow = jest.fn();
+  renderControls({ onShow, selection: { runId: 'run-1', quantityId: 'Node.Price', className: 'Node', period: '2030', categories: ['eMarket', 'Offshore'] } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Quantity' }), { target: { value: 'Node.Load' } });
+  expect(onShow).toHaveBeenLastCalledWith(expect.objectContaining({ categories: ['eMarket'], category: 'eMarket' }));
+});
+
+test('shows recommendation progress and a concise interpretation of the displayed result', () => {
+  const view = renderControls({ resultStatus: { state: 'loading', progress: { phase: 'interpretation' } } });
+  expect(screen.getByRole('button', { name: 'AI colour recommendation · 0/1' })).toBeDisabled();
+  view.unmount();
+  renderControls({ resultStatus: { state: 'ready', scene: { color_policy: { preference: 'decrease' } } } });
+  expect(screen.getByText('AI colours: lower is green, higher is red.')).toBeVisible();
+});
+
 test('retains all labelled controls and map actions in the readable layout', () => {
   const onShow = jest.fn();
   const onClear = jest.fn();
@@ -81,21 +119,26 @@ test('retains all labelled controls and map actions in the readable layout', () 
     .forEach(name => expect(screen.getByRole('combobox', { name, exact: true })).toBeInTheDocument());
   expect(screen.getByRole('combobox', { name: 'Result run' })).toHaveAttribute('title', 'Run 1');
   expect(screen.getByRole('combobox', { name: 'Quantity' })).toHaveAttribute('title', 'Node · Price (EUR/MWh)');
-  fireEvent.click(screen.getByRole('button', { name: 'Show on map' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh map' }));
   fireEvent.click(screen.getByRole('button', { name: 'Clear result layer' }));
   expect(onShow).toHaveBeenCalledTimes(1);
   expect(onClear).toHaveBeenCalledTimes(1);
 });
 
-test('disables selections during loading while retaining real progress', () => {
-  renderControls({ resultStatus: { state: 'loading', progress: { phase: 'projection', total: 42 } } });
-  screen.getAllByRole('combobox').forEach(control => expect(control).toBeDisabled());
+test('allows changing selections during loading while retaining real progress', () => {
+  const onShow = jest.fn();
+  renderControls({ onShow, resultStatus: { state: 'loading', progress: { phase: 'projection', total: 42 } } });
+  screen.getAllByRole('combobox').forEach(control => expect(control).toBeEnabled());
   expect(screen.getByRole('button', { name: 'Mapping 42 result rows…' })).toBeDisabled();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Quantity' }), { target: { value: 'Node.Load' } });
+  expect(onShow).toHaveBeenCalledWith(expect.objectContaining({ quantityId: 'Node.Load', propertyName: 'Load' }));
 });
 
-test('circle sizing changes display state independently of query selection and Show on map', () => {
+test('circle sizing changes display state without another query', () => {
   const onMarkerScaleChange = jest.fn(), onSelectionChange = jest.fn(), onShow = jest.fn();
   renderControls({ markerScale: 1, onMarkerScaleChange, onSelectionChange, onShow });
+  expect(onShow).toHaveBeenCalledTimes(1);
+  onShow.mockClear();
   fireEvent.input(screen.getByRole('slider', { name: 'Circle size' }), { target: { value: '150' } });
   expect(onMarkerScaleChange).toHaveBeenCalledWith(1.5);
   expect(onSelectionChange).not.toHaveBeenCalled();
@@ -105,11 +148,83 @@ test('circle sizing changes display state independently of query selection and S
 test.each([
   [{ state: 'loading', progress: { completed: 1, total: 2 } }, 'status', 'Reading result catalogues · 1/2'],
   [{ state: 'error', error: 'Result catalogue unavailable' }, 'alert', 'Result catalogue unavailable'],
-  [{ state: 'ready', catalog: { runs: [] } }, 'status', 'No result run is bound to the loaded model version.'],
+  [{ state: 'ready', catalog: { runs: [] } }, 'status', 'No saved results found for this model version.'],
 ])('uses readable notices for unavailable catalogue states', (status, role, text) => {
-  renderControls({ catalogStatus: status });
+  const onShow = jest.fn();
+  renderControls({ catalogStatus: status, onShow });
   expect(screen.getByRole(role)).toHaveClass('atlas-results-notice');
   expect(screen.getByRole(role)).toHaveTextContent(text);
+  expect(onShow).not.toHaveBeenCalled();
+});
+
+test('automatically shows the initial selection once when its catalogue is ready', () => {
+  const onShow = jest.fn();
+  const selection = { runId: 'run-1', quantityId: 'Node.Price', className: 'Node', period: '2030' };
+  const props = { selection, onShow, onSelectionChange: jest.fn(), onClear: jest.fn(), resultStatus: { state: 'idle' } };
+  const view = renderControls({ ...props, catalogStatus: { state: 'loading' } });
+  expect(onShow).not.toHaveBeenCalled();
+  view.rerender(<ModelResultsControls {...props} catalogStatus={catalogStatus} />);
+  expect(onShow).toHaveBeenCalledTimes(1);
+  expect(onShow).toHaveBeenCalledWith(selection);
+  view.rerender(<ModelResultsControls {...props} catalogStatus={catalogStatus} resultStatus={{ state: 'loading' }} />);
+  view.rerender(<ModelResultsControls {...props} catalogStatus={catalogStatus} />);
+  expect(onShow).toHaveBeenCalledTimes(1);
+});
+
+test.each([
+  { runId: 'missing', quantityId: 'Node.Price', className: 'Node', period: '2030' },
+  { runId: 'run-1', quantityId: 'missing', className: 'Node', period: '2030' },
+  { runId: 'run-1', quantityId: 'Node.Price', className: 'Node', period: '2040' },
+  null,
+])('does not automatically query an incomplete or unbound selection: %j', selection => {
+  const onShow = jest.fn();
+  renderControls({ selection, onShow });
+  expect(onShow).not.toHaveBeenCalled();
+});
+
+test.each(['loading', 'ready'])('does not duplicate a result already %s when opened', state => {
+  const onShow = jest.fn();
+  renderControls({ onShow, resultStatus: { state, scene: state === 'ready' ? { selection: { id: 'Node.Price' } } : null } });
+  expect(onShow).not.toHaveBeenCalled();
+});
+
+test.each([
+  ['Result run', 'run-2', { runId: 'run-2', runLabel: 'Run 2', runModelVersion: 'v3.0.0', quantityId: 'Node.Price', period: '2040' }],
+  ['Result component', 'Line', { quantityId: 'Line.Flow', className: 'Line', propertyName: 'Flow', supportsFlowMap: true }],
+  ['Quantity', 'Node.Load', { quantityId: 'Node.Load', className: 'Node', propertyName: 'Load', unit: 'GWh' }],
+  ['Result map style', 'colour', { mapMode: 'colour' }],
+  ['Result category', 'eMarket', { category: 'eMarket', categoryObjects: ['BE00', 'FR00'] }],
+  ['Result period', '2040', { period: '2040' }],
+  ['Result node or region', 'Node:BE00', { scopeId: 'Node:BE00' }],
+])('%s changes immediately show the new selection without a map button click', (name, value, expected) => {
+  const onSelectionChange = jest.fn(), onShow = jest.fn();
+  const firstRun = catalogStatus.catalog.runs[0];
+  const catalogue = { ...catalogStatus, catalog: { ...catalogStatus.catalog, runs: [
+    { ...firstRun, quantities: firstRun.quantities.map(item => ({ ...item, periods: ['2030', '2040'] })) },
+    { ...firstRun, run_id: 'run-2', label: 'Run 2', periods: ['2040'],
+      quantities: firstRun.quantities.map(item => ({ ...item, periods: ['2040'] })) },
+  ] } };
+  renderControls({ catalogStatus: catalogue, onSelectionChange, onShow,
+    scopeOptions: [{ id: 'Node:BE00', label: 'BE00' }] });
+  onShow.mockClear();
+  fireEvent.change(screen.getByRole('combobox', { name, exact: true }), { target: { value } });
+  expect(onSelectionChange).toHaveBeenCalledTimes(1);
+  expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining(expected));
+  expect(onShow).toHaveBeenCalledTimes(1);
+  expect(onShow.mock.calls[0][0]).toBe(onSelectionChange.mock.calls[0][0]);
+});
+
+test('clearing the layer keeps it cleared until the next user selection', () => {
+  const onShow = jest.fn(), onClear = jest.fn(), onSelectionChange = jest.fn();
+  const props = { catalogStatus, selection: { runId: 'run-1', quantityId: 'Node.Price', className: 'Node', period: '2030' },
+    onShow, onClear, onSelectionChange };
+  const view = render(<ModelResultsControls {...props} resultStatus={{ state: 'ready', scene: { selection: { id: 'Node.Price' } } }} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Clear result layer' }));
+  expect(onClear).toHaveBeenCalledTimes(1);
+  view.rerender(<ModelResultsControls {...props} resultStatus={{ state: 'idle', scene: null }} />);
+  expect(onShow).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Quantity' }), { target: { value: 'Node.Load' } });
+  expect(onShow).toHaveBeenCalledWith(expect.objectContaining({ quantityId: 'Node.Load' }));
 });
 
 test('typography contract keeps controls at least 14 px, labels 12 px and hit targets 44 px', () => {

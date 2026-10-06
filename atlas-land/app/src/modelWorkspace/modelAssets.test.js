@@ -50,7 +50,22 @@ test('unlocated nodes do not get substitute coordinates or zero markers', () => 
 });
 
 test('incompatible input units do not share a magnitude scale', () => {
-  expect(modelAssetFrame(objects, new Map([['g', { value: 10, unit: 'MW' }], ['g2', { value: 1, unit: 'GW' }]])).hasValues).toBe(false);
+  expect(modelAssetFrame([...objects, { ...objects[0], id: 'g2' }],
+    new Map([['g', { value: 10, unit: 'MW' }], ['g2', { value: 1, unit: 'GW' }]])).incompatibleUnits).toBe(true);
+});
+
+test('hidden and unlocated values do not distort the visible scale or its units', () => {
+  const frame = modelAssetFrame([...objects, { ...objects[0], id: 'unlocated', nodes: [] }], new Map([
+    ['g', { value: 25, unit: 'MW' }], ['hidden', { value: 900, unit: 'GW' }],
+    ['unlocated', { value: 800, unit: 'GW' }],
+  ]));
+  expect(frame).toMatchObject({ maximum: 25, hasValues: true, incompatibleUnits: false });
+});
+
+test.each([NaN, Infinity, -Infinity, '', true])('invalid measurement %p is not a measured magnitude', value => {
+  const frame = modelAssetFrame(objects, new Map([['g', { value, unit: 'MW' }]]));
+  expect(frame).toMatchObject({ maximum: 0, hasValues: false });
+  expect(frame.markers.every(marker => marker.measured === 0)).toBe(true);
 });
 
 test('outputs are joined by native object identity with actual period and zero', () => {

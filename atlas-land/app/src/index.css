@@ -2,6 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
+.atlas-scenario-key { position: absolute; z-index: 900; bottom: 98px; left: 50%; transform: translateX(-50%); display: flex; flex-wrap: wrap; gap: 12px; max-width: 65%; padding: 10px 14px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--atlas-map-surface); color: var(--atlas-map-text); font-size: 13px; pointer-events: none; }
+.atlas-scenario-key strong { width: 100%; font-size: 13px; }
+.atlas-scenario-key__changed { color: var(--accent-primary-ui); }
+.atlas-scenario-key__disabled { color: var(--accent-error); }
+.atlas-disabled-toggle { display: flex; align-items: center; gap: 7px; padding: 6px 10px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--atlas-map-surface); color: var(--atlas-map-text); font-size: 13px; line-height: 1.3; }
+.atlas-disabled-toggle:hover, .atlas-disabled-toggle:focus-visible { border-color: var(--accent-primary-ui); }
+.atlas-disabled-toggle__key { color: var(--accent-error); font-size: 24px; font-weight: 700; }
+.atlas-disabled-toggle__count { font-variant-numeric: tabular-nums; color: var(--text-muted); }
+.atlas-disabled-toggle__state { color: var(--text-muted); font-size: 12px; }
+.atlas-disabled-toggle[aria-pressed="false"] .atlas-disabled-toggle__key { opacity: .4; }
+.atlas-scenario-detail { display: grid; gap: 8px; padding: 10px 0; line-height: 1.5; overflow-wrap: anywhere; }
+
 /* Cursor-style shimmer animation for log preview */
 @keyframes shimmer {
   0% {
@@ -442,7 +454,7 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
-  text-align: left;
+  text-align: center;
   transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 .atlas-workspace-rail__area:hover { border-color: var(--border-subtle); background: var(--bg-hover); color: var(--text-primary); }
@@ -533,7 +545,6 @@
 }
 [aria-label='Model result legend'] {
   left: 50%; transform: translateX(-50%);
-  background: var(--atlas-map-surface) !important;
   color: var(--text-secondary); border-color: var(--border-subtle);
 }
 .atlas-comparison-workspace {

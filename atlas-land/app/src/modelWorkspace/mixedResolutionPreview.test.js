@@ -4,6 +4,7 @@ import {
   buildModelUniformResolutionPreview,
   buildModelUniformResolutionProfile,
   deriveModelCountryAdjacency,
+  supportedModelMixedResolutionTiers,
 } from './mixedResolutionPreview';
 
 const node = (id, country, latitude, longitude) => ({
@@ -129,4 +130,67 @@ test('uniform country resolution aggregates every model zone without inventing f
 
 test('preview refuses countries absent from the canonical model', () => {
   expect(() => buildModelMixedResolutionPreview(scene, { focusCountry: 'GB' })).toThrow(/exists in the loaded model/i);
+});
+
+test.each([2, 3, 4, 5])('%i levels partition every country exactly once by grid distance', levelCount => {
+  const profile = buildModelResolutionProfile(scene, { focusCountry: 'ES', levelCount });
+  expect(profile.levels).toHaveLength(levelCount);
+  expect(profile.levels.flatMap(level => level.countries).sort()).toEqual(['BE', 'DE', 'ES', 'FR', 'PT']);
+  expect(profile.levels[0].countries).toEqual(['ES']);
+  if (levelCount >= 3) expect(profile.levels[1].countries).toEqual(['FR', 'PT']);
+  if (levelCount >= 4) expect(profile.levels[2].countries).toEqual(['BE']);
+  if (levelCount === 5) expect(profile.levels[3].countries).toEqual(['DE']);
+});
+
+test('disconnected countries stay in the rest-of-model level', () => {
+  const profile = buildModelResolutionProfile({ ...scene, facilities: [...scene.facilities, node('GB1', 'GB', 51, 0)] },
+    { focusCountry: 'ES', levelCount: 4, resolutions: ['country', 'native', 'country', 'native'] });
+  expect(profile.levels[3].countries).toEqual(['DE', 'GB']);
+  expect(profile.tierByCountry.GB).toBe('native');
+  expect(profile.tierByCountry.ES).toBe('country');
+});
+
+test.each([1, 6, 2.5, '4'])('invalid level count %s is refused', levelCount => {
+  expect(() => buildModelResolutionProfile(scene, { focusCountry: 'ES', levelCount })).toThrow(/2 and 5/);
+});
+
+test('declared native geography bounds the available granularity', () => {
+  expect(supportedModelMixedResolutionTiers({ native_resolution: 'ehighway' })).toEqual(['native', 'bidding_zone', 'country']);
+  expect(supportedModelMixedResolutionTiers({ native_resolution: 'bidding_zone' })).toEqual(['native', 'bidding_zone', 'country']);
+  expect(supportedModelMixedResolutionTiers({ native_resolution: 'country' })).toEqual(['native', 'country']);
+  expect(supportedModelMixedResolutionTiers({ native_resolution: 'regional' })).toEqual(['native']);
+  expect(() => buildModelResolutionProfile(scene, { focusCountry: 'ES', levelCount: 4, resolutions: ['native'] })).toThrow(/only supports/);
+});
+
+test('mixed bidding-zone choices reuse the version-bound aggregation and retain unknown nodes', () => {
+  const source = { ...scene, facilities: [...scene.facilities.map(item => ({ ...item, bidding_zone: item.country })), node('unknown', '', 60, 3)],
+    meta: { ...scene.meta, aggregationCatalog: { native_resolution: 'ehighway' } } };
+  const snapshot = JSON.stringify(source);
+  const preview = buildModelMixedResolutionPreview(source, { focusCountry: 'ES', levelCount: 4,
+    resolutions: ['native', 'bidding_zone', 'country', 'country'] });
+  expect(preview.aggregation.level).toBe('mixed');
+  expect(preview.meta.preview.profile.tierByCountry).toEqual({ ES: 'native', FR: 'bidding_zone', PT: 'bidding_zone', BE: 'country', DE: 'country' });
+  expect(preview.facilities.find(item => item.id === 'unknown')).toBeDefined();
+  expect(preview.facilities.find(item => item.id === 'GEN:BE:solar')).toMatchObject({ p_nom: 100 });
+  const nodes = new Set(preview.facilities.filter(item => item.component_type === 'Bus').map(item => item.id));
+  expect(preview.connections.every(item => nodes.has(item.from) && nodes.has(item.to))).toBe(true);
+  expect(JSON.stringify(source)).toBe(snapshot);
+});
+
+test('mixed region profiles use the selected published scheme without merging the focus', () => {
+  const source = { ...scene, meta: { ...scene.meta, aggregationCatalog: { native_resolution: 'ehighway',
+    regional_registry: { schemes: [{ id: 'official', regions: [{ id: 'west', name: 'West', countries: ['ES', 'FR', 'PT', 'BE'] }] }] } } } };
+  const snapshot = JSON.stringify(source);
+  const preview = buildModelMixedResolutionPreview(source, { focusCountry: 'ES', levelCount: 2,
+    resolutions: ['native', 'regional'], schemeId: 'official', regionIds: ['west'] });
+  expect(preview.meta.preview.profile.schemeId).toBe('official');
+  expect(preview.meta.preview.profile.regionIds).toEqual(['west']);
+  const buses = preview.facilities.filter(item => item.component_type === 'Bus');
+  expect(buses.filter(item => item.country === 'ES')).toHaveLength(1);
+  const region = buses.find(item => item.name === 'West');
+  expect(region.atlas_aggregation_countries.sort()).toEqual(['BE', 'FR', 'PT']);
+  expect(buses.find(item => item.country === 'DE').atlas_resolution_tier).toBe('country');
+  expect(JSON.stringify(source)).toBe(snapshot);
+  expect(() => buildModelMixedResolutionPreview(source, { focusCountry: 'ES', levelCount: 2,
+    resolutions: ['native', 'regional'], schemeId: 'official', regionIds: [] })).toThrow(/Choose a region/);
 });
