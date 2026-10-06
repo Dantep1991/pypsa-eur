@@ -1,6 +1,9 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
 import App from './App';
+import { clearModelSceneCache } from './modelWorkspace/modelSceneCache';
+
+beforeEach(() => clearModelSceneCache());
 
 let mockMapFrames = [];
 jest.mock('./components/EnhancedLeafletMapWithVoice', () => props => {
@@ -56,7 +59,6 @@ test.each(['Joule_Model', 'TYNDP_2026_Scenarios'])('country scope filters cached
   try {
     const view = render(<App />); await flush();
     fireEvent.click(view.getByRole('button', { name: 'Model database', exact: true })); await flush();
-    fireEvent.click(view.getByRole('button', { name: 'Inputs', exact: true })); await flush();
     expect(mockMapFrames.at(-1).modelAssetsFrame.markers).toHaveLength(2);
     const inputRequests = () => global.fetch.mock.calls.filter(([url]) => String(url).includes('/assets/inputs?')).length;
     const originalRequests = inputRequests();
@@ -76,7 +78,7 @@ test.each(['Joule_Model', 'TYNDP_2026_Scenarios'])('country scope filters cached
     expect(inputRequests()).toBe(originalRequests);
     fireEvent.change(view.getByRole('combobox', { name: 'Add country to model view' }), { target: { value: 'BE' } }); await flush();
     fireEvent.click(view.getByRole('button', { name: 'Model database', exact: true })); await flush();
-    expect(view.getByRole('button', { name: 'Inputs', exact: true }).getAttribute('aria-pressed')).toBe('true');
+    expect(view.getByRole('combobox', { name: 'Input property' }).value).toBe('Max Capacity');
     fireEvent.change(view.getByRole('combobox', { name: 'Input property' }), { target: { value: 'Units' } }); await flush();
     expect(mockMapFrames.at(-1).modelAssetsFrame.markers).toHaveLength(1);
     expect(mockMapFrames.at(-1).modelAssetsFrame.markers[0].objects[0].measurement.value).toBe(2);
@@ -319,7 +321,6 @@ test('Supply and Model database hand over one visible overlay and retain databas
     fireEvent.click(view.getByRole('button', { name: 'Bubbles & pies' }));
     expect(mockMapFrames.at(-1).showDataBubbles).toBe(false);
     fireEvent.click(view.getByRole('button', { name: 'Model database', exact: true })); await flush();
-    fireEvent.click(view.getByRole('button', { name: 'Inputs', exact: true }));
     await flush();
     expect(mockMapFrames.at(-1).modelAssetsFrame.maximum).toBe(400);
     expect(mockMapFrames.at(-1).showDataBubbles).toBe(true);
@@ -330,7 +331,7 @@ test('Supply and Model database hand over one visible overlay and retain databas
     expect(mockMapFrames.at(-1).modelAssetsFrame).toBeNull();
     const requests = global.fetch.mock.calls.filter(([url]) => String(url).includes('/assets/inputs?')).length;
     fireEvent.click(view.getByRole('button', { name: 'Model database', exact: true })); await flush();
-    expect(view.getByRole('button', { name: 'Inputs', exact: true }).getAttribute('aria-pressed')).toBe('true');
+    expect(view.getByRole('combobox', { name: 'Input property' })).toBeTruthy();
     expect(mockMapFrames.at(-1).modelAssetsFrame.maximum).toBe(400);
     expect(global.fetch.mock.calls.filter(([url]) => String(url).includes('/assets/inputs?'))).toHaveLength(requests);
     fireEvent.click(view.getByRole('button', { name: 'Map display', exact: true }));
@@ -358,7 +359,7 @@ test('Supply and Model database hand over one visible overlay and retain databas
     expect(JSON.parse(window.localStorage.getItem('atlas-land-overlay')).enabled).toBe(false);
     expect(view.getByRole('complementary', { name: 'Map display', exact: true })).toBeTruthy();
     fireEvent.click(view.getByRole('button', { name: 'Model database', exact: true })); await flush();
-    expect(view.getByRole('button', { name: 'Objects', exact: true }).getAttribute('aria-pressed')).toBe('true');
+    expect(view.getByRole('combobox', { name: 'Input property' })).toBeTruthy();
   } finally {
     cleanup(); global.fetch = originalFetch; window.__NOHM_ATLAS_WORKSPACE_CONTEXT__ = originalContext;
     window.localStorage.clear(); jest.useRealTimers();
