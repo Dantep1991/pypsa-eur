@@ -1,0 +1,6 @@
+.model-geography-tabs [role=tablist] { position:sticky; top:0; z-index:3; display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:12px; padding:4px 0; background:var(--bg-surface, #222120); }
+.model-geography-tabs [role=tab] { padding:10px 6px; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--control-surface); color:var(--text-primary); font:500 .875rem/1.4 var(--font-sans); }
+.model-geography-tabs [role=tab][aria-selected=true] { background:var(--accent-primary); color:var(--text-on-accent, #121211); border-color:var(--accent-primary); }
+.model-geography-tabs [role=tab]:focus-visible { outline:2px solid var(--accent-primary); outline-offset:2px; }
+.model-geography-tabs [role=tabpanel] { display:flex; flex-direction:column; gap:12px; }
+.model-geography-tabs [role=tabpanel][hidden] { display:none; }

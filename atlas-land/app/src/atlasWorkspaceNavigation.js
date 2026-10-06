@@ -20,8 +20,14 @@ export function atlasWorkspaceAreaDefinition(id) {
   return ATLAS_WORKSPACE_AREAS.find((area) => area.id === canonical) || ATLAS_WORKSPACE_AREAS[0];
 }
 
-export function atlasWorkspaceAreaIsVisible(id, activeArea, embedded = false) {
-  return !embedded || atlasWorkspaceAreaDefinition(id).id === atlasWorkspaceAreaDefinition(activeArea).id;
+// A bound-model preview uses the same tabs as the hosted Atlas. Embedding
+// governs Nohm portal access, not which map workspace can be viewed.
+export function atlasUsesWorkspaceTabs(embedded = false, mode) {
+  return embedded || mode === 'model' || mode === 'catalogue';
+}
+
+export function atlasWorkspaceAreaIsVisible(id, activeArea, tabsEnabled = false) {
+  return !tabsEnabled || atlasWorkspaceAreaDefinition(id).id === atlasWorkspaceAreaDefinition(activeArea).id;
 }
 
 export function atlasWorkspaceAreaIndex(id) {

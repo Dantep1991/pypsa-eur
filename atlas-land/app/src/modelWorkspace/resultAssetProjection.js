@@ -3,6 +3,22 @@ import { atlasApiUrl } from '../config/api';
 export const objectResultTarget = selection => !['Node', 'Line', 'Region'].includes(selection.className)
   && selection.mapMode !== 'mix';
 
+// The loaded model scene has already resolved canonical geography. An asset
+// catalogue may still contain legacy placeholder coordinates; it must not
+// move existing map nodes (or their connected assets) when results are shown.
+export function reconcileResultNodes(nodes, facilities) {
+  const canonical = new Map(facilities.filter(node => node.latitude != null && node.longitude != null
+    && Number.isFinite(Number(node.latitude)) && Number.isFinite(Number(node.longitude)))
+    .map(node => [node.id, node]));
+  return nodes.map(node => {
+    const existing = canonical.get(node.id);
+    if (existing) return { ...node, ...existing, canonical_reference: existing.id };
+    const parent = canonical.get(node.canonical_reference);
+    return parent ? { ...node, latitude: parent.latitude, longitude: parent.longitude,
+      country: parent.country, data_source: parent.data_source || node.data_source } : node;
+  });
+}
+
 export async function fetchResultTopology(context, selection, options, fetchImpl) {
   const params = new URLSearchParams({ version: selection.modelVersion, class_name: selection.className });
   const response = await fetchImpl(atlasApiUrl(`/api/atlas/projects/${encodeURIComponent(context.projectId)}/flow-topology?${params}`, options.apiBase), { signal: options.signal });
@@ -73,11 +89,14 @@ export function attachAssetPositions(scene, assets) {
     const point = positions[0];
     return [{ id: row.entity_id, name: obj.name, component_type: obj.class_name,
       type: 'node', carrier: 'result', latitude: point.lat, longitude: point.lon,
+      country: point.country || nodes[0].country || '',
       is_reference_topology: true,
       canonical_reference: point.canonical_reference || `Node:${nodes[0].name}`,
       data_source: assets.source, source: assets.source,
+      display_anchor: point.display_anchor, placement_note: point.placement_note,
       properties: [{ Property: 'Coordinate method', Value: point.method },
-        { Property: 'Coordinate reference', Value: point.canonical_reference || nodes[0].name }],
+        { Property: 'Coordinate reference', Value: point.canonical_reference || nodes[0].name },
+        ...(point.placement_note ? [{ Property: 'Map placement', Value: point.placement_note }] : [])],
     }];
   });
   return { ...scene, spatial_nodes: spatialNodes };

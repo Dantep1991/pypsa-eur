@@ -1,0 +1,8 @@
+.model-execution-controls { margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.15); }
+.model-execution-controls h3 { margin: 0 0 4px; }
+.model-execution-controls > small { display: block; overflow-wrap: anywhere; opacity: .7; margin-bottom: 12px; }
+.model-execution-selectors, .model-execution-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
+.model-execution-selectors label { min-width: 0; }
+.model-execution-selectors select { width: 100%; margin-top: 6px; }
+.model-execution-job ul, .model-execution-job ol { font-size: 12px; padding-left: 20px; max-height: 180px; overflow-y: auto; }
+.model-execution-job [role=alert] { overflow-wrap: anywhere; }

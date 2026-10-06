@@ -182,6 +182,23 @@ test('project model requests can use Emil without redirecting ordinary Atlas API
   }
 });
 
+test('Theo discovery and country coordinates use their owning services through the Atlas prefix', async () => {
+  const requests = [];
+  const theo = http.createServer((req, res) => { requests.push(req.url); res.setHeader('Content-Type', 'application/json'); res.end('{"source":"theo"}'); });
+  const emil = http.createServer((req, res) => { requests.push(req.url); res.setHeader('Content-Type', 'application/json'); res.end('{"source":"emil"}'); });
+  await listen(theo); await listen(emil);
+  const split = createPreviewServer({ buildDir: root, backend: upstreamOrigin,
+    theoBackend: `http://127.0.0.1:${theo.address().port}`, modelBackend: `http://127.0.0.1:${emil.address().port}` });
+  await listen(split);
+  try {
+    const url = `http://127.0.0.1:${split.address().port}/atlas-api`;
+    assert.deepEqual(await (await fetch(`${url}/api/theo/projects`)).json(), { source: 'theo' });
+    assert.deepEqual(await (await fetch(`${url}/api/theo/projects/active/cba-summary`)).json(), { source: 'theo' });
+    assert.deepEqual(await (await fetch(`${url}/api/emil/database/coordinates?ids=DE&kind=country`)).json(), { source: 'emil' });
+    assert.deepEqual(requests, ['/api/theo/projects', '/api/theo/projects/active/cba-summary', '/api/database/coordinates?ids=DE&kind=country']);
+  } finally { await close(split); await close(theo); await close(emil); }
+});
+
 test('host/origin checks reject foreign writes before they reach the candidate', async () => {
   const beforeCount = upstreamRequests.length;
   assert.equal((await fetch(`${origin}/atlas-api/change`, {

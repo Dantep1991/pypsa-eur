@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import AtlasAssetInspector from "./AtlasAssetInspector";
+import AtlasControlPortal from './AtlasControlPortal';
 import L from 'leaflet';
 import { API_BASE_URL } from '../config/api';
 import { connectionGeometry } from '../atlasMapGeometry';
 import { SCENE_LIMIT, candidateSites, coordinate, metricDifference, recordName, viewMetrics, siteEvidence, nearbyAccess, numeric, comparisonWithinBudget } from '../atlasPresentation';
 import { ATLAS_NETWORK_CARRIER_META } from '../atlasNetworkOverlay';
+import { atlasPresentationDocument, setAtlasFullscreen } from '../atlasFullscreen';
 import './AtlasPresentation.css';
 
 const carrierColors = Object.fromEntries(Object.entries(ATLAS_NETWORK_CARRIER_META).map(([key, meta]) => [key, meta.color]));
@@ -67,8 +69,14 @@ function ComparisonCanvas({ map, before, current, split }) {
 
 export default function AtlasPresentation({ map, facilities, connections, countries, resolution, captureScene, restoreScene,
   presentationMode, onPresentationMode, busy, agentBusy, agentActivity, selection, onSelect, onInspectMode, inspectMode,
-  onLandConstraintsChange, onGridAccessChange, gridAccessData, theme, registerAgentController, onOpenResultComparison }) {
+  onLandConstraintsChange, onGridAccessChange, gridAccessData, theme, registerAgentController, onOpenResultComparison, onAskModify, consolidatedControls = false, controlHost = null, showComparisonAction = true,
+  onToolPanelOpenChange, toolPanelDismissRequest = 0, mapDisplayResetRequest = 0 }) {
   const [panel, setPanel] = useState('');
+  // Map display shares the tool sidebar area. Hand off panel focus without
+  // unmounting this state owner or losing saved presentation scenes.
+  useEffect(() => { onToolPanelOpenChange?.(Boolean(panel)); }, [panel, onToolPanelOpenChange]);
+  useEffect(() => () => onToolPanelOpenChange?.(false), [onToolPanelOpenChange]);
+  useEffect(() => { setPanel(''); }, [toolPanelDismissRequest]);
   const [scenes, setScenes] = useState([]);
   const [activeScene, setActiveScene] = useState(null);
   const [name, setName] = useState('');
@@ -88,6 +96,15 @@ export default function AtlasPresentation({ map, facilities, connections, countr
   const latest = useRef(null);
   const lastAgent = useRef(null);
   const reset = useRef(null);
+  useEffect(() => {
+    if (!mapDisplayResetRequest) return;
+    pending.current?.abort(); reset.current = null;
+    setPanel(''); setActiveScene(null); setName(''); setBaseline(null); setComparing(false); setSplit(50);
+    setNotice(''); setUndo(null); setActivity(null); setRadius(50); setSites([]); setScreening(false);
+    setScreenScope(null); setRequireWater(false); setMaxWaterKm(20);
+    // Saved scenes remain available; reset only clears the active visualisation.
+    setAtlasFullscreen(false).catch(() => {});
+  }, [mapDisplayResetRequest]);
   const metrics = useMemo(() => viewMetrics(facilities, connections), [facilities, connections]);
   const current = useMemo(() => ({ facilities, connections, metrics }), [facilities, connections, metrics]);
   const comparisonReady = useMemo(() => comparisonWithinBudget(current) && (!baseline || comparisonWithinBudget(baseline)), [current, baseline]);
@@ -108,21 +125,27 @@ export default function AtlasPresentation({ map, facilities, connections, countr
   const togglePresentation = async (enabled = !presentationMode, fromAgent = false) => {
     if (!enabled) {
       onPresentationMode?.(false);
-      if (document.fullscreenElement) await document.exitFullscreen?.();
+      await setAtlasFullscreen(false);
       return;
     }
     reset.current = snapshot(); setPanel(''); onPresentationMode?.(true);
     // Speech/network callbacks do not carry browser user activation. The
     // presentation layout still works; browser fullscreen remains a UI action.
     if (fromAgent) return;
-    // Keep the agent overlay in fullscreen too; it is a sibling of the map.
-    try { await document.documentElement.requestFullscreen?.(); }
+    // Nohm's Model portal is a sibling of this iframe. Fullscreen its host,
+    // not this document, preserving both the portal and the assistant overlay.
+    try { await setAtlasFullscreen(true); }
     catch (_) { setNotice('Presentation layout is active. Browser fullscreen is unavailable in this embedded view.'); }
   };
   useEffect(() => {
-    const changed = () => { if (!document.fullscreenElement) onPresentationMode?.(false); map?.invalidateSize(); };
-    document.addEventListener('fullscreenchange', changed);
-    return () => document.removeEventListener('fullscreenchange', changed);
+    const host = atlasPresentationDocument();
+    if (!host) return undefined;
+    // Changing the Model selection can reload Atlas while its host stays in
+    // fullscreen. Restore the presentation layout in the new map document.
+    if (host.fullscreenElement === host.documentElement) onPresentationMode?.(true);
+    const changed = () => { if (!host.fullscreenElement) onPresentationMode?.(false); map?.invalidateSize?.(); };
+    host.addEventListener('fullscreenchange', changed);
+    return () => host.removeEventListener('fullscreenchange', changed);
   }, [map, onPresentationMode]);
   useEffect(() => {
     document.documentElement.classList.toggle('atlas-presentation-active', presentationMode);
@@ -317,12 +340,13 @@ export default function AtlasPresentation({ map, facilities, connections, countr
   }, [registerAgentController]);
   const button = (title, key) => <button type="button" aria-pressed={panel === key} onClick={() => { setNotice(''); setPanel(panel === key ? '' : key); }}>{title}</button>;
   return <div className={`atlas-experience ${presentationMode ? 'is-presenting' : ''}`} data-theme={theme}>
+    <AtlasControlPortal consolidated={consolidatedControls} target={controlHost}>
     <div className="atlas-experience-bar" role="toolbar" aria-label="Presentation and evidence tools">
       <button type="button" disabled={disabled && !presentationMode} aria-pressed={presentationMode} onClick={() => togglePresentation()}>{presentationMode ? 'Exit presentation' : 'Present'}</button>
-      {button('Scenes', 'scenes')}{onOpenResultComparison ? <button type="button" onClick={() => { setPanel(''); onOpenResultComparison(); }}>Compare</button> : button('Compare', 'compare')}
+      {button('Scenes', 'scenes')}{showComparisonAction && (onOpenResultComparison ? <button type="button" onClick={() => { setPanel(''); onOpenResultComparison(); }}>Compare</button> : button('Compare', 'compare'))}
       {button('Find a site', 'sites')}
     </div>
-    {presentationMode && <div className="atlas-presentation-title"><strong>NOHM ATLAS</strong><span>{countries.join(' · ') || 'No country selected'} · {resolution || 'Network view'}</span><span>{metrics.assets.toLocaleString()} displayed assets · {metrics.links.toLocaleString()} links · {metrics.regions} regional markers</span></div>}
+    </AtlasControlPortal>
     {activity && <div className="atlas-activity" role="status"><strong>{activity.pending ? 'EMIL is updating the map' : 'Map update finished'}</strong><span>{activity.text}</span><span>{activity.summary}</span><small>Counts describe the displayed data, not verification of the request.</small><button disabled={disabled || !undo} onClick={() => { restore(undo); setUndo(null); setActivity(null); }}>Undo map change</button><button aria-label="Dismiss map activity" onClick={() => setActivity(null)}>×</button></div>}
     {comparing && baseline && <><ComparisonCanvas map={map} before={baseline} current={current} split={split} /><div className="atlas-comparison-labels"><span>Baseline: {baseline.name}</span><span>Current view</span></div><div className="atlas-comparison-divider" style={{ left: `${split}%` }} /><input className="atlas-comparison-slider" type="range" min="5" max="95" value={split} onChange={event => setSplit(Number(event.target.value))} aria-label="Comparison divider" /></>}
     {panel && <section className={`atlas-experience-panel ${panel === 'inspect' ? 'atlas-inspect-panel' : ''}`} aria-label={`${panel} panel`}>
@@ -344,7 +368,7 @@ export default function AtlasPresentation({ map, facilities, connections, countr
         {baseline && <p>{metricDifference(baseline.metrics, metrics)}</p>}
         <small>Blue: baseline · Gold: current. Displayed topology only; land, access and result overlays are not compared.</small>
       </>}
-      {panel === "inspect" && <AtlasAssetInspector selection={selection} facilities={facilities} connections={connections} onSelect={onSelect} />}
+      {panel === "inspect" && <AtlasAssetInspector selection={selection} facilities={facilities} connections={connections} onSelect={onSelect} onAskModify={onAskModify} />}
       {panel === 'sites' && <>
         <p>Centre the map on your search area. Screen up to six nearby electricity nodes, ordered by distance—not a suitability score.</p>
         <label>Search radius (km)<input type="number" min="1" max="500" value={radius} onChange={event => setRadius(Number(event.target.value))} /></label>
@@ -358,6 +382,6 @@ export default function AtlasPresentation({ map, facilities, connections, countr
         {sites.map((site, index) => <article key={site.item.id} className="atlas-site"><strong>{siteEvidence(site, { requireWater, maxWaterKm })}</strong><button onClick={() => { map.stop(); map.flyTo(site.point, 10, { duration: 0.8, animate: !window.matchMedia('(prefers-reduced-motion: reduce)').matches }); onSelect({ kind: 'node', record: site.item }); }}>{index + 1}. {recordName(site.item)}</button><p>{site.distance.toFixed(1)} km from centre</p><p>Land: {site.loading ? 'Checking…' : site.error || (site.land?.in_scope === false ? 'Outside land evidence scope' : site.land?.land_cover?.label || 'Unknown')}</p><p>Protection: {site.land?.protected === true ? 'Natura 2000 flag — review exclusion' : site.land?.protected === false ? 'Not flagged by this local mask; not clearance' : 'Unknown'}</p><p>Nearest loaded water asset: {site.nearestWater ? `${site.nearestWater.name} (${site.nearestWater.distance.toFixed(1)} km)` : 'Unknown — load Water assets for proximity evidence'}</p><p>Connection availability: Unknown · Water supply capacity: Unknown</p></article>)}
       </>}
     </section>}
-    {presentationMode && !activity && <div className="atlas-presentation-legend"><span>Loaded carriers:</span>{Object.entries(carrierColors).filter(([carrier]) => facilities.some(item => (item.atlas_network_carrier || 'electricity') === carrier)).map(([carrier]) => <span key={carrier}>{carrier === 'gas' ? 'Methane' : carrier}</span>)}<span>Source-dependent coverage</span></div>}
+    {!consolidatedControls && presentationMode && !activity && <div className="atlas-presentation-legend"><span>Loaded carriers:</span>{Object.entries(carrierColors).filter(([carrier]) => facilities.some(item => (item.atlas_network_carrier || 'electricity') === carrier)).map(([carrier]) => <span key={carrier}>{carrier === 'gas' ? 'Methane' : carrier}</span>)}<span>Source-dependent coverage</span></div>}
   </div>;
 }

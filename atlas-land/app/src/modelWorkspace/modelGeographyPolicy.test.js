@@ -31,6 +31,14 @@ test('standalone Atlas retains country network controls', () => {
   expect(assertModelGeographyOperation(null, 'add-country-network')).toBe(true);
 });
 
+test('declared network catalogue exposes its cached resolutions but does not relax other model guards', () => {
+  const context = { mode: 'catalogue', projectId: 'Integration', networkCatalogue: { id: 'pypsa-eur', projectId: 'Integration' } };
+  expect(modelGeographyPolicy(context)).toBeNull();
+  expect(assertModelGeographyOperation(modelGeographyPolicy(context), 'change-resolution')).toBe(true);
+  expect(modelGeographyPolicy({ ...context, networkCatalogue: null }).canIncreaseResolution).toBe(false);
+  expect(modelGeographyPolicy({ ...context, networkCatalogue: { id: 'pypsa-eur', projectId: 'Other' } }).canIncreaseResolution).toBe(false);
+});
+
 test('missing metadata or a stale mode flag never bypass project geography guards', () => {
   const policy = modelGeographyPolicy({ mode: 'reference', projectId: 'DHEM_2026' });
   expect(policy.canAddCountryNetworks).toBe(false);

@@ -11,20 +11,28 @@ import './LolaFlowWorkspace.css';
 import { withAnnualNetFlow } from '../modelWorkspace/annualFlow';
 import { flowPeriodMetrics, flowMetricsLabel } from '../modelWorkspace/flowPeriodMetrics';
 import { historyPeriodSelection } from '../modelWorkspace/flowHistoryView';
+import { FLOW_SPEED_DEFAULT, FLOW_SPEED_MIN, FLOW_SPEED_MAX, flowAnimationSpeed } from '../mapFlow/flowMotion';
+import { useWorkspaceAgentController, useWorkspaceAgentRegistry } from '../agentWorkspace/react';
+import { boolField, enumField, numberField, textField } from '../agentWorkspace/registry';
+import { updateFlowChoice, flowChoiceMatches } from '../agentWorkspace/flow';
+import {flowPeriodIndex} from '../modelWorkspace/flowTimeline';
 
 function flowViewLabel(selection = {}) {
   return [selection.className, selection.propertyName, selection.category || 'All model categories',
     selection.period, flowResolutionLabel(selection.granularity)].filter(Boolean).join(' · ');
 }
 
-export default function LolaFlowWorkspace({ context, modelVersion, selectedId, onSelect, onFrame, onClose }) {
-  const [catalog, setCatalog] = useState(null);
+export default function LolaFlowWorkspace({ context, modelVersion, selectedId, onSelect, onFrame, onClose, catalogStatus, onRefreshCatalog }) {
+  const initialCatalog = catalogStatus?.state === 'ready' && catalogStatus.catalog?.project_id === context?.projectId
+    && catalogStatus.catalog?.model_version === modelVersion ? catalogStatus.catalog : null;
+  const [catalog, setCatalog] = useState(initialCatalog);
   const [choice, setChoice] = useState({});
-  const [status, setStatus] = useState({ state: 'catalog', completed: 0, total: 0 });
+  const [status, setStatus] = useState(initialCatalog ? { state: 'idle' } : { state: 'catalog', completed: 0, total: 0 });
   const [scene, setScene] = useState(null);
   const [index, setIndex] = useState(0);
   const [category, setCategory] = useState('');
   const [animated, setAnimated] = useState(true);
+  const [animationSpeed, setAnimationSpeed] = useState(FLOW_SPEED_DEFAULT);
   const [playing, setPlaying] = useState(false);
   const [nearCapacity, setNearCapacity] = useState(false);
   const [nearPercent,setNearPercent] = useState(99);
@@ -33,12 +41,17 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
   const [topology, setTopology] = useState(null);
   const [topologyStatus, setTopologyStatus] = useState({ state: 'idle' });
   const queryRef = useRef(null);
+  const pendingResolution = useRef(null);
+  const historyTimer = useRef(null);
+  const historyResolve = useRef(null);
+  const [inspectedPeriod, setInspectedPeriod] = useState(null);
   const projectId = context?.projectId;
   useEffect(() => {
     const controller = new AbortController();
-    setCatalog(null); setScene(null); setChoice({}); setPlaying(false);
-    setStatus({ state: 'catalog', completed: 0, total: 0 });
+    setScene(null); setChoice({}); setPlaying(false);
     onFrame(null);
+    if (catalogStatus) return () => { controller.abort(); queryRef.current?.abort(); };
+    setCatalog(null); setStatus({ state: 'catalog', completed: 0, total: 0 });
     fetchModelResultCatalog({ mode: 'model', projectId }, modelVersion, {
       signal: controller.signal,
       onProgress: progress => { if (!controller.signal.aborted) setStatus({ state: 'catalog', ...progress }); },
@@ -48,7 +61,17 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
       if (!controller.signal.aborted) setStatus({ state: 'error', error: error.message });
     });
     return () => { controller.abort(); queryRef.current?.abort(); };
-  }, [projectId, modelVersion, onFrame]);
+  }, [projectId, modelVersion, onFrame, Boolean(catalogStatus)]);
+  // Reuse Atlas's catalogue instead of scanning every solution on each reopen.
+  useEffect(() => {
+    if (!catalogStatus) return;
+    if (catalogStatus.state === 'ready' && catalogStatus.catalog?.project_id === projectId
+      && catalogStatus.catalog?.model_version === modelVersion) {
+      setCatalog(catalogStatus.catalog); setStatus({ state: 'idle' });
+    } else if (catalogStatus.state === 'error') {
+      setCatalog(null); setStatus({ state: 'error', error: catalogStatus.error });
+    } else { setCatalog(null); setStatus({ state: 'catalog', ...catalogStatus.progress }); }
+  }, [catalogStatus, projectId, modelVersion]);
 
   const runs = (catalog?.runs || []).filter(run => run.compatible && run.quantities.some(flowMetricContract));
   const run = runs.find(item => item.run_id === choice.runId) || runs[0];
@@ -133,8 +156,8 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
       return {...line,capacityEvidence:evidence,color:evidence?.share==null?RESULT_SERIES_COLORS[7]
         :evidence.share>=capacityEvidence.threshold?RESULT_SERIES_COLORS[2]:RESULT_SERIES_COLORS[0]};
     });
-    onFrame({ ...frame, maximum: scene.maximum, animated });
-  }, [scene, visibleScene, index, selectedId, animated, nearCapacityActive, capacityEvidence, nearPercent, onFrame]);
+    onFrame({ ...frame, maximum: scene.maximum, animated, animationSpeed, analysis_query: scene.analysis_query, analysis_selection: scene.selection });
+  }, [scene, visibleScene, index, selectedId, animated, animationSpeed, nearCapacityActive, capacityEvidence, nearPercent, onFrame]);
   useEffect(() => {
     if (!playing || !scene || scene.periods.length < 2) return undefined;
     const timer = setInterval(() => {
@@ -152,27 +175,146 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
         onProgress: progress => { if (!controller.signal.aborted) setStatus({ state: 'loading', ...progress }); },
       });
       if (controller.signal.aborted) return;
-      setScene(next); setIndex(Math.max(0,next.periods.findIndex(period => Date.parse(period) === Date.parse(selectedPeriod)))); setCategory(''); setNearCapacity(false);
+      const retainedPeriod = selectedPeriod || inspectedPeriod || scene?.periods[index];
+      const nextIndex = Math.max(0, flowPeriodIndex(next.periods, retainedPeriod, next.selection.granularity));
+      setScene(next); setIndex(nextIndex); setInspectedPeriod(null); setCategory('');
       setTab('time');
-      if (!selectedPeriod) onSelect(''); setStatus({ state: 'ready' });
+      // A refresh or native-resolution change is another view of the same
+      // connection. Only clear a selection absent from the new result scene.
+      if (!next.lines.some(line => line.id === selectedId)) onSelect('');
+      setStatus({ state: 'ready' });
+      return next;
     } catch (error) {
       if (!controller.signal.aborted) setStatus({ state: 'error', error: error.message, requested,
         requestKey, code: error.code, quality: error.quality });
     }
   };
-  const change = (key, value) => setChoice(previous => ({ ...previous, [key]: value }));
+  const changeControls = values => setChoice(previous => updateFlowChoice(previous, values));
+  const changeResolution = value => {
+    if (value === selection.granularity) return;
+    if (scene) pendingResolution.current = {granularity: value, period: inspectedPeriod || scene.periods[index]};
+    changeControls({granularity: value, ...(scene ? {dateFrom: selection.dateFrom, dateTo: selection.dateTo} : {})});
+  };
+  const change = (key, value) => key === 'granularity' ? changeResolution(value) : changeControls({ [key]: value });
+  useEffect(() => {
+    const pending = pendingResolution.current;
+    if (!pending || pending.granularity !== selection.granularity || !topology) return;
+    pendingResolution.current = null;
+    load('reject', selection, pending.period);
+  }, [requestKey, topology]); // Commit the selection and native unit together.
+  const cancelHistoryInspect = () => {
+    clearTimeout(historyTimer.current);
+    historyResolve.current?.(); historyResolve.current = null;
+  };
+  useEffect(() => () => {
+    clearTimeout(historyTimer.current); historyResolve.current?.();
+  }, []);
   const showHistoryPeriod = period => {
+    cancelHistoryInspect(); setPlaying(false);
+    const existing = flowPeriodIndex(scene.periods, period, scene.selection.granularity);
+    if (existing >= 0) { setInspectedPeriod(null); setIndex(existing); return Promise.resolve(scene); }
     const requested = historyPeriodSelection(scene,period);
     setChoice({runId:requested.runId,quantityId:`${requested.className}.${requested.propertyName}`,
       period:requested.period,granularity:requested.granularity,category:requested.category,dateFrom:requested.dateFrom,dateTo:requested.dateTo});
-    load('reject',requested,period);
+    return load('reject',requested,period);
+  };
+  const inspectHistoryPeriod = period => {
+    cancelHistoryInspect(); setPlaying(false);
+    const existing = flowPeriodIndex(scene.periods, period, scene.selection.granularity);
+    if (existing >= 0) { setInspectedPeriod(null); setIndex(existing); return Promise.resolve(scene); }
+    setInspectedPeriod(period);
+    return new Promise(resolve => {
+      historyResolve.current = resolve;
+      historyTimer.current = setTimeout(() => {
+        historyResolve.current = null;
+        resolve(showHistoryPeriod(period));
+      }, 180);
+    });
   };
   const categories = [...new Set(scene?.lines.map(line => line.category).filter(Boolean))];
   const busy = ['loading', 'catalog'].includes(status.state) || topologyStatus.state === 'loading';
   const settingsDiffer = scene && ['runId', 'className', 'propertyName', 'period', 'granularity', 'category', 'dateFrom', 'dateTo']
     .some(key => (scene.selection[key] || '') !== (selection[key] || ''));
-  return <><section className="lola-flow-workspace" aria-label="Lola flow workspace">
-    <header><div><span className="lola-flow-eyebrow">LOLA · FLOW VISUALISATION</span><h2>Flow explorer</h2></div>
+  const agent = useWorkspaceAgentRegistry();
+  useEffect(() => {
+    if (!agent) return undefined;
+    agent.tabs.set('Grid Flow Analysis', setTab);
+    return () => { if (agent.tabs.get('Grid Flow Analysis') === setTab) agent.tabs.delete('Grid Flow Analysis'); };
+  }, [agent]);
+  useWorkspaceAgentController('flow', {
+    catalog,
+    ready: Boolean(catalog && topologyStatus.state === 'ready'), error: topologyStatus.error || '',
+    load: () => load(),
+    fields: {
+      runId: enumField('Flow result run', runs.map(row => ({ value: row.run_id, label: row.label }))),
+      quantityId: enumField('Connection and quantity', quantities.map(row => ({ value: row.id,
+        label: `${row.class_name} · ${row.property_name} (${row.unit})`, granularities: row.available_granularities, periods: row.periods }))),
+      period: enumField('Flow year', [...new Set(quantities.flatMap(row => row.periods || []))]),
+      granularity: enumField('Flow aggregation', [...new Set(quantities.flatMap(row => row.available_granularities || []))]),
+      category: enumField('Flow model category', ['', ...new Set((topology?.lines || []).map(row => row.category).filter(Boolean))]),
+      dateFrom: textField('Start date YYYY-MM-DD', 32), dateTo: textField('End date YYYY-MM-DD', 32),
+      tab: enumField('Flow tab', ['data', 'time', 'capacity']),
+      animated: boolField('Animate transfers'), playing: boolField('Play time periods'), nearCapacity: boolField('Highlight near capacity'),
+      nearPercent: { ...numberField('Near capacity percentage of directional limit', 1, 100), integer: true },
+      animationSpeed: numberField('Animation speed', FLOW_SPEED_MIN, FLOW_SPEED_MAX),
+      selectedId: enumField('Connection', (visibleScene?.lines || []).map(row => ({ value: row.id, label: row.name }))),
+      index: { ...numberField('Displayed period index (zero based)', 0, Math.max(0, (scene?.periods.length || 1) - 1)), integer: true },
+    },
+    actions: { show: { description: 'Configure and load the flow data on the map.' },
+      configure: { description: 'Change time/display controls, or choose a prerequisite connection quantity before loading.' },
+      cancel: { description: 'Cancel the flow query.' }, refresh_catalog: { description: 'Refresh the result catalogue.' },
+      show_valid: { description: 'Retry an observation-conflict query excluding conflicting entities, as the Show valid records button does.' } },
+    state: { runId: selection.runId, quantityId: quantity?.id, requestedQuantityId: requestedQuantity?.id, period: year, granularity,
+      category: selection.category, dateFrom: selection.dateFrom, dateTo: selection.dateTo,
+      tab, animated, playing, nearCapacity, nearPercent, animationSpeed, selectedId: selectedLine?.id, index,
+      selectedPeriod: inspectedPeriod || scene?.periods[index], unit: scene?.unit,
+      loading: busy, error: status.error, hasLimits: Boolean(hasLimits), nearCapacityDisabled,
+      displayed: scene ? { ...scene.selection, connections: scene.lines.length, periods: scene.periods.length } : null },
+  }, async (action, values) => {
+    if (action === 'cancel') { queryRef.current?.abort(); setStatus({ state: 'idle' }); return 'Flow query cancelled.'; }
+    if (action === 'refresh_catalog') { onRefreshCatalog?.(); return 'Refreshing result catalogue.'; }
+    if (action === 'show_valid') {
+      if (status.code !== 'result_observation_conflict' || status.requestKey !== requestKey) throw new Error('There is no current observation-conflict query to retry.');
+      const result = await load('exclude_entities');
+      if (!result) throw new Error('The valid records could not be loaded.');
+      return `${result.lines.length} valid connections shown; conflicting entities excluded.`;
+    }
+    const dataValues = Object.fromEntries(Object.entries(values).filter(([key]) => ['runId', 'quantityId', 'period', 'granularity', 'category', 'dateFrom', 'dateTo'].includes(key)));
+    for (const key of ['dateFrom', 'dateTo']) if (dataValues[key] && !/^\d{4}-\d{2}-\d{2}(T.*)?$/.test(dataValues[key])) throw new Error('Choose a valid flow date.');
+    const nextRun = runs.find(row => row.run_id === (values.runId || run?.run_id));
+    const nextQuantity = withAnnualNetFlow((nextRun?.quantities || []).filter(flowMetricContract))
+      .find(row => row.id === (values.quantityId || requestedQuantity?.id));
+    if (values.quantityId && !nextQuantity) throw new Error('That flow quantity is not reported by the selected run.');
+    if (values.period && !(nextQuantity?.periods || nextRun?.periods || []).includes(values.period)) throw new Error('That year is not reported for the selected flow quantity.');
+    if (values.granularity && !nextQuantity?.available_granularities.includes(values.granularity)
+      && !(nextQuantity?.property_name === 'Net Flow' && nextRun.quantities.some(row => row.class_name === 'Line' && row.property_name === 'Flow' && row.available_granularities.includes(values.granularity)))) throw new Error('That time resolution is not reported for this quantity.');
+    if (action !== 'show' && values.nearCapacity === true && nearCapacityDisabled) throw new Error(nearCapacityHelp);
+    if (Object.keys(dataValues).length) {
+      if (Object.keys(dataValues).length === 1 && dataValues.granularity && action === 'configure') changeResolution(dataValues.granularity);
+      else changeControls(dataValues);
+    }
+    if (values.tab != null) setTab(values.tab);
+    if (values.animated != null) setAnimated(values.animated);
+    if (values.playing != null) { if (values.playing && !scene) throw new Error('Load flows before playback.'); setPlaying(values.playing); }
+    if (values.nearCapacity != null && action !== 'show') setNearCapacity(values.nearCapacity);
+    if (values.nearPercent != null) setNearPercent(values.nearPercent);
+    if (values.animationSpeed != null) setAnimationSpeed(values.animationSpeed);
+    if (values.selectedId != null) onSelect(values.selectedId);
+    if (values.index != null) { setInspectedPeriod(null); setIndex(values.index); }
+    await agent.wait('flow', item => item?.ready && flowChoiceMatches(item.state, dataValues));
+    if (action === 'show') {
+      const result = await agent.controllers.get('flow').load();
+      if (!result) throw new Error('The selected flows could not be loaded. Check the Flow explorer.');
+      const fresh = await agent.wait('flow', item => item?.state.displayed && !item.state.loading);
+      if (values.tab != null) setTab(values.tab);
+      if (values.nearCapacity === true && fresh.state.nearCapacityDisabled) throw new Error('Flows loaded, but comparable directional limits are unavailable or capacity-hours colouring is active.');
+      if (values.nearCapacity != null) setNearCapacity(values.nearCapacity);
+      return `${result.lines.length} connections shown.`;
+    }
+    return 'Flow controls updated.';
+  });
+  return <><section className="lola-flow-workspace" aria-label="Grid flow workspace">
+    <header><div><span className="lola-flow-eyebrow">GRID FLOW ANALYSIS</span><h2>Flow explorer</h2></div>
       <button type="button" onClick={onClose} aria-label="Close flow workspace">×</button></header>
     <nav className="lola-flow-tabs" role="tablist" aria-label="Flow explorer sections">
       {[['data','Data'],['time','Time & display'],['capacity','Capacity']].map(([id,label])=><button key={id} role="tab" id={`flow-tab-${id}`} aria-controls={`flow-panel-${id}`} aria-selected={tab===id} onClick={()=>setTab(id)}>{label}</button>)}
@@ -181,16 +323,16 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
       <section className="lola-flow-card" role="tabpanel" id="flow-panel-data" aria-labelledby="flow-tab-data" hidden={tab!=='data'}>
       <div className="lola-flow-controls">
         <label>Result run<select aria-label="Flow result run" value={run?.run_id || ''} disabled={busy || !runs.length}
-          onChange={event => { setChoice({ runId: event.target.value }); }}>
+          onChange={event => change('runId', event.target.value)}>
           {runs.map(item => <option key={item.run_id} value={item.run_id}>{item.label}</option>)}
         </select></label>
         <label>Connection / quantity<select aria-label="Flow quantity" value={quantity?.id || ''} disabled={busy || !quantities.length}
-          onChange={event => setChoice(previous => ({ ...previous, quantityId: event.target.value, category: undefined }))}>
+          onChange={event => change('quantityId', event.target.value)}>
           {quantities.filter(item => granularity !== 'year' || quantity?.property_name !== 'Net Flow'
             || item.class_name !== 'Line' || item.property_name === 'Net Flow').map(item => <option key={item.id} value={item.id}>{item.class_name} · {item.property_name} ({item.units_by_granularity?.[granularity] || item.unit})</option>)}
         </select></label>
         <label>Year<select aria-label="Flow year" value={year} disabled={busy}
-          onChange={event => setChoice(previous => ({ ...previous, period: event.target.value, dateFrom: '', dateTo: '' }))}>
+          onChange={event => change('period', event.target.value)}>
           {(quantity?.periods || []).map(value => <option key={value} value={value}>{value}</option>)}
         </select></label>
         <label>Model category<select aria-label="Flow model category" value={selection.category} disabled={busy}
@@ -198,11 +340,12 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
           {[...new Set(topology?.lines.map(line => line.category).filter(Boolean))].map(value => <option key={value}>{value}</option>)}
         </select></label>
       </div>
+      {onRefreshCatalog && <button type="button" disabled={busy} onClick={onRefreshCatalog}>Refresh result catalogue</button>}
       </section>
       <section className="lola-flow-card" role="tabpanel" id="flow-panel-time" aria-labelledby="flow-tab-time" hidden={tab!=='time'}>
         <div className="lola-flow-controls">
         <label>Time resolution<select aria-label="Flow time resolution" value={granularity || ''} disabled={busy || !resolutions.length}
-          onChange={event => setChoice(previous => ({ ...previous, granularity: event.target.value, dateFrom: '', dateTo: '' }))}>
+          onChange={event => change('granularity', event.target.value)}>
           {resolutions.map(value => <option key={value} value={value}>{flowResolutionLabel(value)}</option>)}
         </select></label>
         {granularity !== 'year' && <>
@@ -212,11 +355,17 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
         </div>
         <div className="lola-flow-play-actions" hidden={!scene || scene.periods.length < 2}>
           <button type="button" disabled={!scene || scene.periods.length < 2 || busy || settingsDiffer} onClick={() => setPlaying(value => !value)}>{playing ? 'Pause' : 'Play timeline'}</button></div>
-        {scene && scene.periods.length>1 && <div className="lola-flow-timeline">
-          <input aria-label="Flow period" type="range" min="0" max={Math.max(0, scene.periods.length - 1)} value={index} disabled={scene.periods.length < 2} onChange={event => { setPlaying(false); setIndex(Number(event.target.value)); }} />
+        {scene && scene.periods.length>0 && <div className="lola-flow-timeline">
+          <input aria-label="Flow period" type="range" min="0" max={Math.max(0, scene.periods.length - 1)} value={index} disabled={scene.periods.length < 2} onChange={event => { cancelHistoryInspect(); setInspectedPeriod(null); setPlaying(false); setIndex(Number(event.target.value)); }} />
           <output>{annual ? scene.periods[index]?.slice(0, 4) : scene.periods[index]?.replace('T', ' ').replace('Z', '')}</output></div>}
       <div className="lola-flow-actions">
         <label><input type="checkbox" checked={animated} onChange={event => setAnimated(event.target.checked)} /> Animate direction</label>
+        <label className="lola-flow-speed" title="Display speed only. Arrow travel time stays consistent when you zoom; timeline playback and flow values are unchanged.">Speed
+          <input aria-label="Flow animation speed" aria-valuetext={`${animationSpeed} times normal speed`} type="range"
+            min={FLOW_SPEED_MIN} max={FLOW_SPEED_MAX} step="0.25" value={animationSpeed} disabled={!animated}
+            onChange={event => setAnimationSpeed(flowAnimationSpeed(Number(event.target.value)))} />
+          <output aria-label="Flow animation speed value">{animationSpeed}×</output>
+        </label>
       </div>
       </section>
       <section className="lola-flow-card" role="tabpanel" id="flow-panel-capacity" aria-labelledby="flow-tab-capacity" hidden={tab!=='capacity'}>
@@ -259,6 +408,9 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
       </div>}
     </div>
   </section>{scene && selectedLine && <LolaFlowHistoryDock context={context} scene={scene} line={selectedLine} nearPercent={nearPercent} onChoosePeriod={showHistoryPeriod}
+    activePeriod={inspectedPeriod || scene.periods[index]} onInspectPeriod={inspectHistoryPeriod}
+    linkedResolution={selection.granularity} onResolutionChange={changeResolution} availableResolutions={resolutions} loading={busy}
+    animated={animated} onAnimatedChange={setAnimated} animationSpeed={animationSpeed}
     nearCapacity={nearCapacityActive} onNearCapacityChange={setNearCapacity} nearCapacityDisabled={nearCapacityDisabled} nearCapacityHelp={nearCapacityHelp}
     connectionSelector={<label className="lola-history-connection">Connection<select aria-label="Selected flow connection" value={selectedLine.id} onChange={event=>onSelect(event.target.value)}>{visibleScene.lines.map(line=><option key={line.id} value={line.id}>{line.name}</option>)}</select></label>}/>}</>;
 }

@@ -2,6 +2,8 @@ import { atlasApiUrl } from '../config/api';
 import { validatedResultRows } from './resultScene';
 import { subtractReverseFlow } from './annualFlow';
 import { flowPeriodMetrics } from './flowPeriodMetrics';
+import {flowRangeWindows, mergeFlowWindows} from './flowTimeline';
+import {unpackFlowResponse} from './flowQueryResponse';
 export { compatibleFlowLimit, flowUtilisation } from './flowPeriodMetrics';
 
 // Structured PLEXOS connection/property contracts, not language-intent routing.
@@ -61,7 +63,7 @@ export function adaptLolaFlowRows(payload, topology, context, selection) {
     const period = String(row.time_bucket || '').trim();
     const value = Number(row.value);
     if (!name || !period || row.value == null || row.value === '' || !Number.isFinite(value)) throw new Error('Flow rows require an object, timestamp and finite value.');
-    if (!Number.isFinite(Date.parse(period))) throw new Error('Flow rows contain an invalid timestamp.');
+    if (!periods.has(period) && !Number.isFinite(Date.parse(period))) throw new Error('Flow rows contain an invalid timestamp.');
     if (row.class_name && String(row.class_name).replace(/\s/g, '') !== selection.className.replace(/\s/g, '')) throw new Error('Flow rows contain another connection class.');
     if (row.property_name && row.property_name !== selection.propertyName) throw new Error('Flow rows contain another quantity.');
     const key = `${name}\u0000${period}`;
@@ -148,7 +150,7 @@ export async function fetchLolaFlowScene(context, selection, options = {}, fetch
       }
       throw error;
     }
-    return payload;
+    return unpackFlowResponse(payload);
   };
   options.onProgress?.({ phase: 'topology', completed: 0, total: 3 });
   const topology = options.topology || await fetchLolaFlowTopology(context, selection, options, fetchImpl);
@@ -156,16 +158,32 @@ export async function fetchLolaFlowScene(context, selection, options = {}, fetch
   if (requestedNames && (!requestedNames.length || requestedNames.some(name => !topology.lines.some(line => line.name === name)))) {
     throw new Error('Choose exact connections present in this model topology.');
   }
+  const names = requestedNames || topology.lines.filter(line => !selection.category || line.category === selection.category).map(line => line.name);
+  if (selection.granularity === 'hour' && !options.singleWindow) {
+    const windows = flowRangeWindows(selection.dateFrom || `${selection.period}-01-01`, selection.dateTo || `${selection.period}-12-31`, names.length);
+    if (windows.length > 1) {
+      const chunks = [];
+      for (let i = 0; i < windows.length; i++) {
+        if (options.signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+        chunks.push(await fetchLolaFlowScene(context, {...selection, ...windows[i]}, {...options, topology,
+          singleWindow: true, allowEmptyHistoryWindow: true,
+          onProgress: progress => options.onProgress?.({completed: i, total: windows.length,
+            phase: `${windows[i].dateFrom} – ${windows[i].dateTo} · ${progress.phase}`})}, fetchImpl));
+        options.onProgress?.({completed: i + 1, total: windows.length, phase: windows[i].dateTo});
+      }
+      if (!chunks.some(chunk => chunk.lines.length)) throw new Error('No reported flows exist at this resolution and date range.');
+      return mergeFlowWindows(chunks, selection);
+    }
+  }
   options.onProgress?.({ phase: 'query', completed: 1, total: 3 });
   const query = { run_ids: [selection.runId], report_family: selection.reportFamily,
       class_name: selection.className, property_name: selection.derivedNetFlow ? 'Flow' : selection.propertyName,
       granularity: selection.granularity, group_by: 'line', aggregation_method: 'auto', quantity_aware_aggregation: true,
       observation_conflict_policy: conflictPolicy,
-      entity_names: requestedNames || (selection.category ? (topology.lines.filter(line => line.category === selection.category).map(line => line.name).length
-        ? topology.lines.filter(line => line.category === selection.category).map(line => line.name) : ['__atlas_no_schema_objects__']) : []),
+      entity_names: names.length ? names : ['__atlas_no_schema_objects__'],
       date_from: selection.dateFrom || (/^\d{4}$/.test(selection.period) ? `${selection.period}-01-01` : undefined),
       date_to: selection.dateTo ? `${selection.dateTo}T23:59:59` : (/^\d{4}$/.test(selection.period) ? `${selection.period}-12-31T23:59:59` : undefined),
-      limit: 150000, use_cache: true, cache_mode: 'prefer' };
+      limit: 150000, use_cache: true, cache_mode: 'prefer', response_format: 'flow_series' };
   const queryResult = body => read(`/api/solutions/${encodeURIComponent(context.projectId)}/query`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
@@ -210,7 +228,7 @@ export async function fetchLolaFlowScene(context, selection, options = {}, fetch
           class_name: selection.className, property_name: property, granularity: selection.granularity,
           group_by: 'line', entity_names: [...byName.keys()], aggregation_method: 'mean',
           quantity_aware_aggregation: true, date_from: query.date_from,
-          date_to: query.date_to, limit: 150000, use_cache: false }),
+          date_to: query.date_to, limit: 150000, use_cache: true, cache_mode: 'prefer', response_format: 'flow_series' }),
       });
       const seenLimits = new Set();
       for (const row of validatedResultRows(limits, context, selection)) {
@@ -230,5 +248,9 @@ export async function fetchLolaFlowScene(context, selection, options = {}, fetch
     }
   }
   options.onProgress?.({ phase: 'ready', completed: 3, total: 3 });
-  return scene;
+  // Compact packing is a transport detail, not a change to the agent's query
+  // contract or the observations the user is inspecting.
+  const analysisQuery = {...query};
+  delete analysisQuery.response_format;
+  return { ...scene, analysis_query: analysisQuery };
 }

@@ -5,7 +5,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 const appRoot = path.resolve(__dirname, '..');
-const buildDirectory = path.join(appRoot, 'build');
+const buildDirectory = path.resolve(appRoot, process.env.BUILD_PATH || 'build');
 const contractPath = path.join(buildDirectory, '.nohm-atlas-build.json');
 
 if (!fs.existsSync(path.join(buildDirectory, 'index.html'))) {

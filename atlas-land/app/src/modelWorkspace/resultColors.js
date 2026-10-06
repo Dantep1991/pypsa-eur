@@ -5,3 +5,15 @@ export const RESULT_SERIES_COLORS = ['#1C7293', '#0A2540', '#F2A65A', '#6CB4D0',
 export const COMPARISON_COLORS = { favourable: '#22c55e', unfavourable: '#ef4444', neutral: '#a3a3a3' };
 // Blue is independent of red/green desirability; light maps use darker Nohm teal.
 export const flowReversalColor = theme => theme === 'dark' ? '#6CB4D0' : '#1C7293';
+
+const SEQUENTIAL = ['#ef4444', '#f97316', '#facc15', '#84cc16', '#22c55e'];
+const DIVERGING = ['#ef4444', '#fca5a5', '#e5e7eb', '#86efac', '#22c55e'];
+
+export function resultPalette(legend = {}) {
+  if (legend.favourable_direction === 'context_dependent'
+      || (legend.favourable_direction && legend.minimum === legend.maximum)) {
+    return [COMPARISON_COLORS.neutral, COMPARISON_COLORS.neutral];
+  }
+  const palette = legend.scale === 'diverging' ? DIVERGING : SEQUENTIAL;
+  return legend.favourable_direction === 'decrease' ? [...palette].reverse() : palette;
+}

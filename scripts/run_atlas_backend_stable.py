@@ -19,6 +19,7 @@ from urllib.request import Request, urlopen
 from atlas_runtime_config import (
     resolve_atlas_root, load_shared_nohm_key, server_options, configure_nohm_platform_path,
     load_shared_nohm_voice_key,
+    configure_atlas_preview_origin,
 )
 
 
@@ -91,6 +92,7 @@ def _configure_runtime_atlas_databases() -> None:
 
 
 configure_nohm_platform_path()
+configure_atlas_preview_origin()
 # Legacy OpenAI configuration now applies to speech/other old modalities only.
 # Map planning uses Nohm's shared text client and its existing secret resolver.
 load_shared_nohm_key()
@@ -316,14 +318,14 @@ def _extend_land_map_agent() -> None:
             return {
                 "verdict": "pass",
                 "corrections": [],
-                "summary": "the observed Land & Constraints overlay matches the requested visibility, classes, country scope, and opacity.",
+                "summary": "Land overlay updated.",
                 "confidence": 1.0,
                 "provider": "atlas-land-state-judge",
             }
         return {
             "verdict": "repair",
             "corrections": [{"intent": "set_land_constraints", "params": params}],
-            "summary": "the Land & Constraints state did not yet match, so the requested state will be re-applied.",
+            "summary": "Land overlay needs correction.",
             "confidence": 1.0,
             "provider": "atlas-land-state-judge",
         }

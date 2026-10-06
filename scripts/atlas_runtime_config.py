@@ -5,6 +5,26 @@ import sys
 from pathlib import Path
 
 
+def configure_atlas_preview_origin(environ=None):
+    """Bind an explicitly configured local preview to its exact browser origin.
+
+    Preserve deployment origins, but never infer a port from incoming requests
+    or trust all loopback websites. The static preview host only serves 127.0.0.1.
+    """
+    environ = os.environ if environ is None else environ
+    configured = environ.get("NOHM_ATLAS_PREVIEW_PORT", "").strip()
+    if not configured:
+        return None
+    if not configured.isascii() or not configured.isdecimal() or not 1 <= int(configured) <= 65535:
+        raise ValueError("NOHM_ATLAS_PREVIEW_PORT must be an integer between 1 and 65535")
+    origin = f"http://127.0.0.1:{int(configured)}"
+    origins = [value.strip() for value in environ.get("NOHM_ATLAS_ALLOWED_ORIGINS", "").split(",") if value.strip()]
+    if origin not in origins:
+        origins.append(origin)
+    environ["NOHM_ATLAS_ALLOWED_ORIGINS"] = ",".join(origins)
+    return origin
+
+
 def resolve_atlas_root(runner_root, environ=None):
     environ = os.environ if environ is None else environ
     configured = environ.get("NOHM_ATLAS_ROOT", "").strip()

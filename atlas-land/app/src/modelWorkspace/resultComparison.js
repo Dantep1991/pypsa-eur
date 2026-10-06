@@ -61,6 +61,8 @@ export function compareResultScenes(baseline, candidate, preference = 'context_d
     values, comparison: { preference, baseline: baseline.run, candidate: candidate.run,
       baseline_project: baseline.project_id, candidate_project: candidate.project_id,
       baseline_version: baseline.model_version, candidate_version: candidate.model_version,
+      baseline_query: baseline.analysis_query, candidate_query: candidate.analysis_query,
+      derivation: candidate.derivation || '',
       matched: values.length, baseline_only: [...before.keys()].filter(id => !after.has(id)).length,
       direction_changed: values.filter(row => row.flow_direction_changed).length,
       candidate_only: [...after.keys()].filter(id => !before.has(id)).length },

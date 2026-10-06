@@ -1,7 +1,9 @@
 // Portable Lola/Atlas Leaflet flow renderer. Callers supply validated, oriented
 // geometry and physical magnitudes; this module never infers model data.
-export function mountFlowRenderer({ map, lines, animated = true, selectedId = '', maximum }) {
-  if (!lines?.length) return undefined;
+import { createFlowMotionClock, flowIdentityPhase, FLOW_SPEED_DEFAULT } from './flowMotion';
+
+export function mountFlowRenderer({ map, lines, animated = true, selectedId = '', maximum, animationSpeed = FLOW_SPEED_DEFAULT }) {
+  lines = lines || [];
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:absolute;left:0;top:0;z-index:450;pointer-events:none;';
   canvas.setAttribute('aria-hidden', 'true');
@@ -15,8 +17,10 @@ export function mountFlowRenderer({ map, lines, animated = true, selectedId = ''
   const theme = getComputedStyle(map.getContainer());
   const arrowInk = theme.getPropertyValue('--atlas-map-text').trim() || 'CanvasText';
   const arrowOutline = theme.getPropertyValue('--atlas-map-surface-solid').trim() || 'Canvas';
-  const scale = maximum || Math.max(...lines.map(line => line.magnitude), 1);
-  let animation = null, stopped = false, dirty = true, elapsed = 0, previous = null, dpr = 1, projected = [];
+  let scale = maximum || Math.max(...lines.map(line => line.magnitude), 1);
+  const clock = createFlowMotionClock();
+  clock.setSpeed(animationSpeed);
+  let animation = null, stopped = false, dirty = true, dpr = 1, projected = [];
   function project() {
     const size = map.getSize();
     const origin = map.containerPointToLayerPoint([0, 0]);
@@ -36,7 +40,8 @@ export function mountFlowRenderer({ map, lines, animated = true, selectedId = ''
         distance += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
         cumulative.push(distance);
       }
-      return distance < 4 ? [] : [{ ...line, points, cumulative, distance, ratio: Math.sqrt(line.magnitude / scale) }];
+      return distance < 4 ? [] : [{ ...line, points, cumulative, distance,
+        phase: flowIdentityPhase(line.id), ratio: Math.sqrt(line.magnitude / scale) }];
     });
     dirty = false;
   }
@@ -50,14 +55,16 @@ export function mountFlowRenderer({ map, lines, animated = true, selectedId = ''
   }
   function draw(timestamp) {
     animation = null;
-    if (stopped || document.hidden) { previous = null; return; }
+    if (stopped || document.hidden) { clock.pause(); return; }
     if (dirty) project();
-    elapsed += previous == null ? 0 : Math.min(0.1, (timestamp - previous) / 1000);
-    previous = timestamp;
+    const moving = animated && !motion?.matches && projected.length > 0;
+    const progress = clock.tick(timestamp, moving);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
-    projected.forEach((line, index) => {
-      const distance = (!animated || motion?.matches) ? line.distance * 0.58 : (elapsed * 35 + index * 17) % line.distance;
+    projected.forEach(line => {
+      // Stable identity, not list order: missing/zero records at a new period
+      // must not reset the animation phase of the other connections.
+      const distance = line.distance * (moving ? (progress + line.phase) % 1 : 0.58);
       const head = pointAt(line, distance);
       const tailDistance = Math.max(0, distance - Math.min(line.distance * 0.22, 50));
       if (distance <= tailDistance) return;
@@ -86,13 +93,13 @@ export function mountFlowRenderer({ map, lines, animated = true, selectedId = ''
   const invalidate = () => { dirty = true; start(); };
   const visibility = () => {
     if (animation != null) cancelAnimationFrame(animation);
-    animation = null; previous = null; dirty = true; start();
+    animation = null; clock.pause(); dirty = true; start();
   };
   map.on('move zoom viewreset resize', invalidate);
   document.addEventListener('visibilitychange', visibility);
   motion?.addEventListener?.('change', visibility);
   start();
-  return () => {
+  const dispose = () => {
     stopped = true;
     if (animation != null) cancelAnimationFrame(animation);
     map.off('move zoom viewreset resize', invalidate);
@@ -100,4 +107,13 @@ export function mountFlowRenderer({ map, lines, animated = true, selectedId = ''
     motion?.removeEventListener?.('change', visibility);
     canvas.remove();
   };
+  dispose.update = next => {
+    if (animated !== (next.animated ?? true)) clock.pause();
+    lines = next.lines || []; animated = next.animated ?? true;
+    clock.setSpeed(next.animationSpeed);
+    selectedId = next.selectedId || ''; maximum = next.maximum;
+    scale = maximum || Math.max(...lines.map(line => line.magnitude), 1);
+    invalidate();
+  };
+  return dispose;
 }

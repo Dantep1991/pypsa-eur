@@ -12,7 +12,6 @@ export default function AtlasWorkspaceRail({ activeArea, onSelect }) {
 
   return (
     <nav className="atlas-workspace-rail" aria-label="Atlas workspace areas" onKeyDown={handleKeyDown}>
-      <p className="atlas-workspace-rail__label">Workspace</p>
       <div className="atlas-workspace-rail__areas">
         {ATLAS_WORKSPACE_AREAS.map((area) => {
           const current = activeArea === area.id;
@@ -23,11 +22,10 @@ export default function AtlasWorkspaceRail({ activeArea, onSelect }) {
               data-atlas-workspace-area={area.id}
               className={`atlas-workspace-rail__area${current ? ' is-active' : ''}`}
               aria-current={current ? 'page' : undefined}
-              aria-label={`${area.label}: ${area.summary}`}
+              aria-label={area.label}
               onClick={() => onSelect(area.id)}
             >
               <span>{area.label}</span>
-              <small>{area.summary}</small>
             </button>
           );
         })}

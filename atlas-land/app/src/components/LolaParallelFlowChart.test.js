@@ -20,8 +20,17 @@ test('transfer dots animate in opposite directions and stop on unmount',()=>{
   const line={name:'A-B',from_node:'A',to_node:'B'},samples=[{period:'2050-01-01T00:00:00Z',value:10},{period:'2050-01-01T01:00:00Z',value:-10}];
   const view=render(<LolaParallelFlowChart line={line} samples={samples} unit="MW" animated/>);
   const tick=time=>{const [key,callback]=callbacks.entries().next().value;callbacks.delete(key);act(()=>callback(time));};
-  tick(350);expect(ctx.arc.mock.calls[0][1]).toBeLessThan(ctx.arc.mock.calls[1][1]);
-  tick(1050);expect(ctx.arc.mock.calls[2][1]).toBeGreaterThan(ctx.arc.mock.calls[3][1]);
+  tick(0);
+  for(let time=50;time<=350;time+=50)tick(time);
+  expect(ctx.arc.mock.calls.at(-2)[1]).toBeLessThan(ctx.arc.mock.calls.at(-1)[1]);
+  for(let time=400;time<=1050;time+=50)tick(time);
+  expect(ctx.arc.mock.calls.at(-2)[1]).toBeGreaterThan(ctx.arc.mock.calls.at(-1)[1]);
+  const before=ctx.arc.mock.calls.at(-2)[1];
+  view.rerender(<LolaParallelFlowChart line={line} samples={samples} unit="MW" animated animationSpeed={.25}/>);
+  tick(1050);
+  expect(ctx.arc.mock.calls.at(-2)[1]).toBeCloseTo(before); // no phase jump or canvas restart
+  tick(1100);
+  expect(ctx.arc.mock.calls.at(-2)[1]-before).toBeCloseTo(52*.05*.25/1.4);
   fireEvent.change(screen.getByLabelText('History inspected period'),{target:{value:'1'}});
   expect(screen.getByText(/B → A/)).toBeInTheDocument();
   view.unmount();expect(callbacks.size).toBe(0);

@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { assetFacts, nodePortfolio, recordName } from '../atlasPresentation';
-import { getConnectionCapacity } from '../connectionCapacity';
+import { getConnectionCapacity, formatCapacity } from '../connectionCapacity';
 import { buildGeoJsonPopupContent } from '../assetDetailContent';
+import { scenarioPreviewContent } from '../scenarioPreviewContent';
 
 const tabs = [['overview', 'Overview'], ['costs', 'Costs'], ['time', 'Time-series']];
 let inspectorSequence = 0;
 
-export default function AtlasAssetInspector({ selection, facilities, connections, onSelect }) {
+export default function AtlasAssetInspector({ selection, facilities, connections, onSelect, onAskModify }) {
   const [tab, setTab] = useState('overview');
   const id = useRef(null);
   if (!id.current) id.current = `atlas-inspector-${++inspectorSequence}`;
@@ -59,7 +60,10 @@ export default function AtlasAssetInspector({ selection, facilities, connections
       {/* The shared formatter escapes every source value before returning HTML. */}
       {(selection.kind !== 'link' || tab !== 'overview') && <div className="atlas-inspect-context" dangerouslySetInnerHTML={{ __html: content }} />}
       {tab === 'overview' && <>
-        {Number.isFinite(record.atlas_result_value) && <div className="atlas-inspect-rating"><span>{record.atlas_result_label || 'Displayed result'}</span><strong>{record.atlas_result_value.toLocaleString()} <small>{record.atlas_result_unit || ''}</small></strong><p>{record.atlas_result_period || ''}</p></div>}
+        {selection.kind === 'link' && record.scenario_preview && <div dangerouslySetInnerHTML={{ __html: scenarioPreviewContent(record.scenario_preview) }} />}
+        {record.operational_state?.status === 'disabled' && <div className="atlas-inspect-rating" role="status"><strong>Disabled</strong><p>{record.operational_state.reason} · {record.source_model_name || record.source_model_version}</p></div>}
+        {selection.kind === 'link' && record.source_model_project && sourceLinkIds.length === 1 && onAskModify && <button type="button" className="atlas-inspect-link" onClick={onAskModify}>Ask Emil to modify this line</button>}
+        {Number.isFinite(record.atlas_result_value) && <div className="atlas-inspect-rating"><span>{record.atlas_result_label || 'Displayed result'}</span><strong>{formatCapacity(record.atlas_result_value)} <small>{record.atlas_result_unit || ''}</small></strong><p>{record.atlas_result_period || ''}</p></div>}
         {rating && <div className="atlas-inspect-rating"><span>{rating.kind}</span><strong>{rating.value.toLocaleString()} <small>{rating.units}</small></strong><p>Nominal rating, not spare connection capacity</p></div>}
         <dl className="atlas-inspect-facts">
           <div><dt>Source</dt><dd>{String(facts.source)}</dd></div>

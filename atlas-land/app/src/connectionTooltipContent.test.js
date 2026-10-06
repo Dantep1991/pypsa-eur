@@ -23,3 +23,15 @@ test('names, endpoint IDs, labels and units are escaped and missing results are 
   expect(root.querySelector('img')).toBeNull(); expect(root.textContent).toContain(name);
   expect(root.textContent).not.toContain('Result0');
 });
+test('disabled tooltip names persisted zero-capacity evidence and model scope', () => {
+  const html = connectionTooltipContent({ name: 'A-B', source_model_name: 'Branch', operational_state: {
+    status: 'disabled', reason: 'Max Flow = 0 and Min Flow = 0' } });
+  expect(html).toContain('Disabled — zero capacity');
+  expect(html).toContain('Branch');
+  expect(html).toContain('Max Flow = 0 and Min Flow = 0');
+});
+
+test('derived tooltip values retain small percentages and negative nonzero results', () => {
+  expect(connectionTooltipContent({ atlas_result_value: 0.0014045, atlas_result_unit: '%', atlas_result_label: 'Share' }, null)).toContain('0.0014 %');
+  expect(connectionTooltipContent({ atlas_result_value: -0.0000007, atlas_result_unit: '%', atlas_result_label: 'Change' }, null)).toContain('-7E-7 %');
+});

@@ -35,3 +35,13 @@ test('two views share one scale and have distinct labelled slider identities', (
   fireEvent.input(sliders[0], { target: { value: '200' } });
   sliders.forEach(slider => expect(slider).toHaveValue('200'));
 });
+
+test('the same control supports pie sizing with an accessible name and reset', () => {
+  const onChange = jest.fn();
+  render(<ResultMarkerSizeControl label="Pie size" value={1.5} onChange={onChange} />);
+  const slider = screen.getByRole('slider', { name: 'Pie size' });
+  fireEvent.input(slider, { target: { value: '200' } });
+  expect(onChange).toHaveBeenLastCalledWith(2);
+  fireEvent.click(screen.getByRole('button', { name: 'Reset pie size' }));
+  expect(onChange).toHaveBeenLastCalledWith(1);
+});

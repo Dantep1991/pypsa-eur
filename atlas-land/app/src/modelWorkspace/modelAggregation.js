@@ -28,11 +28,30 @@ export function regionAssignment(catalog, schemeId, regionIds, countries) {
   if (!scheme) throw new Error('Choose a registered Geography region scheme.');
   const selected = new Set(regionIds), assignment = new Map();
   if (regionIds.some(id => !scheme.regions.some(item => item.id === id))) throw new Error('Unknown region in this scheme.');
+  // Published planning groups are often overlapping, not a partition. Combine
+  // connected selections in this visual projection only, never duplicate nodes
+  // or alter the canonical Geography definitions. Stable across selection order.
+  const groups = [];
   scheme.regions.filter(region => selected.has(region.id)).forEach(region => {
-    region.countries.filter(country => countries.includes(country)).forEach(country => {
-      if (assignment.has(country)) throw new Error(`Regions overlap at ${country}. Choose non-overlapping regions.`);
-      assignment.set(country, region);
+    const members = new Set(region.countries.filter(country => countries.includes(country)));
+    if (!members.size) return;
+    const overlaps = groups.filter(group => [...members].some(country => group.countries.has(country)));
+    const combined = { regions: [region], countries: members };
+    overlaps.forEach(group => {
+      combined.regions.push(...group.regions);
+      group.countries.forEach(country => combined.countries.add(country));
+      groups.splice(groups.indexOf(group), 1);
     });
+    groups.push(combined);
+  });
+  groups.forEach(group => {
+    const members = group.regions.sort((a, b) => a.id.localeCompare(b.id));
+    const region = members.length === 1 ? members[0] : {
+      id: `combined:${JSON.stringify(members.map(item => item.id))}`,
+      name: members.map(item => item.name).join(' + '),
+      countries: [...group.countries].sort(), source_regions: members.map(item => item.id), visual_union: true,
+    };
+    group.countries.forEach(country => assignment.set(country, region));
   });
   if (!assignment.size) throw new Error('Choose a region containing countries in this model.');
   return assignment;
@@ -40,22 +59,34 @@ export function regionAssignment(catalog, schemeId, regionIds, countries) {
 
 export function buildModelAggregation(scene, level, options = {}) {
   if (!scene?.meta?.projectId || !scene.meta.version || !scene.meta.aggregationCatalog) throw new Error('Load the version-bound Geography crosswalk first.');
-  if (!['bidding_zone', 'country', 'regional'].includes(level)) throw new Error('This view cannot split the native model into a finer topology.');
+  if (!['bidding_zone', 'country', 'regional', 'mixed'].includes(level)) throw new Error('This view cannot split the native model into a finer topology.');
   const catalog = scene.meta.aggregationCatalog;
   const nativeIndex = GEOGRAPHY_LEVELS.findIndex(([id]) => id === catalog.native_resolution);
   const requestedIndex = GEOGRAPHY_LEVELS.findIndex(([id]) => id === level);
   if (level === 'bidding_zone' && nativeIndex < 0) throw new Error('Native resolution is not declared; bidding-zone projection is unavailable.');
-  if (nativeIndex > requestedIndex) throw new Error('This would split the native topology into a finer geography.');
+  if (level !== 'mixed' && nativeIndex > requestedIndex) throw new Error('This would split the native topology into a finer geography.');
+  const resolutions = level === 'mixed' ? options.resolutionByCountry : null;
+  if (level === 'mixed') {
+    if (!resolutions || typeof resolutions !== 'object' || Array.isArray(resolutions)) throw new Error('Choose the resolution for each model country.');
+    Object.values(resolutions).forEach(tier => {
+      if (!['native', 'bidding_zone', 'country', 'regional'].includes(tier)) throw new Error('Choose a supported mixed-view granularity.');
+      const tierIndex = GEOGRAPHY_LEVELS.findIndex(([id]) => id === tier);
+      if (tier !== 'native' && (nativeIndex > tierIndex || (tier === 'bidding_zone' && nativeIndex < 0))) throw new Error('This would split the native topology into a finer geography.');
+    });
+  }
   const sourceNodes = scene.facilities.filter(node => node.component_type === 'Bus');
-  const regions = level === 'regional' ? regionAssignment(catalog, options.schemeId, options.regionIds || [], scene.meta.countries) : new Map();
+  const regionalCountries = resolutions ? scene.meta.countries.filter(country => resolutions[country] === 'regional') : scene.meta.countries;
+  const regions = level === 'regional' || regionalCountries.some(country => resolutions?.[country] === 'regional')
+    ? regionAssignment(catalog, options.schemeId, options.regionIds || [], regionalCountries) : new Map();
   const nodeGroups = new Map(), nodeMap = new Map(), missing = [];
   for (const node of sourceNodes) {
+    const requestedTier = resolutions ? resolutions[node.country] || 'native' : level;
     const member = regions.get(node.country);
-    const group = level === 'bidding_zone' ? node.bidding_zone
+    const group = requestedTier === 'native' ? '' : requestedTier === 'bidding_zone' ? node.bidding_zone
       : member ? member.id : node.country;
-    const tier = level === 'regional' && !member ? 'country' : level;
+    const tier = requestedTier === 'regional' && !member ? 'country' : requestedTier;
     const key = group ? `${tier}:${group}` : `native:${node.id}`;
-    if (!group) missing.push(node.id);
+    if (!group && requestedTier !== 'native') missing.push(node.id);
     if (!nodeGroups.has(key)) nodeGroups.set(key, { key, tier: group ? tier : 'native', label: member?.name || group || node.name, members: [] });
     nodeGroups.get(key).members.push(node);
   }
@@ -80,7 +111,8 @@ export function buildModelAggregation(scene, level, options = {}) {
   // position changes; intensities, prices and unknown capacities are not summed.
   const assets = scene.facilities.filter(item => item.component_type !== 'Bus').map(asset => {
     const bus = nodeMap.get(asset.bus);
-    return bus ? { ...asset, bus: bus.id, latitude: bus.latitude, longitude: bus.longitude,
+    return bus ? { ...asset, source_bus: asset.bus, bus: bus.id, bus_label: bus.name,
+      locationKey: bus.id, latitude: bus.latitude, longitude: bus.longitude,
       atlas_source_ids: [asset.id], atlas_resolution_tier: bus.atlas_resolution_tier } : asset;
   });
   const groups = new Map(), internalized = [], unmapped = [];
@@ -99,6 +131,8 @@ export function buildModelAggregation(scene, level, options = {}) {
     return { ...group.members[0].line, id: keyId('link', key),
       name: `${nodes.find(node => node.id === group.from).name} ⇄ ${nodes.find(node => node.id === group.to).name}`,
       from: group.from, fromNode: group.from, to: group.to, toNode: group.to,
+      from_label: nodes.find(node => node.id === group.from).name,
+      to_label: nodes.find(node => node.id === group.to).name,
       p_nom: allCapacity ? group.members.reduce((sum, item) => sum + Number(item.line.p_nom), 0) : null,
       atlas_source_ids: ids, atlas_source_count: ids.length,
       atlas_source_directions: Object.fromEntries(group.members.map(item => [item.line.id, item.sign])),
@@ -110,7 +144,8 @@ export function buildModelAggregation(scene, level, options = {}) {
     meta: { ...scene.meta, preview: { counts: { sourceNodes: sourceNodes.length, projectedNodes: nodes.length,
       sourceLinks: scene.connections.length, projectedLinks: connections.length, internalizedLinks: internalized.length },
       internalized, unmapped, missingMappings: missing,
-      label: `${GEOGRAPHY_LEVELS.find(item => item[0] === level)[1]} · visual aggregation`,
+      ...(options.profile ? { profile: options.profile } : {}),
+      label: `${GEOGRAPHY_LEVELS.find(item => item[0] === level)?.[1] || 'Mixed resolution'} · visual aggregation`,
       capabilities: { mutatesSource: false, executable: false, canDisaggregate: false } } } };
 }
 
@@ -119,6 +154,20 @@ export function reapplyModelAggregation(scene, previous) {
   if (!aggregation || aggregation.catalog.project_id !== scene.meta.projectId
       || aggregation.catalog.model_version !== scene.meta.version || !scene.meta.aggregationCatalog) return null;
   return buildModelAggregation(scene, aggregation.level, aggregation.options);
+}
+
+// Show the countries actually grouped in this view, not every member of the
+// published region (some may be absent or use a finer mixed-resolution tier).
+export function modelAggregationRegions(preview) {
+  const assignments = preview?.aggregation?.regions;
+  if (!(assignments instanceof Map)) return [];
+  const groups = new Map();
+  assignments.forEach((region, country) => {
+    if (!groups.has(region.id)) groups.set(region.id, { id: region.id, name: region.name, countryCodes: [] });
+    groups.get(region.id).countryCodes.push(country);
+  });
+  return [...groups.values()].sort((a, b) => a.id.localeCompare(b.id))
+    .map(group => ({ ...group, countryCodes: group.countryCodes.sort() }));
 }
 
 export function projectAggregatedFlowFrame(frame, preview) {
@@ -167,8 +216,27 @@ export function projectAggregatedFlowFrame(frame, preview) {
 
 export function projectAggregatedAssetFrame(frame, preview) {
   if (!frame || !preview?.aggregation) return frame;
-  return { ...frame, markers: frame.markers.map(marker => {
-    const node = preview.aggregation.nodeMap.get(marker.nodes?.[0]?.id);
-    return node ? { ...marker, position: [node.latitude, node.longitude], nodes: [node] } : marker;
-  }) };
+  const groups = new Map();
+  for (const marker of frame.markers) {
+    // Asset API IDs encode class/category/name. Resolve their explicit Node
+    // memberships and registered display anchors, not a plant-name prefix.
+    const projected = (marker.nodes || []).map(node => preview.aggregation.nodeMap.get(node.position?.canonical_reference || node.id)
+      || (node.class_name === 'Node' ? preview.aggregation.nodeMap.get(`Node:${node.name}`) : null) || node)
+      .filter((node, index, all) => all.findIndex(other => other.id === node.id) === index);
+    const node = projected.find(node => finite(node.latitude) && finite(node.longitude));
+    const position = node ? [node.latitude, node.longitude] : marker.position;
+    const key = JSON.stringify(position);
+    const previous = groups.get(key);
+    if (!previous) groups.set(key, { ...marker, position, nodes: projected,
+      objects: [...(marker.objects || [])] });
+    else {
+      projected.forEach(item => { if (!previous.nodes.some(other => other.id === item.id)) previous.nodes.push(item); });
+      (marker.objects || []).forEach(item => { if (!previous.objects.some(other => other.id === item.id)) previous.objects.push(item); });
+      previous.maximum = Math.max(previous.maximum || 0, marker.maximum || 0);
+      previous.measured = previous.objects.filter(item => Number.isFinite(item.measurement?.value)).length;
+    }
+  }
+  // Keep asset measurements distinct: a geography change is not permission to
+  // sum prices, intensities or incompatible units. One inspectable marker/site.
+  return { ...frame, markers: [...groups.values()] };
 }

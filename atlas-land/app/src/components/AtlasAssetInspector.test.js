@@ -50,3 +50,14 @@ test('untrusted source strings are rendered as text, not markup', () => {
   expect(view.container.querySelector('script')).toBeNull();
   expect(view.getByRole('tabpanel')).toHaveTextContent('<script>bad()</script>');
 });
+
+test('confirmed outage is visible and modification hands off without writing', () => {
+  const modify = jest.fn();
+  const record = { ...edge, id: 'Line:A-B', name: 'A-B', component_type: 'Line', source_model_project: 'Fixture', source_model_version: 'v2', source_model_name: 'Branch',
+    operational_state: { status: 'disabled', reason: 'Max Flow = 0 and Min Flow = 0' } };
+  const view = render(<AtlasAssetInspector {...props} selection={{ kind: 'link', record }} onAskModify={modify} />);
+  expect(view.getByRole('status')).toHaveTextContent('Disabled');
+  expect(view.getByRole('status')).toHaveTextContent('Branch');
+  fireEvent.click(view.getByRole('button', { name: 'Ask Emil to modify this line' }));
+  expect(modify).toHaveBeenCalledTimes(1);
+});

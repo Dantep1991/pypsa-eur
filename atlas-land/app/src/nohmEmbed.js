@@ -29,6 +29,7 @@ export const NOHM_ATLAS_PORTAL_TARGETS = Object.freeze([
   'model-operations',
   'model-runs',
   'visualisation',
+  'synapse-network',
   'analysis',
   'climate',
   'commodity',
@@ -116,7 +117,11 @@ export function announceNohmAtlasViewState(payload, targetWindow = window) {
 export function normalizeNohmAtlasWorkspaceContext(context) {
   if (!context || typeof context !== 'object') return null;
   const projectId = optionalText(context.projectId);
-  const mode = projectId ? 'model' : 'reference';
+  const networkCatalogue = projectId && context.mode === 'catalogue'
+    && context.networkCatalogue?.id === 'pypsa-eur'
+    && context.networkCatalogue?.projectId === projectId
+    ? { id: 'pypsa-eur', projectId } : null;
+  const mode = networkCatalogue ? 'catalogue' : projectId ? 'model' : 'reference';
   const geography = context.nativeGeography && typeof context.nativeGeography === 'object'
     ? {
       id: optionalText(context.nativeGeography.id) || 'model-native',
@@ -127,8 +132,10 @@ export function normalizeNohmAtlasWorkspaceContext(context) {
   return {
     mode,
     projectId,
+    ...(networkCatalogue ? { networkCatalogue } : {}),
     projectName: optionalText(context.projectName) || projectId || 'Reference Atlas',
     modelId: optionalText(context.modelId),
+    ...(optionalText(context.modelName) ? { modelName: optionalText(context.modelName) } : {}),
     version: optionalText(context.version),
     scenario: optionalText(context.scenario),
     nativeGeography: geography,
@@ -142,9 +149,11 @@ export function readNohmAtlasWorkspaceContextFromLocation(location) {
   if (params.get('nohm-context') !== '1') return null;
   return normalizeNohmAtlasWorkspaceContext({
     mode: params.get('mode'),
+    networkCatalogue: { id: params.get('networkCatalogue'), projectId: params.get('catalogueProject') },
     projectId: params.get('project'),
     projectName: params.get('projectName'),
     modelId: params.get('model'),
+    modelName: params.get('modelName'),
     version: params.get('version'),
     scenario: params.get('scenario'),
     nativeGeography: {
@@ -158,13 +167,16 @@ export function readNohmAtlasWorkspaceContextFromLocation(location) {
 export function normalizeNohmAtlasRunState(value) {
   const projectId = optionalText(value?.projectId);
   const modelVersion = optionalText(value?.modelVersion);
+  const modelName = optionalText(value?.modelName);
   const allowedStatuses = ['idle', 'prepared', 'running', 'verifying', 'completed', 'failed', 'orphaned', 'unknown'];
   const status = allowedStatuses.includes(value?.status) ? value.status : null;
   const runCount = Number(value?.runCount);
   const activeCount = Number(value?.activeCount);
+  const versionActiveCount = Number(value?.versionActiveCount ?? activeCount);
   if (!projectId || !modelVersion || !status
       || !Number.isSafeInteger(runCount) || runCount < 0
-      || !Number.isSafeInteger(activeCount) || activeCount < 0 || activeCount > runCount) return null;
+      || !Number.isSafeInteger(activeCount) || activeCount < 0 || activeCount > runCount
+      || !Number.isSafeInteger(versionActiveCount) || versionActiveCount < activeCount) return null;
   const latestSource = value?.latest && typeof value.latest === 'object' ? value.latest : null;
   const latest = latestSource ? {
     runId: optionalText(latestSource.runId),
@@ -179,13 +191,15 @@ export function normalizeNohmAtlasRunState(value) {
     outputVerified: latestSource.outputVerified === true,
     resultIdentity: optionalText(latestSource.resultIdentity),
   } : null;
-  if (latest && !latest.runId) return null;
+  if (latest && (!latest.runId || (modelName && latest.modelName !== modelName))) return null;
   return {
     projectId,
     modelVersion,
+    modelName,
     status,
     runCount,
     activeCount,
+    versionActiveCount,
     refreshedAt: optionalText(value.refreshedAt),
     latest,
     verifiedResultReceipt: optionalText(value.verifiedResultReceipt),
@@ -295,6 +309,8 @@ export function announceNohmModelScene(scene, targetWindow = window) {
     source: 'nohm-atlas',
     projectId,
     version,
+    ...(optionalText(scene?.modelName) ? { modelName: optionalText(scene.modelName) } : {}),
+    ...(Array.isArray(scene?.assetClasses) ? { assetClasses: scene.assetClasses } : {}),
     selectedYear,
     nodeCount,
     linkCount,
@@ -428,7 +444,8 @@ export function startNohmEmbedBridge(targetWindow = window, { onDomainChange, on
       const context = targetWindow.__NOHM_ATLAS_WORKSPACE_CONTEXT__;
       if (!runState || context?.mode !== 'model'
           || runState.projectId !== context.projectId
-          || (context.version && runState.modelVersion !== context.version)) return;
+          || (context.version && runState.modelVersion !== context.version)
+          || (runState.modelName || null) !== (context.modelName || null)) return;
       if (typeof targetWindow.CustomEvent === 'function') {
         targetWindow.dispatchEvent(new targetWindow.CustomEvent(NOHM_ATLAS_RUN_STATE_EVENT, {
           detail: { runState },

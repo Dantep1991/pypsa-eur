@@ -1,7 +1,9 @@
 .model-aggregation-controls { color:var(--text-primary); background:var(--control-surface); }
 .model-aggregation-controls select,.model-aggregation-controls option { background:var(--control-surface-strong); color:var(--text-primary); }
-.model-aggregation-controls button { background:var(--accent-primary); color:var(--text-on-accent); border-color:var(--accent-primary); }
-.model-aggregation-controls button:disabled { opacity:.45; }
+.model-aggregation-controls .model-aggregation-apply { background:var(--accent-primary); color:var(--text-on-accent); border-color:var(--accent-primary); opacity:1; min-height:38px; }
+.model-aggregation-controls .model-aggregation-apply:hover:not(:disabled) { background:var(--accent-primary-hover); }
+.model-aggregation-controls .model-aggregation-apply:disabled { background:var(--control-surface-strong); color:var(--text-muted); border-color:var(--border-subtle); cursor:not-allowed; }
+.model-aggregation-controls small { display:block; color:var(--text-muted); line-height:1.5; }
 .model-aggregation-controls input { accent-color:var(--accent-primary); }
 .model-aggregation-controls [role=alert] { color:var(--accent-error); }
 .model-aggregation-controls a { color:var(--accent-primary-text); }

@@ -53,6 +53,7 @@ export const ATLAS_COUNTRY_GROUPS = [
 ];
 
 export const ATLAS_AGENT_CAPABILITY_SECTIONS = [
+  { label: 'Solved-result analysis handoff', controls: 'Existing reported Results and numerical comparison displays use live agentWorkspaces controls. For new calculated metrics (including full-load hours) or explanatory/deep/shallow comparative reasoning, use delegate_to_agent. Emil can read the exact selected result source, calculate new properties, show them on this map, save produced data, and analyse both comparison sources. Do not turn an analysis into an asset mutation or a capture_comparison_baseline action. Capture baseline is only for a visual scene comparison, not numerical model-result analysis.' },
   { label: 'Presentation and evidence', controls: 'Present and exit; save, restore, delete and advance named scenes; capture a comparison baseline and compare; move the comparison divider; inspect assets; configure and screen candidate sites; show site evidence; undo the last AI map change' },
   {
     label: 'Geography',
@@ -216,6 +217,7 @@ export const extractAtlasCountryCodes = (input) => {
 export const normalizeAtlasResolution = (input) => {
   const text = normalizeText(input);
   if (!text) return '';
+  if (['native', 'country', 'regional'].includes(text)) return text;
   if (/\b(?:full|nodal|node level|220\s*kv)\b/.test(text)) return 'full';
   if (/\bnuts\s*3\b/.test(text)) return 'nuts3';
   if (/\bnuts\s*2\b/.test(text)) return 'nuts2';

@@ -1,5 +1,4 @@
 .atlas-experience { position:absolute; inset:0; z-index:710; pointer-events:none; color:var(--atlas-map-text); font-size:12px; }
-.atlas-presentation-active div:has(> [aria-label="Map layers and display"]) { display:none; }
 .atlas-experience button,.atlas-experience input { font:inherit; color:inherit; }
 .atlas-experience button { cursor:pointer; border:1px solid #738a9b66; border-radius:8px; background:var(--atlas-map-surface-solid); padding:8px 11px; min-height:36px; }
 .atlas-experience button:hover,.atlas-experience button[aria-pressed=true] { border-color:#14b8a6; background:color-mix(in srgb, var(--atlas-map-surface-solid) 85%, #14b8a6); }
@@ -19,8 +18,6 @@
 .atlas-experience-panel details { margin-top:12px; overflow-wrap:anywhere; }
 .atlas-scene { display:flex; gap:5px; margin:6px 0; }.atlas-scene button:first-child { flex:1; text-align:left; }
 .atlas-site { margin:12px 0; border-top:1px solid #738a9b66; padding-top:12px; }
-.atlas-presentation-title { position:absolute; top:75px; left:18px; display:flex; flex-direction:column; gap:5px; max-width:60%; padding:12px; border-radius:10px; background:var(--atlas-map-surface); }
-.atlas-presentation-title strong { letter-spacing:.16em; color:#14b8a6; }
 .atlas-presentation-legend { position:absolute; left:18px; bottom:112px; padding:10px; display:flex; gap:12px; flex-wrap:wrap; max-width:65%; background:var(--atlas-map-surface); border-radius:10px; }
 .atlas-presentation-legend i { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; }
 .atlas-activity { position:absolute; bottom:112px; left:16px; width:320px; max-width:50%; background:var(--atlas-map-surface); border:1px solid #14b8a6; padding:12px; border-radius:12px; pointer-events:auto; }
@@ -30,13 +27,13 @@
 .atlas-comparing ~ [aria-label="Connection capacity legend"] { display:none; }
 .atlas-comparing .leaflet-region-overlay-pane,.atlas-comparing .leaflet-land-country-context-pane { visibility:hidden; }
 .atlas-experience-bar,.atlas-experience-panel,.atlas-activity { z-index:3; }
-.atlas-presentation-title,.atlas-presentation-legend { z-index:2; }
+.atlas-presentation-legend { z-index:2; }
 .atlas-experience-panel progress { width:100%; accent-color:#14b8a6; }
 .atlas-comparison-divider { position:absolute; top:0; bottom:0; width:2px; background:#f8fafc; box-shadow:0 0 3px #000; }
 .atlas-comparison-slider { position:absolute; bottom:155px; left:10%; width:80%; pointer-events:auto; }
 .atlas-comparison-labels { position:absolute; top:135px; left:20px; right:20px; display:flex; justify-content:space-between; }.atlas-comparison-labels span { background:var(--atlas-map-surface); padding:8px; border-radius:8px; }
 .atlas-comparing .leaflet-overlay-pane,.atlas-comparing .leaflet-marker-pane,.atlas-comparing .leaflet-shadow-pane,.atlas-comparing .leaflet-tooltip-pane,.atlas-comparing .leaflet-popup-pane,.atlas-comparing .leaflet-network-nodes-pane,.atlas-comparing .leaflet-network-boundaries-pane,.atlas-comparing .leaflet-loaded-country-context-pane,.atlas-comparing .leaflet-generation-mix-pane,.atlas-comparing .leaflet-grid-access-sites-pane,.atlas-comparing .leaflet-land-constraints-pane,.atlas-comparing .leaflet-regional-clusters-pane { visibility:hidden; }
-@media (max-width:640px) { .atlas-experience-panel { right:12px; max-width:calc(100% - 24px); top:180px; }.atlas-experience-bar { bottom:55px; }.atlas-activity { max-width:75%; }.atlas-presentation-title { max-width:85%; font-size:10px; } }
+@media (max-width:640px) { .atlas-experience-panel { right:12px; max-width:calc(100% - 24px); top:180px; }.atlas-experience-bar { bottom:55px; }.atlas-activity { max-width:75%; } }
 
 .atlas-experience-panel.atlas-inspect-panel {
   top: 96px;

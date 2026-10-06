@@ -1,0 +1,23 @@
+.distillation-workflow { display:grid; gap:12px; color:var(--text-primary); font-size:13px; line-height:1.5; }
+.distillation-workflow p { margin:0; }
+.distillation-workflow label { display:grid; gap:5px; font-weight:600; }
+.distill-selectors { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.distill-selection { min-width:0; }
+.distillation-workflow select, .distillation-workflow input { width:100%; min-width:0; padding:9px; font-size:13px; color:var(--text-primary); background:var(--control-surface); border:1px solid var(--border-strong); border-radius:var(--radius-md); }
+.distill-chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+.distill-chips button { padding:4px 8px; border:1px solid var(--border-strong); border-radius:var(--radius-md); background:var(--control-surface); color:var(--text-primary); }
+.distillation-workflow small { font-size:12px; color:var(--text-muted); }
+.distillation-workflow button.atlas-primary-action { padding:10px; border-radius:var(--radius-md); background:var(--accent-primary); color:var(--text-on-accent); font-weight:600; border:1px solid var(--accent-primary); }
+.distillation-workflow button:disabled { opacity:.5; cursor:not-allowed; }
+.distill-job { display:grid; gap:10px; border-top:1px solid var(--border-subtle); padding-top:12px; }
+.distill-job progress { width:100%; height:8px; accent-color:var(--accent-primary); }
+.distill-job dl { display:grid; gap:6px; margin:0; }
+.distill-job dl > div { display:flex; gap:10px; justify-content:space-between; }
+.distill-job dt { color:var(--text-muted); }
+.distill-job dd { margin:0; font-variant-numeric:tabular-nums; }
+.distill-job details { padding:8px; border:1px solid var(--border-strong); border-radius:var(--radius-md); }
+.distill-job details ul { padding-left:18px; margin:6px 0 0; }
+.distill-job li + li { margin-top:6px; }
+.distillation-workflow [role=alert] { color:var(--status-failed); }
+.distill-saved { display:grid; gap:6px; }
+.distill-saved span { overflow-wrap:anywhere; font-size:12px; color:var(--text-muted); }

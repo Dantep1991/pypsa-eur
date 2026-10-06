@@ -8,6 +8,9 @@ const voiceBase = String(
   process.env.NOHM_ATLAS_VOICE_URL
     || 'http://127.0.0.1:5176/atlas-api/api/voice',
 ).replace(/\/+$/, '');
+// Exercise the same browser boundary as the live mic. Node fetch otherwise
+// omits Origin and can falsely pass when the actual preview is rejected.
+const browserOrigin = new URL(voiceBase).origin;
 const phrase = 'Show me France at NUTS3, then add Spain and display the electricity grid.';
 const requiredTerms = ['france', 'nuts3', 'spain', 'electricity', 'grid'];
 
@@ -29,6 +32,7 @@ async function checkedJson(response, operation) {
 
 async function main() {
   const status = await checkedJson(await fetch(`${voiceBase}/status`, {
+    headers: { Origin: browserOrigin },
     signal: timeoutSignal(15_000),
     cache: 'no-store',
   }), 'Voice status');
@@ -39,7 +43,7 @@ async function main() {
   const ttsStarted = performance.now();
   const speech = await fetch(`${voiceBase}/speak`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: browserOrigin },
     body: JSON.stringify({ text: phrase, assistant: 'emil' }),
     signal: timeoutSignal(45_000),
     cache: 'no-store',
@@ -59,6 +63,7 @@ async function main() {
   const sttStarted = performance.now();
   const transcript = await checkedJson(await fetch(`${voiceBase}/transcribe`, {
     method: 'POST',
+    headers: { Origin: browserOrigin },
     body: form,
     signal: timeoutSignal(75_000),
     cache: 'no-store',

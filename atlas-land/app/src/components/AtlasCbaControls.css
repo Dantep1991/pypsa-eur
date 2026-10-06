@@ -1,0 +1,13 @@
+.atlas-cba-total { display: grid; gap: .25rem; padding: .75rem; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.atlas-cba-total span, .atlas-cba-note { color: var(--text-muted); font-size: .8125rem; }
+.atlas-cba-total strong { color: var(--text-primary); font-variant-numeric: tabular-nums; font-size: 1rem; }
+.atlas-cba-note p { margin-top: .35rem; }
+.atlas-cba-key { display: flex; gap: 1rem; font-size: .8125rem; }
+.atlas-cba-key span { display: inline-flex; gap: .375rem; align-items: center; }
+.atlas-cba-key i { width: .6rem; height: .6rem; border-radius: 50%; }
+.atlas-cba-actions { display: flex; gap: .5rem; }
+.atlas-cba-actions button { border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--control-surface); color: var(--text-primary); padding: .65rem .75rem; }
+.atlas-cba-actions .atlas-cba-primary { flex: 1; background: var(--accent-primary); color: var(--text-on-accent); font-weight: 600; }
+.atlas-cba-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.atlas-cba-actions button:focus-visible, .atlas-cba-theo-link:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+.atlas-cba-theo-link { color: var(--accent-primary-text); font-size: .8125rem; }
