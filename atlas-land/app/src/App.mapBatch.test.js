@@ -134,6 +134,9 @@ beforeEach(() => {
       return response(interpreterReply || (interpreterPlan ? { provider: 'test', confidence: 0.99, actions: interpreterPlan } : {}));
     }
     if (String(url).endsWith('/api/map-agent/judge')) return response({ confidence: 0.99, ...(judgeReplies.shift() || judgeReply) });
+    if (String(url).endsWith('/api/atlas/land/status')) return response({ ready: true, countries: [
+      { code: 'BE', name: 'Belgium' }, { code: 'FR', name: 'France' },
+    ] });
     if (/\/api\/atlas\/(gas|water|liquids|logistics)\/status$/.test(String(url))) return response({ available: true, countries: ['BE', 'FR'] });
     if (/\/api\/atlas\/(gas|water|liquids|logistics)\/network\?/.test(String(url))) return response({ facilities: [], connections: [] });
     return response({ ready: true, success: true, status: 'healthy', countries: [], files: [], networks: [], data: [] });
@@ -368,6 +371,30 @@ test('explicit France land scope stays independent from the network geography', 
   act(() => frame().onLandConstraintsChange({ followMapCountries: true }));
   await flush();
   expect(frame().landConstraints.countries).toEqual(['BE']);
+});
+
+test.each([
+  { countries: ['BE', 'XK'], effective: ['BE'], ready: true, warning: 'Land shown for 1 of 2 selected countries' },
+  { countries: ['XK'], effective: [], ready: false, warning: 'No selected country has land coverage' },
+])('land agent context and reply disclose coverage for $countries without changing the requested scope', async ({ countries, effective, ready, warning }) => {
+  const view = await loadCountries(['BE']);
+  act(() => frame().onLandConstraintsChange({ enabled: true, countries, followMapCountries: false }));
+  await flush();
+  interpreterPlan = [{ intent: 'set_land_constraints', params: { countries, categories: ['forest'] } }];
+  await send(view, 'show forest land in Belgium and Kosovo');
+  act(() => jest.advanceTimersByTime(250));
+  await flush();
+  const call = global.fetch.mock.calls.find(([url]) => String(url).endsWith('/api/map-agent/interpret'));
+  expect(JSON.parse(call[1].body).mapContext.landConstraints).toMatchObject({
+    countries, ready, partial: ready,
+    effectiveCountries: effective, missingCountries: ['XK'],
+  });
+  expect(frame().landConstraints.countries).toEqual(countries);
+  // Opening the land controls temporarily hides the assistant, retaining its
+  // conversation. Verify the visible reply after returning to the assistant.
+  fireEvent.click(view.getByRole('button', { name: 'Open map assistant' }));
+  await flush();
+  expect(view.getByRole('log').textContent).toContain(warning);
 });
 
 test('ordinary camera telemetry updates live context without rerendering the application shell', async () => {

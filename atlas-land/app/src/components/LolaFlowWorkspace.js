@@ -15,7 +15,7 @@ import { FLOW_SPEED_DEFAULT, FLOW_SPEED_MIN, FLOW_SPEED_MAX, flowAnimationSpeed 
 import { useWorkspaceAgentController, useWorkspaceAgentRegistry } from '../agentWorkspace/react';
 import { boolField, enumField, numberField, textField } from '../agentWorkspace/registry';
 import { updateFlowChoice, flowChoiceMatches } from '../agentWorkspace/flow';
-import {flowPeriodIndex} from '../modelWorkspace/flowTimeline';
+import {flowDateRange, flowPeriodIndex} from '../modelWorkspace/flowTimeline';
 
 function flowViewLabel(selection = {}) {
   return [selection.className, selection.propertyName, selection.category || 'All model categories',
@@ -87,7 +87,8 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
     ? quantities.find(item => item.class_name === 'Line' && item.property_name === 'Net Flow'
       && item.available_granularities.includes('year') && item.report_family === requestedQuantity.report_family) || requestedQuantity
     : requestedQuantity?.available_granularities.includes(granularity) ? requestedQuantity : resolutionQuantity;
-  const year = choice.period || quantity?.periods?.[0] || run?.periods?.[0] || '';
+  const availablePeriods = quantity?.periods?.length ? quantity.periods : run?.periods || [];
+  const year = choice.period || availablePeriods[0] || '';
   const historyQuantity = quantity?.property_name === 'Net Flow'
     ? quantities.find(item => item.class_name === quantity.class_name && item.property_name === 'Flow'
       && item.report_family === quantity.report_family) : quantity;
@@ -105,9 +106,9 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
     limitProperties: (run?.quantities || []).filter(item => item.class_name === 'Line'
       && ['Export Limit', 'Import Limit'].includes(item.property_name)
       && item.available_granularities.includes(granularity)).map(item => item.property_name),
-    availableGranularities: resolutions, period: year,
-    dateFrom: choice.dateFrom || (year ? `${year}-01-01` : ''),
-    dateTo: choice.dateTo || (year ? `${year}-${granularity === 'hour' ? '01-01' : granularity === 'day' ? '01-07' : '12-31'}` : ''),
+    availableGranularities: resolutions, availablePeriods, period: year,
+    ...flowDateRange({period: year, granularity, dateFrom: choice.dateFrom, dateTo: choice.dateTo,
+      availablePeriods}),
     category: choice.category ?? topology?.default_category ?? '',
   };
   const className = selection.className;
@@ -193,7 +194,8 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
   const changeResolution = value => {
     if (value === selection.granularity) return;
     if (scene) pendingResolution.current = {granularity: value, period: inspectedPeriod || scene.periods[index]};
-    changeControls({granularity: value, ...(scene ? {dateFrom: selection.dateFrom, dateTo: selection.dateTo} : {})});
+    changeControls({granularity: value, ...(scene && value !== 'year'
+      ? {dateFrom: selection.dateFrom, dateTo: selection.dateTo} : {})});
   };
   const change = (key, value) => key === 'granularity' ? changeResolution(value) : changeControls({ [key]: value });
   useEffect(() => {
@@ -235,6 +237,14 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
   const busy = ['loading', 'catalog'].includes(status.state) || topologyStatus.state === 'loading';
   const settingsDiffer = scene && ['runId', 'className', 'propertyName', 'period', 'granularity', 'category', 'dateFrom', 'dateTo']
     .some(key => (scene.selection[key] || '') !== (selection[key] || ''));
+  const canPlayTimeline = Boolean(scene && scene.periods.length > 1 && !busy && !settingsDiffer);
+  const playbackUnavailable = busy ? 'Loading flow periods.' : !scene ? 'Load flows before playback.'
+    : settingsDiffer ? 'Load the selected flows before playback.' : scene.periods.length < 2
+      ? annual ? 'One annual period reported. Direction animation remains available.' : 'One period loaded. Widen the date range to play.' : '';
+  const setTimelinePlaying = value => {
+    if (value) { cancelHistoryInspect(); setInspectedPeriod(null); }
+    setPlaying(value);
+  };
   const agent = useWorkspaceAgentRegistry();
   useEffect(() => {
     if (!agent) return undefined;
@@ -268,6 +278,7 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
       category: selection.category, dateFrom: selection.dateFrom, dateTo: selection.dateTo,
       tab, animated, playing, nearCapacity, nearPercent, animationSpeed, selectedId: selectedLine?.id, index,
       selectedPeriod: inspectedPeriod || scene?.periods[index], unit: scene?.unit,
+      canPlayTimeline, playbackUnavailable, timelinePeriods: scene?.periods.length || 0,
       loading: busy, error: status.error, hasLimits: Boolean(hasLimits), nearCapacityDisabled,
       displayed: scene ? { ...scene.selection, connections: scene.lines.length, periods: scene.periods.length } : null },
   }, async (action, values) => {
@@ -288,6 +299,10 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
     if (values.period && !(nextQuantity?.periods || nextRun?.periods || []).includes(values.period)) throw new Error('That year is not reported for the selected flow quantity.');
     if (values.granularity && !nextQuantity?.available_granularities.includes(values.granularity)
       && !(nextQuantity?.property_name === 'Net Flow' && nextRun.quantities.some(row => row.class_name === 'Line' && row.property_name === 'Flow' && row.available_granularities.includes(values.granularity)))) throw new Error('That time resolution is not reported for this quantity.');
+    if ((values.granularity || granularity) === 'year' && (dataValues.dateFrom || dataValues.dateTo)) {
+      Object.assign(dataValues, flowDateRange({period:values.period || year, granularity:'year',
+        dateFrom:dataValues.dateFrom, dateTo:dataValues.dateTo, availablePeriods:nextQuantity?.periods || nextRun?.periods}));
+    }
     if (action !== 'show' && values.nearCapacity === true && nearCapacityDisabled) throw new Error(nearCapacityHelp);
     if (Object.keys(dataValues).length) {
       if (Object.keys(dataValues).length === 1 && dataValues.granularity && action === 'configure') changeResolution(dataValues.granularity);
@@ -295,7 +310,7 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
     }
     if (values.tab != null) setTab(values.tab);
     if (values.animated != null) setAnimated(values.animated);
-    if (values.playing != null) { if (values.playing && !scene) throw new Error('Load flows before playback.'); setPlaying(values.playing); }
+    if (values.playing === false) setTimelinePlaying(false);
     if (values.nearCapacity != null && action !== 'show') setNearCapacity(values.nearCapacity);
     if (values.nearPercent != null) setNearPercent(values.nearPercent);
     if (values.animationSpeed != null) setAnimationSpeed(values.animationSpeed);
@@ -309,7 +324,16 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
       if (values.tab != null) setTab(values.tab);
       if (values.nearCapacity === true && fresh.state.nearCapacityDisabled) throw new Error('Flows loaded, but comparable directional limits are unavailable or capacity-hours colouring is active.');
       if (values.nearCapacity != null) setNearCapacity(values.nearCapacity);
+      if (values.playing === true) {
+        if (!fresh.state.canPlayTimeline) throw new Error(fresh.state.playbackUnavailable);
+        setTimelinePlaying(true);
+      }
       return `${result.lines.length} connections shown.`;
+    }
+    if (values.playing === true) {
+      const fresh = agent.controllers.get('flow');
+      if (!fresh.state.canPlayTimeline) throw new Error(fresh.state.playbackUnavailable);
+      setTimelinePlaying(true);
     }
     return 'Flow controls updated.';
   });
@@ -352,9 +376,21 @@ export default function LolaFlowWorkspace({ context, modelVersion, selectedId, o
           <label>From<input aria-label="Flow start date" type="date" disabled={busy} value={selection.dateFrom} onChange={event => change('dateFrom', event.target.value)} /></label>
           <label>To<input aria-label="Flow end date" type="date" disabled={busy} value={selection.dateTo} onChange={event => change('dateTo', event.target.value)} /></label>
         </>}
+        {granularity === 'year' && quantity?.periods?.length > 1 && <>
+          <label>From year<select aria-label="Flow start year" disabled={busy} value={selection.dateFrom.slice(0,4)}
+            onChange={event => changeControls({dateFrom:`${event.target.value}-01-01`,
+              ...(event.target.value > selection.dateTo.slice(0,4) ? {dateTo:`${event.target.value}-12-31`} : {})})}>
+            {quantity.periods.map(value => <option key={value}>{value}</option>)}</select></label>
+          <label>To year<select aria-label="Flow end year" disabled={busy} value={selection.dateTo.slice(0,4)}
+            onChange={event => changeControls({dateTo:`${event.target.value}-12-31`,
+              ...(event.target.value < selection.dateFrom.slice(0,4) ? {dateFrom:`${event.target.value}-01-01`} : {})})}>
+            {quantity.periods.map(value => <option key={value}>{value}</option>)}</select></label>
+        </>}
         </div>
-        <div className="lola-flow-play-actions" hidden={!scene || scene.periods.length < 2}>
-          <button type="button" disabled={!scene || scene.periods.length < 2 || busy || settingsDiffer} onClick={() => setPlaying(value => !value)}>{playing ? 'Pause' : 'Play timeline'}</button></div>
+        <div className="lola-flow-play-actions">
+          <button type="button" disabled={!canPlayTimeline} title={playbackUnavailable || undefined}
+            onClick={() => setTimelinePlaying(!playing)}>{playing ? 'Pause' : 'Play timeline'}</button></div>
+        {scene && !busy && !settingsDiffer && scene.periods.length < 2 && <small>{playbackUnavailable}</small>}
         {scene && scene.periods.length>0 && <div className="lola-flow-timeline">
           <input aria-label="Flow period" type="range" min="0" max={Math.max(0, scene.periods.length - 1)} value={index} disabled={scene.periods.length < 2} onChange={event => { cancelHistoryInspect(); setInspectedPeriod(null); setPlaying(false); setIndex(Number(event.target.value)); }} />
           <output>{annual ? scene.periods[index]?.slice(0, 4) : scene.periods[index]?.replace('T', ' ').replace('Z', '')}</output></div>}

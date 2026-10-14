@@ -77,6 +77,15 @@ export function defaultCbaSelection(study) {
   return { studyId: study?.projectId || '', caseId, band: cbaBands(study, caseId)[0] || '', component: 'total', map: 'country' };
 }
 
+export function cbaSceneUnavailableReason(scene) {
+  if (scene.coverage?.mapped > 0) return '';
+  if (scene.coverage?.reported > 0) return 'No reported CBA values could be matched to this map’s geography.';
+  if (scene.component === 'total' && scene.reconciliation?.matched === false) {
+    return 'Total value cannot be mapped: the saved country rents do not reconcile with Δ system costs. Select an individual rent value or another assessment.';
+  }
+  return `This assessment has no saved ${scene.selection?.map === 'connections' ? 'connection' : 'country'} changes for the selected value. Select another value or assessment.`;
+}
+
 const nameKey = value => String(value || '').trim().toUpperCase().replace(/[–—]/g, '-').replace(/\s+/g, '');
 const validPoint = point => point?.lat != null && point?.lon != null && Number.isFinite(Number(point.lat))
   && Number.isFinite(Number(point.lon)) && Math.abs(point.lat) <= 90 && Math.abs(point.lon) <= 180;

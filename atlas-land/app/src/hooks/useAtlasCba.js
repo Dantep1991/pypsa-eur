@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { defaultCbaSelection, fetchCbaScene, fetchCbaStudies } from '../modelWorkspace/cbaScene';
+import { cbaSceneUnavailableReason, defaultCbaSelection, fetchCbaScene, fetchCbaStudies } from '../modelWorkspace/cbaScene';
 
 export default function useAtlasCba(context) {
   const [catalog, setCatalog] = useState({ state: 'idle', studies: [], error: '' });
@@ -47,7 +47,11 @@ export default function useAtlasCba(context) {
     try {
       const data = await fetchCbaScene(context, study, requested, { signal: controller.signal,
         onProgress: progress => { if (!controller.signal.aborted && currentKey.current === key) setStatus(previous => ({ ...previous, progress })); } });
-      if (!controller.signal.aborted && currentKey.current === key) { setStatus({ state: 'ready', data, error: '' }); return data; }
+      if (!controller.signal.aborted && currentKey.current === key) {
+        const error = cbaSceneUnavailableReason(data);
+        setStatus({ state: error ? 'unavailable' : 'ready', data, error });
+        return error ? null : data;
+      }
     } catch (error) {
       if (!controller.signal.aborted && currentKey.current === key) setStatus({ state: 'error', data: null, error: error.message });
     }

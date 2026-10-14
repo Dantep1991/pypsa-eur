@@ -52,3 +52,4 @@ describe('EMIL voice state machine', () => {
     ])).toBe('Loaded Spain at NUTS3. Verified — the observed Atlas state matches your request.');
   });
 });
+

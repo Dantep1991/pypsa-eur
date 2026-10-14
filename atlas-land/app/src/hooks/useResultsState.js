@@ -18,7 +18,7 @@ export function useResultsState({ active = true } = {}) {
     sample_name: '',
     date_resolution: 'day', // Tick-label format only; never aggregates source observations.
   });
-
+  
   // Store filter options from API (all unique values from entire file)
   const { resultsAnalysis, resultsData, resultsLoading, resultsError, resultsPagination,
     resultsFilterOptions, retryResults } = useResultsData({ active, fileId: selectedParquetFile,
@@ -48,7 +48,7 @@ export function useResultsState({ active = true } = {}) {
     resultsFilters,
     setResultsFilters,
     resultsFilterOptions,
-
+    
     // Computed
     resultsTimeSeries,
     resultsUnitLabel,
@@ -57,3 +57,4 @@ export function useResultsState({ active = true } = {}) {
     setResultsChartGroup,
   };
 }
+

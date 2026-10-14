@@ -97,3 +97,10 @@ test('requires geography and lets a user cancel a slow request', async () => {
   expect(await screen.findByText(/Clustering cancelled/i)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Build regional clusters' })).toBeEnabled();
 });
+
+test('building indicator clusters hands the complete assignments to geographic aggregation',async()=>{
+  const request=jest.fn();
+  render(<RegionalClusteringControls countryCodes={['ES']} onOverlayChange={jest.fn()} onNetworkRequest={request}/>);
+  fireEvent.click(screen.getByRole('button',{name:'Build regional clusters'}));
+  await waitFor(()=>expect(request).toHaveBeenCalledWith(clusterPayload));
+});

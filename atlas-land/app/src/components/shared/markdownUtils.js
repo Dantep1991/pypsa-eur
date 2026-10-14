@@ -28,3 +28,4 @@ export const renderMarkdown = (text) => {
   const html = markdownToBasicHtml(text);
   return React.createElement('div', { dangerouslySetInnerHTML: { __html: html } });
 };
+

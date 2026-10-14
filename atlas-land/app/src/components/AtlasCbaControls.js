@@ -63,14 +63,14 @@ export default function AtlasCbaControls({ catalog, selection, onSelectionChange
     <p className="atlas-cba-note">{selection.component === 'total' ? 'Lower system costs are favourable.' : 'Higher rents are favourable for the selected group.'}</p>
     {busy && <div role="status" aria-label="CBA loading progress" className="atlas-results-notice">{status.progress?.phase} · {status.progress?.completed}/{status.progress?.total}</div>}
     {status.error && <div role="alert" className="atlas-results-notice is-error">{status.error}</div>}
-    {status.data && <div role="status" className="atlas-cba-note">
+    {status.data && status.state !== 'unavailable' && <div role="status" className="atlas-cba-note">
       {status.data.coverage.mapped} / {status.data.coverage.reported} {selection.map === 'country' ? 'countries' : 'connections'} mapped.
       {status.data.coverage.unmapped > 0 && <p>{status.data.coverage.unmapped} without an unambiguous geography match.</p>}
       {status.data.notes.map((note, index) => <p key={index}>{note}</p>)}
       {status.data.reconciliation && !status.data.reconciliation.matched && <p>Reconciliation gap: {formatCbaValue(status.data.reconciliation.residual)} M EUR.</p>}
       {!!status.data.warnings.length && <details><summary>Geography details</summary>{status.data.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</details>}
     </div>}
-    <div className="atlas-cba-actions"><button className="atlas-cba-primary" type="button" disabled={busy} onClick={onShow}>Show on map</button>
+    <div className="atlas-cba-actions"><button className="atlas-cba-primary" type="button" disabled={busy || status.state === 'unavailable'} onClick={onShow}>Show on map</button>
       <button type="button" onClick={onClear} disabled={busy || !status.data}>Clear</button></div>
     <a className="atlas-cba-theo-link" href={`/theo/cba/cost-benefit-analysis?project=${encodeURIComponent(study.projectId)}&assetProjectId=${encodeURIComponent(selection.caseId)}`} target="_blank" rel="noopener noreferrer">Open assessment in Theo</a>
   </div>;

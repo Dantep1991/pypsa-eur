@@ -1,4 +1,4 @@
-import { cbaBands, cbaComponents, defaultCbaSelection, fetchCbaStudies, fetchCbaScene, positionCbaAssets, positionCbaCountries } from './cbaScene';
+import { cbaBands, cbaComponents, cbaSceneUnavailableReason, defaultCbaSelection, fetchCbaStudies, fetchCbaScene, positionCbaAssets, positionCbaCountries } from './cbaScene';
 
 const study = { projectId: 'study', modelProjectId: 'model', name: 'Study', cases: ['case'],
   summary: { projects: ['case'], tscDelta: { '2050': { case: { total: 0 } }, '2040': {} }, sewDelta: { '2050': { case: { cs_elec: 0 } } } } };
@@ -83,4 +83,11 @@ test('a summary without geography does not start a model read or invent a point'
   expect(scene.points).toEqual([]);
   expect(scene.totalSystemCostDelta).toBe(-100);
   expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+
+test('empty maps explain reconciliation or geography instead of claiming success; zero-valued points remain valid', () => {
+  expect(cbaSceneUnavailableReason({ coverage: { mapped: 1 }, points: [{ value: 0 }] })).toBe('');
+  expect(cbaSceneUnavailableReason({ component: 'total', coverage: { mapped: 0, reported: 0 }, reconciliation: { matched: false } })).toContain('do not reconcile');
+  expect(cbaSceneUnavailableReason({ coverage: { mapped: 0, reported: 4 } })).toContain('geography');
+  expect(cbaSceneUnavailableReason({ coverage: { mapped: 0, reported: 0 }, selection: { map: 'connections' } })).toContain('connection changes');
 });

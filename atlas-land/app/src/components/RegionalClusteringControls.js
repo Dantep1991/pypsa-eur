@@ -3,12 +3,13 @@ import { Download, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { API_BASE_URL } from '../config/api';
 
 
-const INDICATORS = [
+export const EUROSTAT_INDICATORS = [
   { key: 'density', label: 'Population density', unit: 'people / km²', levels: [2, 3] },
   { key: 'gdp', label: 'GDP per inhabitant', unit: 'PPS', levels: [2, 3] },
   { key: 'employment', label: 'Employment rate', unit: '% · age 20–64', levels: [2] },
   { key: 'unemployment', label: 'Unemployment rate', unit: '% · age 15–74', levels: [2] },
 ];
+const INDICATORS = EUROSTAT_INDICATORS;
 
 const initialWeights = {
   density: 1,
@@ -44,7 +45,7 @@ const downloadAssignments = (result) => {
   window.setTimeout(() => URL.revokeObjectURL(href), 0);
 };
 
-export default function RegionalClusteringControls({ countryCodes = [], onOverlayChange }) {
+export default function RegionalClusteringControls({ countryCodes = [], onOverlayChange, onNetworkRequest }) {
   const [mode, setMode] = useState('multi');
   const [level, setLevel] = useState(2);
   const [year, setYear] = useState(2023);
@@ -134,6 +135,7 @@ export default function RegionalClusteringControls({ countryCodes = [], onOverla
       if (runId !== runIdRef.current) return;
       setResult({ ...payload, configurationKey });
       if (reveal) setVisible(true);
+      if (reveal) onNetworkRequest?.(payload);
       setState('ready');
       setMessage(
         `${Number(payload.meta?.mapped_regions || 0).toLocaleString()} NUTS ${level} regions clustered across ${countryKey.split(',').length} ${countryKey.includes(',') ? 'countries' : 'country'}.`,
@@ -320,9 +322,9 @@ export default function RegionalClusteringControls({ countryCodes = [], onOverla
           <input
             type="number"
             min="2"
-            max="8"
+            max="2048"
             value={clusterCount}
-            onChange={(event) => setClusterCount(Math.min(8, Math.max(2, Number(event.target.value) || 2)))}
+            onChange={(event) => setClusterCount(Math.min(2048, Math.max(2, Math.trunc(Number(event.target.value)) || 2)))}
             className="w-full rounded-lg border border-white/10 bg-[#081523] px-2.5 py-2 text-[11px] text-white focus:border-tj-gold/50 focus:outline-none"
             aria-label="Number of regional clusters"
           />

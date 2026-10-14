@@ -2,7 +2,7 @@ import { atlasApiUrl } from '../config/api';
 import { validatedResultRows } from './resultScene';
 import { subtractReverseFlow } from './annualFlow';
 import { flowPeriodMetrics } from './flowPeriodMetrics';
-import {flowRangeWindows, mergeFlowWindows} from './flowTimeline';
+import {flowDateRange, flowRangeWindows, mergeFlowWindows} from './flowTimeline';
 import {unpackFlowResponse} from './flowQueryResponse';
 export { compatibleFlowLimit, flowUtilisation } from './flowPeriodMetrics';
 
@@ -137,6 +137,7 @@ export async function fetchLolaFlowScene(context, selection, options = {}, fetch
     throw new Error('Choose a supported flow quantity from a run bound to the loaded model version.');
   }
   if (!selection.availableGranularities?.includes(selection.granularity)) throw new Error('That time resolution is not reported for this quantity.');
+  if (selection.granularity === 'year') selection = {...selection, ...flowDateRange(selection)};
   if (selection.dateFrom && selection.dateTo && Date.parse(selection.dateFrom) > Date.parse(selection.dateTo)) throw new Error('The flow date range is reversed.');
   const read = async (url, init) => {
     const response = await fetchImpl(atlasApiUrl(url, options.apiBase), { credentials: 'same-origin', signal: options.signal, ...init });
