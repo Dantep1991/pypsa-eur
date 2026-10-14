@@ -1,4 +1,26 @@
 // UTC bucket identity shared by the map and connection history. No interpolation.
+export function flowDateRange(selection) {
+  const year = String(selection.period || '');
+  if (selection.granularity === 'year') {
+    const first = String(selection.dateFrom || year).slice(0, 4);
+    const last = String(selection.dateTo || year).slice(0, 4);
+    if (![first, last].every(value => /^\d{4}$/.test(value)) || first > last) {
+      throw new Error('Choose a valid annual flow year range.');
+    }
+    const available = selection.availablePeriods || [year];
+    if (![first, last].every(value => available.includes(value))) {
+      throw new Error('Choose annual years reported by the selected flow quantity.');
+    }
+    // Native annual observations are anchored at January 1, not at the
+    // previously inspected month/day. Never filter them with a partial year.
+    return {dateFrom: `${first}-01-01`, dateTo: `${last}-12-31`};
+  }
+  return {
+    dateFrom: selection.dateFrom || (year ? `${year}-01-01` : ''),
+    dateTo: selection.dateTo || (year ? `${year}-${selection.granularity === 'hour' ? '01-01' : selection.granularity === 'day' ? '01-07' : '12-31'}` : ''),
+  };
+}
+
 export function flowPeriodIndex(periods, period, resolution = 'hour') {
   const target = Date.parse(period);
   if (!Number.isFinite(target)) return 0;

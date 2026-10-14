@@ -3,14 +3,17 @@ import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import AtlasCbaMapLayer, { cbaMapColor } from './AtlasCbaMapLayer';
 import { COMPARISON_COLORS } from '../modelWorkspace/resultColors';
+import L from 'leaflet';
 
-jest.mock('leaflet', () => ({ svg: () => ({}) }));
+jest.mock('leaflet', () => ({ svg: jest.fn(() => ({ remove: jest.fn() })) }));
 jest.mock('react-leaflet', () => ({
   Pane: ({ children }) => <div>{children}</div>,
   Tooltip: ({ children }) => <div role="tooltip">{children}</div>,
   CircleMarker: ({ children, radius, pathOptions }) => <div data-testid="point" data-radius={radius} data-colour={pathOptions.color}>{children}</div>,
   Polyline: ({ children, positions, pathOptions }) => <div data-testid="line" data-coordinates={JSON.stringify(positions)} data-colour={pathOptions.color}>{children}</div>,
 }));
+
+beforeEach(() => { L.svg.mockImplementation(() => ({ remove: jest.fn() })); });
 
 test('favourability follows rent versus system-cost direction and preserves zero', () => {
   expect(cbaMapColor(1, 'consumer')).toBe(COMPARISON_COLORS.favourable);
@@ -37,4 +40,30 @@ test('rent lines use canonical coordinates and show reported values without inve
   expect(screen.getByTestId('line')).toHaveAttribute('data-coordinates', '[[2,1],[4,3]]');
   expect(screen.getByRole('tooltip')).toHaveTextContent('Reported line');
   expect(screen.getByRole('tooltip')).toHaveTextContent('-5 M EUR');
+});
+
+test('clear and reload creates a fresh renderer instead of drawing into a detached pane', () => {
+  const scene = { points: [{ country: 'DE', value: 1, coordinates: [1, 2] }], lines: [],
+    component: 'consumer', caseId: 'case', band: '2030', label: 'Consumer rents', unit: 'M EUR' };
+  const view = render(<AtlasCbaMapLayer scene={scene} />);
+  const original = L.svg.mock.results[L.svg.mock.results.length - 1].value;
+  view.rerender(<AtlasCbaMapLayer scene={null} />);
+  expect(original.remove).toHaveBeenCalledTimes(1);
+  view.rerender(<AtlasCbaMapLayer scene={scene} />);
+  const replacement = L.svg.mock.results[L.svg.mock.results.length - 1].value;
+  expect(replacement).not.toBe(original);
+  expect(screen.getAllByTestId('point')).toHaveLength(1);
+  view.rerender(<AtlasCbaMapLayer scene={scene} markerScale={2} />);
+  expect(L.svg.mock.results[L.svg.mock.results.length - 1].value).toBe(replacement);
+});
+
+test('switching country/connection views directly disposes the old renderer', () => {
+  const scene = { points: [], lines: [], component: 'consumer', caseId: 'case', band: '2030', unit: 'M EUR' };
+  const view = render(<AtlasCbaMapLayer scene={scene} />);
+  const renderer = L.svg.mock.results[L.svg.mock.results.length - 1].value;
+  view.rerender(<AtlasCbaMapLayer scene={{ ...scene, component: 'congestion', selection: { map: 'connections' },
+    lines: [{ id: 'line', value: 1, coordinates: [[1, 2], [3, 4]] }] }} />);
+  expect(renderer.remove).toHaveBeenCalledTimes(1);
+  expect(L.svg.mock.results[L.svg.mock.results.length - 1].value).not.toBe(renderer);
+  expect(screen.getByTestId('line')).toBeInTheDocument();
 });

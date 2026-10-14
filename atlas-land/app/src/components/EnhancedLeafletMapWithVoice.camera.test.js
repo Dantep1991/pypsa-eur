@@ -784,19 +784,43 @@ test('regional boundary geometry survives zoom but a replacement region still re
   expect(mockRegionMounts).toBe(2);
 });
 
-test('unsupported land scope suppresses tiles, sampling and inspection; supported custom scope recovers', async () => {
+test('partial land coverage renders, samples and inspects only the supported countries', async () => {
   const land = { enabled: true, panelOpen: true, countries: ['BE', 'XK'], categories: ['forest'],
     status: { ready: true, countries: [{ code: 'BE', name: 'Belgium' }] } };
   const view = render(<EnhancedLeafletMapWithVoice {...defaults} landConstraints={land} />);
   await settle();
   expect(view.getByText(/Country boundaries unavailable for XK/)).toBeDefined();
-  expect(view.getByRole('button', { name: 'Inspect a location' }).disabled).toBe(true);
-  expect(mockTileUrls.some(url => url.includes('/land/tiles/'))).toBe(false);
+  expect(view.getByText(/Land shown for 1 of 2 selected countries/)).toBeDefined();
+  expect(view.getByRole('button', { name: 'Inspect a location' }).disabled).toBe(false);
+  expect(mockTileUrls.some(url => url.includes('/land/tiles/') && url.includes('countries=BE'))).toBe(true);
   act(() => jest.advanceTimersByTime(1000));
   await settle();
-  expect(global.fetch.mock.calls.some(([url]) => url.includes('/land/viewport-stats'))).toBe(false);
+  expect(global.fetch.mock.calls.some(([url]) => url.includes('/land/viewport-stats') && url.includes('countries=BE'))).toBe(true);
+  fireEvent.click(view.getByRole('button', { name: 'Inspect a location' }));
+  await act(async () => mockLandClick({ latlng: { lat: 50.85, lng: 4.35 } }));
+  expect(global.fetch.mock.calls.some(([url]) => url.includes('/land/inspect') && url.includes('countries=BE'))).toBe(true);
+  expect(global.fetch.mock.calls.filter(([url]) => url.includes('/land/')).every(([url]) => !url.includes('XK'))).toBe(true);
   mockTileUrls = [];
   view.rerender(<EnhancedLeafletMapWithVoice {...defaults} landConstraints={{ ...land, countries: ['BE'] }} />);
+  await settle();
+  expect(mockTileUrls.some(url => url.includes('/land/tiles/') && url.includes('countries=BE'))).toBe(true);
+  expect(view.getByRole('button', { name: 'Click a location…' }).disabled).toBe(false);
+  expect(view.queryByText(/Country boundaries unavailable/)).toBeNull();
+});
+
+test('all-unsupported land scope never sends an empty global request and recovers on selection change', async () => {
+  const land = { enabled: true, panelOpen: true, countries: ['XK'], categories: ['forest'],
+    status: { ready: true, countries: [{ code: 'BE', name: 'Belgium' }] } };
+  const view = render(<EnhancedLeafletMapWithVoice {...defaults} landConstraints={land} />);
+  await settle();
+  expect(view.getByText(/No selected country has land coverage/)).toBeDefined();
+  expect(view.getByRole('button', { name: 'Inspect a location' }).disabled).toBe(true);
+  act(() => jest.advanceTimersByTime(1000));
+  await settle();
+  await act(async () => mockLandClick({ latlng: { lat: 50.85, lng: 4.35 } }));
+  expect(mockTileUrls.some(url => url.includes('/land/tiles/'))).toBe(false);
+  expect(global.fetch.mock.calls.some(([url]) => url.includes('/land/'))).toBe(false);
+  view.rerender(<EnhancedLeafletMapWithVoice {...defaults} landConstraints={{ ...land, countries: ['BE', 'XK'] }} />);
   await settle();
   expect(mockTileUrls.some(url => url.includes('/land/tiles/') && url.includes('countries=BE'))).toBe(true);
   expect(view.getByRole('button', { name: 'Inspect a location' }).disabled).toBe(false);

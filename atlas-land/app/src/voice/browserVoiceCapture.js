@@ -62,3 +62,4 @@ export function microphoneErrorMessage(error) {
   }
   return String(error?.message || 'Microphone input failed.');
 }
+

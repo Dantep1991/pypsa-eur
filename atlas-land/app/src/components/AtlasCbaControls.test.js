@@ -55,6 +55,15 @@ test('progress shows real phases and counts while preventing duplicate requests'
   expect(screen.getByRole('button', { name: 'Show on map' })).toBeDisabled();
 });
 
+test('unavailable maps have an actionable error and do not invite repeating the same empty request', () => {
+  const reason = 'Country changes do not reconcile. Select another value.';
+  render(<Controls status={{ state: 'unavailable', error: reason, data: { coverage: { mapped: 0, reported: 0 } } }} />);
+  expect(screen.getByRole('alert')).toHaveTextContent(reason);
+  expect(screen.getByRole('button', { name: 'Show on map' })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('CBA value'), { target: { value: 'consumer' } });
+  expect(clear).toHaveBeenCalled();
+});
+
 test('unassessed model launcher is greyed out with a clear reason', () => {
   render(<AtlasWorkspacePanels><ModelWorkspaceSection title="Cost-benefit analysis" disabled
     disabledReason="No assessed CBA projects are linked to this model."><Controls /></ModelWorkspaceSection></AtlasWorkspacePanels>);

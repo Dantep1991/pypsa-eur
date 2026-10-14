@@ -27,6 +27,8 @@ import { atlasAssetUrl } from './config/assets';
 import useEmilVoice from './hooks/useEmilVoice';
 import AudioLevelMeter from './components/AudioLevelMeter';
 import LoadedCountryList from './components/LoadedCountryList';
+import NetworkResolutionSlider from './components/NetworkResolutionSlider';
+import { uniqueCachedNetworkLevels } from './cachedNetworkLevels';
 import MixedGranularityControls from './components/MixedGranularityControls';
 import ModelResultsControls from './components/ModelResultsControls';
 import { WorkspaceAgentProvider, useWorkspaceAgent, useWorkspaceAgentController } from './agentWorkspace/react';
@@ -71,6 +73,7 @@ import {
   normalizeAtlasResolution,
 } from './atlasAgentCommands';
 import { clearAppliedViewportCommand } from './viewportCommand';
+import { landCountryScope } from './landCountryScope';
 import { readAtlasPlannerResponse } from './atlasPlannerResponse';
 import { atlasCommandReply } from './atlasCommandReply';
 import AtlasModal from './components/AtlasModal';
@@ -158,6 +161,12 @@ import {
   planCountryResolutionUpdate,
 } from './mixedGranularity';
 import { projectMixedCountryRegions } from './mixedRegionProjection';
+import { projectManualNetworkClusters } from './manualNetworkClusters';
+import { manualClusterGeographyOverlay } from './manualClusterGeography';
+import RegionalClusteringWorkspace from './components/RegionalClusteringWorkspace';
+import useManualNetworkClusters from './hooks/useManualNetworkClusters';
+import SavedNetworkClusterControls from './components/SavedNetworkClusterControls';
+const NetworkClusteringControls = deferredPanel(() => import('./components/NetworkClusteringControls'), 'network clustering');
 
 const ResultsTab = deferredPanel(() => import('./assistants/emil/ResultsTab'), 'results');
 const LineFlowChartPanel = deferredPanel(() => import('./components/LineFlowChartPanel'), 'flow chart');
@@ -1048,6 +1057,7 @@ function AppInner() {
   const [selectedPyPSACountryCode, setSelectedPyPSACountryCode] = useState('');
   const [loadedPypsaNetworks, setLoadedPypsaNetworks] = useState([]);
   const [mixedGranularityPlan, setMixedGranularityPlan] = useState(null);
+  const manualNetworkClusters = useManualNetworkClusters(nohmWorkspaceContext);
   const [countryDropdownValue, setCountryDropdownValue] = useState('');
   const [selectingAllCountries, setSelectingAllCountries] = useState(false);
   const [geographyDrilldown, setGeographyDrilldown] = useState('');
@@ -4896,13 +4906,17 @@ function AppInner() {
       }
     });
 
-    return levels.sort((a, b) => a.sortOrder - b.sortOrder);
+    const preferredFullFilename = primaryPypsaSourceEntries.find((entry) => (
+      entry?.is_full_nodal_network
+      && String(entry?.full_country || '').trim().toUpperCase() === activePypsaCountryCode
+    ))?.filename;
+    return uniqueCachedNetworkLevels(levels, preferredFullFilename);
   }, [activePypsaCountryCode, primaryPypsaSourceEntries]);
 
   const selectedCachedNetworkIndex = useMemo(() => {
     if (!cachedNetworkLevels.length) return 0;
     const selectedIndex = cachedNetworkLevels.findIndex(
-      (level) => level.filename === selectedPypsaListFile
+      (level) => level.filenames.includes(selectedPypsaListFile)
     );
     return selectedIndex >= 0 ? selectedIndex : cachedNetworkLevels.length - 1;
   }, [cachedNetworkLevels, selectedPypsaListFile]);
@@ -4937,6 +4951,8 @@ function AppInner() {
         return primaryPypsaSourceEntries.find((entry) => (
           entry?.is_full_nodal_network
           && String(entry?.full_country || '').trim().toUpperCase() === normalizedCode
+        )) || primaryPypsaSourceEntries.find((entry) => (
+          String(entry?.filename || '').trim().toLowerCase() === `base_${normalizedCode}.nc`.toLowerCase()
         ));
       }
       if (level.isGeographic) {
@@ -5764,7 +5780,8 @@ function AppInner() {
         const scopeLabel = countries.length
           ? countries.map(countryCodeToName).join(', ')
           : 'all Europe';
-        pushReply(`Land & Constraints enabled${labels.length ? ` for ${labels.join(', ')}` : ' with no active classes'}, clipped to ${scopeLabel}. ${Number.isFinite(Number(action.opacity)) ? `Opacity set to ${Math.round(Number(action.opacity))}%. ` : ''}Verified against the requested overlay state.`);
+        const coverage = landCountryScope(countries, landStatus);
+        pushReply(`Land & Constraints selected${labels.length ? ` for ${labels.join(', ')}` : ' with no active classes'}: ${scopeLabel}. ${coverage.message || 'Country clipping is supported.'}${Number.isFinite(Number(action.opacity)) ? ` Opacity set to ${Math.round(Number(action.opacity))}%.` : ''}`);
         return true;
       }
       case 'network_overlay': {
@@ -7349,6 +7366,7 @@ function AppInner() {
   const buildMapContext = useCallback(() => {
     const view = mapViewRef.current || {};
     const currentLandOverlay = landOverlayRef.current;
+    const landCoverage = landCountryScope(currentLandOverlay.countries, landStatus);
     const isBoundModel = Boolean(boundModelGeography);
     const modelCountryCodes = modelCountryScope.length
       ? modelCountryScope
@@ -7460,6 +7478,11 @@ function AppInner() {
         categories: currentLandOverlay.categories,
         countries: currentLandOverlay.countries,
         opacity: currentLandOverlay.opacity,
+        ready: landCoverage.ready,
+        partial: landCoverage.partial,
+        effectiveCountries: landCoverage.countries,
+        missingCountries: landCoverage.missing,
+        coverageMessage: landCoverage.message,
       },
       activeNetwork: isBoundModel ? `${boundModelGeography.projectId} · ${boundModelGeography.modelVersion}` : atlasOverlayMode ? null : isGasNetwork ? 'atlas_gas.db' : isWaterNetwork ? 'atlas_water.db' : isLiquidsNetwork ? 'atlas_liquids.db' : isLogisticsNetwork ? 'atlas_logistics.db' : (selectedPyPSAFile || null),
       activeCountryCode: isBoundModel ? (modelCountryCodes.length === 1 ? modelCountryCodes[0] : null) : isInfrastructureNetwork ? (infrastructureCountryCodes.length === 1 ? infrastructureCountryCodes[0] : null) : (selectedPyPSACountryCode || null),
@@ -7562,7 +7585,7 @@ function AppInner() {
     showMapNodes, showMapDataBubbles, showGeographicBoundaries, mapControlsCollapsed,
     lastSearchedLocation, runMode, pypsaSettings, availablePypsaCountryOptions, aiMapControlEnabled,
     atlasNetworkCarrier, atlasOverlayMode, atlasOverlayCarriers, atlasOverlayCountryCodes, atlasOverlayCountriesByCarrier, atlasOverlayCarrierFilters, landOverlay.enabled, landOverlay.categories, landOverlay.countries, gridAccessOverlay.enabled, gasCountryFilter, gasStatus, waterCountryFilter, waterStatus,
-    liquidsCountryFilter, liquidsStatus, logisticsCountryFilter, logisticsStatus, countryCodeToName,
+    liquidsCountryFilter, liquidsStatus, logisticsCountryFilter, logisticsStatus, countryCodeToName, landStatus,
   ]);
 
   useEffect(() => {
@@ -8467,6 +8490,7 @@ function AppInner() {
     polygons: [pypsaGeoJsonOverlays, setPypsaGeoJsonOverlays],
     networks: [loadedPypsaNetworks, setLoadedPypsaNetworks],
     mixed: [mixedGranularityPlan, setMixedGranularityPlan],
+    manualClusters: [manualNetworkClusters.active, manualNetworkClusters.setActive],
     country: [selectedPyPSACountryCode, setSelectedPyPSACountryCode],
     file: [selectedPyPSAFile, setSelectedPyPSAFile],
     listFile: [selectedPypsaListFile, setSelectedPypsaListFile],
@@ -8548,6 +8572,7 @@ function AppInner() {
     setLandOverlayCached({ ...DEFAULT_ATLAS_LAND_OVERLAY });
     setGridAccessOverlay({ ...DEFAULT_GRID_ACCESS_OVERLAY });
     setMixedGranularityPlan(null); setRegionalClusterOverlay(null);
+    manualNetworkClusters.setActive(null);
     setGeographyDrilldown(''); setGeographyLoadError(''); setCountryDropdownValue('');
     setSelectedNode(null); setSelectedNodes([]); setSelectedLineInfo(null);
     setRegionContextMenu(null); setRegionPanelVisible(false);
@@ -8822,7 +8847,12 @@ function AppInner() {
       if (finishIfCancelled()) return;
       const readAnswer = llmPlan.length === 1 && ['list_saved_regions', 'control_workspace'].includes(llmPlan[0].intent)
         ? planReplies.at(-1) || '' : '';
-      const summary = atlasCommandReply({ judge: judgeResult, error: planError, answer: readAnswer });
+      const landObservation = !planError && llmPlan.some(action => action.intent === 'set_land_constraints')
+        ? (mapAgentObservedContextRef.current || buildMapContext()).landConstraints : null;
+      const summary = [
+        atlasCommandReply({ judge: judgeResult, error: planError, answer: readAnswer }),
+        landObservation?.enabled ? landObservation.coverageMessage : '',
+      ].filter(Boolean).join(' ');
       pushReply(summary);
       setMapAgentBusy(false);
       return { handled: true, status: planError ? 'failed' : 'applied', summary };
@@ -11793,12 +11823,17 @@ function AppInner() {
   }, [engine, atlasOverlayMode, atlasOverlayConnectionsData, atlasNetworkCarrier,
     activeVisibleConnectionDomains, gasConnections, waterConnections, liquidsConnections,
     logisticsConnections, pypsaConnections, visibleMapFacilities, editableNodes, connections]);
-  const projectedMixedRegionMap = useMemo(() => projectMixedCountryRegions(
+  const countryRegionMap = useMemo(() => projectMixedCountryRegions(
     visibleMapFacilities,
     visibleMapConnections,
     atlasNetworkCarrier === 'electricity' ? mixedGranularityPlan?.regions : [],
     pypsaFacilitiesWithRegionDataSource,
   ), [visibleMapFacilities, visibleMapConnections, atlasNetworkCarrier, mixedGranularityPlan, pypsaFacilitiesWithRegionDataSource]);
+  const projectedMixedRegionMap = useMemo(() => projectManualNetworkClusters(
+    countryRegionMap.facilities, countryRegionMap.connections,
+    atlasNetworkCarrier === 'electricity' ? manualNetworkClusters.active : null,
+    pypsaFacilitiesWithRegionDataSource,
+  ), [countryRegionMap, atlasNetworkCarrier, manualNetworkClusters.active, pypsaFacilitiesWithRegionDataSource]);
   const resultDecoratedMapFacilities = useMemo(() => {
     const scene = modelResultStatus.scene;
     if (!scene || nohmWorkspaceContext?.mode !== 'model') return projectedMixedRegionMap.facilities;
@@ -16426,34 +16461,11 @@ function AppInner() {
                                 </span>
                               </div>
                               {cachedNetworkLevels.length > 1 ? (
-                                <>
-                                  <input
-                                    type="range"
-                                    min={0}
-                                    max={cachedNetworkLevels.length - 1}
-                                    step={1}
-                                    value={displayedCachedNetworkIndex}
-                                    disabled={pypsaLoading || pypsaResolutionSwitching}
-                                    onChange={(event) => previewCachedNetworkLevel(Number(event.target.value))}
-                                    className="mt-3 w-full accent-tj-gold disabled:opacity-50"
-                                    aria-label="Network resolution"
-                                    aria-valuetext={currentAtlasResolutionKey === 'mixed' ? 'Mixed country resolution' : displayedCachedNetworkLevel?.label || 'No network resolution selected'}
-                                  />
-                                  <div className="mt-1 flex gap-2 overflow-x-auto pb-1 scrollbar-hidden">
-                                    {cachedNetworkLevels.map((level, index) => (
-                                      <button
-                                        type="button"
-                                        key={level.filename}
-                                        onClick={() => commitCachedNetworkLevel(index)}
-                                        disabled={pypsaLoading || pypsaResolutionSwitching}
-                                        title={level.label}
-                                        className={`shrink-0 text-[9px] text-center ${currentAtlasResolutionKey !== 'mixed' && index === displayedCachedNetworkIndex ? 'text-tj-gold font-semibold' : 'text-tj-slate hover:text-white'}`}
-                                      >
-                                        {level.isFullNodal ? 'Nodal' : level.label === 'Bidding zone' ? 'Bidding' : level.label}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </>
+                                <NetworkResolutionSlider levels={cachedNetworkLevels}
+                                  index={displayedCachedNetworkIndex}
+                                  disabled={pypsaLoading || pypsaResolutionSwitching}
+                                  mixed={currentAtlasResolutionKey === 'mixed'}
+                                  onPreview={previewCachedNetworkLevel} onCommit={commitCachedNetworkLevel} />
                               ) : (
                                 <p className="mt-3 text-[11px] text-tj-slate">
                                   {cachedNetworkLevels.length === 1 ? 'Only one network resolution is cached for this country.' : 'Select a country to see its cached network resolutions.'}
@@ -16468,6 +16480,24 @@ function AppInner() {
                                 facilities={pypsaFacilitiesWithRegionDataSource}
                                 connections={pypsaConnections}
                               />
+                              <SavedNetworkClusterControls schemes={manualNetworkClusters.schemes}
+                                active={manualNetworkClusters.active} busy={pypsaLoading || pypsaResolutionSwitching}
+                                warnings={projectedMixedRegionMap.warnings}
+                                onExpandGroup={(id, expanded) => manualNetworkClusters.setActive(current => ({ ...current,
+                                  expandedGroupIds: expanded ? [...(current.expandedGroupIds || []),id] : (current.expandedGroupIds || []).filter(item => item !== id) }))}
+                                onChange={async scheme => {
+                                  try {
+                                    if (scheme) {
+                                      scheme = scheme.groups ? scheme : await manualNetworkClusters.load(scheme.id);
+                                      const codes = [...new Set(scheme.groups.flatMap(g => g.countryCodes))];
+                                      const loaded = await loadAtlasCountriesFromAgent(codes, { resolution: 'full', mode: 'add',
+                                        domains: ATLAS_MAP_DOMAINS.filter(domain => atlasDomainVisibility[domain] !== false) });
+                                      if (!loaded) throw new Error('Wait for the current network update to finish.');
+                                    }
+                                    if (scheme) setMixedGranularityPlan(null);
+                                    manualNetworkClusters.setActive(scheme);
+                                  } catch (error) { setGeographyLoadError(error.message); }
+                                }} />
                             </div>
                             </>
                             )}
@@ -16742,7 +16772,7 @@ function AppInner() {
                           title="Regional clustering"
                           disabled={Boolean(boundModelGeography)}
                           disabledReason={boundModelGeography ? 'This model uses native model geography. Eurostat NUTS clustering is available for reference networks; model region aggregation is in Geography.' : undefined}
-                          summary={regionalClusterOverlay
+                          summary={manualNetworkClusters.active ? manualNetworkClusters.active.name : regionalClusterOverlay
                             ? `NUTS ${regionalClusterOverlay.meta?.level || 2} · ${Number(regionalClusterOverlay.meta?.mapped_regions || 0).toLocaleString()} regions`
                             : 'Eurostat regional typology'}
                           open={pypsaSectionOpen.clusters}
@@ -16750,10 +16780,16 @@ function AppInner() {
                           compact={compactAtlasLayout && !ATLAS_IS_EMBEDDED}
                           retain
                         >
-                          <RegionalClusteringControls
-                            countryCodes={activeLandCountryCodes}
-                            onOverlayChange={setRegionalClusterOverlay}
-                          />
+                          <RegionalClusteringWorkspace facilities={pypsaFacilitiesWithRegionDataSource}
+                            connections={pypsaConnections}
+                            onClearAggregation={()=>manualNetworkClusters.setActive(null)}
+                            regionalEvidence={regionalClusterOverlay}
+                            countryCodes={activeLandCountryCodes} onOverlayChange={setRegionalClusterOverlay}
+                            countries={loadedPypsaCountryCodes} busy={pypsaLoading || pypsaResolutionSwitching}
+                            onLoadNative={() => loadAtlasCountriesFromAgent(loadedPypsaCountryCodes, { resolution: 'full', mode: 'add',
+                              domains: [...new Set(['Grid',...ATLAS_MAP_DOMAINS.filter(domain => atlasDomainVisibility[domain] !== false)])] })}
+                            onSave={manualNetworkClusters.save}
+                            onApply={scheme => {setMixedGranularityPlan(null);manualNetworkClusters.setActive(scheme);setRegionalClusterOverlay(null);}} />
                         </AtlasDomainSection>
                         )}
                         </div>
@@ -17039,9 +17075,15 @@ function AppInner() {
                             </>
                           ) : (
                             <>
-                              <span className="text-tj-slate">Buses <strong className="ml-1 text-white font-semibold">{pypsaOverviewMetrics.buses.toLocaleString()}</strong></span>
-                              <span className="text-tj-slate">AC lines <strong className="ml-1 text-white font-semibold">{pypsaOverviewMetrics.acLines.toLocaleString()}</strong></span>
-                              <span className="text-tj-slate">DC links <strong className="ml-1 text-white font-semibold">{pypsaOverviewMetrics.dcLinks.toLocaleString()}</strong></span>
+                              <span className="text-tj-slate">{manualNetworkClusters.active ? 'Regional clusters' : 'Buses'} <strong className="ml-1 text-white font-semibold">{manualNetworkClusters.active
+                                ? projectedMixedRegionMap.facilities.filter(f=>f.is_region_aggregate&&String(f.component_type || f.type).toLowerCase()==='bus').length.toLocaleString()
+                                : pypsaOverviewMetrics.buses.toLocaleString()}</strong></span>
+                              {manualNetworkClusters.active&&<span className="text-tj-slate">Native buses <strong className="ml-1 text-white font-semibold">{projectedMixedRegionMap.facilities.filter(f=>!f.is_region_aggregate&&String(f.component_type || f.type).toLowerCase()==='bus').length.toLocaleString()}</strong></span>}
+                              <span className="text-tj-slate">{manualNetworkClusters.active ? 'AC interfaces' : 'AC lines'} <strong className="ml-1 text-white font-semibold">{manualNetworkClusters.active
+                                ? projectedMixedRegionMap.connections.filter(c=>c.type==='line').length.toLocaleString() : pypsaOverviewMetrics.acLines.toLocaleString()}</strong></span>
+                              <span className="text-tj-slate">{manualNetworkClusters.active ? 'DC interfaces' : 'DC links'} <strong className="ml-1 text-white font-semibold">{manualNetworkClusters.active
+                                ? projectedMixedRegionMap.connections.filter(c=>c.type==='link').length.toLocaleString() : pypsaOverviewMetrics.dcLinks.toLocaleString()}</strong></span>
+                              {manualNetworkClusters.active && <span className="text-tj-slate">Source buses <strong className="ml-1 text-white font-semibold">{pypsaOverviewMetrics.buses.toLocaleString()}</strong></span>}
                             </>
                           )}
                           {mapRenderStats.overviewLines && <span className="text-sky-200" title="Every selected link is drawn in one lightweight overview canvas. Zoom in to restore individual line hover and click inspection.">Overview canvas · zoom in to inspect</span>}
@@ -17083,7 +17125,7 @@ function AppInner() {
                   onPopupVisibilityChange={setAtlasAssetPopupOpen}
                   pypsaLoading={atlasOverlayMode ? Boolean(pypsaLoading || gasDomainLoading || waterDomainLoading || liquidsDomainLoading || logisticsDomainLoading) : atlasNetworkCarrier === 'gas' ? Boolean(gasDomainLoading) : atlasNetworkCarrier === 'water' ? Boolean(waterDomainLoading) : atlasNetworkCarrier === 'liquids' ? Boolean(liquidsDomainLoading) : atlasNetworkCarrier === 'logistics' ? Boolean(logisticsDomainLoading) : pypsaLoading}
                   geoJsonOverlays={(atlasOverlayMode ? atlasOverlayCarriers.includes('electricity') : atlasNetworkCarrier === 'electricity') ? pypsaGeoJsonOverlays : EMPTY_GEOGRAPHIC_OVERLAYS}
-                  regionalClusterOverlay={regionalClusterOverlay}
+                  regionalClusterOverlay={manualNetworkClusters.active ? manualClusterGeographyOverlay(manualNetworkClusters.active) : regionalClusterOverlay}
                   activeCountryCode={atlasOverlayMode ? (atlasOverlayCountryCodes[0] || null) : atlasNetworkCarrier === 'gas' ? (normalizeOverlayCountryCodes(gasCountryFilter).length === 1 ? gasCountryFilter : null) : atlasNetworkCarrier === 'water' ? (normalizeOverlayCountryCodes(waterCountryFilter).length === 1 ? waterCountryFilter : null) : atlasNetworkCarrier === 'liquids' ? (normalizeOverlayCountryCodes(liquidsCountryFilter).length === 1 ? liquidsCountryFilter : null) : atlasNetworkCarrier === 'logistics' ? (normalizeOverlayCountryCodes(logisticsCountryFilter).length === 1 ? logisticsCountryFilter : null) : selectedPyPSACountryCode}
                   activeCountryCodes={nohmWorkspaceContext?.mode === 'model' && modelCountryScope.length ? modelCountryScope : atlasOverlayMode
                     ? (atlasOverlayCountryCodes.length

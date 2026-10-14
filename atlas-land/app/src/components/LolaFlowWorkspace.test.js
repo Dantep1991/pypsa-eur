@@ -165,13 +165,16 @@ test.each(['day','week','month'])('History and map navigation preserve the loade
 });
 
 test('annual-only runs expose no fabricated hourly options or capacity congestion', async () => {
+  fetchLolaFlowScene.mockImplementation(async(_context,selection)=>({...scene,selection}));
   render(<LolaFlowWorkspace {...props} />);
   await waitFor(() => expect(screen.getByText('Load flows')).not.toBeDisabled());
   expect(screen.getByLabelText('Flow time resolution').options).toHaveLength(1);
   expect(screen.getByLabelText('Flow time resolution').value).toBe('year');
   fireEvent.click(screen.getByText('Load flows'));
   await screen.findByText(/1 mapped/);
-  expect(screen.queryByRole('button',{name:'Play timeline'})).toBeNull();
+  expect(screen.getByRole('button',{name:'Play timeline'})).toBeVisible();
+  expect(screen.getByRole('button',{name:'Play timeline'})).toBeDisabled();
+  expect(screen.getByText(/One annual period reported/)).toBeVisible();
   expect(capacityToggle()).toBeDisabled();
   expect(historyToggle()).toBeDisabled();
   expect(screen.queryByText('Near declared limit')).toBeNull();
@@ -430,4 +433,77 @@ test('map cursor, history inspect and playback share one period; both resolution
   fireEvent.change(screen.getByLabelText('Flow time resolution'),{target:{value:'hour'}});
   await waitFor(()=>expect(fetchLolaFlowScene).toHaveBeenCalledTimes(3));
   expect(screen.getByLabelText('History aggregation')).toHaveValue('hour');
+});
+
+test.each([
+  ['hour',['2050-01-01T00:00:00Z','2050-01-01T01:00:00Z']],
+  ['day',['2050-01-01','2050-01-02']],
+  ['week',['2050-01-03','2050-01-10']],
+  ['month',['2050-01-01','2050-02-01']],
+  ['year',['2050-01-01','2051-01-01']],
+])('timeline advances and loops reported %s periods without requerying',async(granularity,periods)=>{
+  const flow={...catalog.runs[0].quantities[0],available_granularities:[granularity],periods:['2050','2051']};
+  fetchModelResultCatalog.mockResolvedValue({runs:[{...catalog.runs[0],quantities:[flow]}]});
+  fetchLolaFlowScene.mockImplementation(async(_context,selection)=>({...scene,selection,periods,
+    lines:[{...scene.lines[0],values:new Map(periods.map((p,i)=>[p,12+i]))}]}));
+  fetchFlowHistory.mockImplementation(async(_context,source)=>source);
+  render(<LolaFlowWorkspace {...props}/>);
+  await waitFor(()=>expect(screen.getByText('Load flows')).toBeEnabled());
+  if(granularity==='year') {
+    fireEvent.click(screen.getByRole('tab',{name:'Time & display'}));
+    fireEvent.change(screen.getByLabelText('Flow end year'),{target:{value:'2051'}});
+  }
+  fireEvent.click(screen.getByText('Load flows'));
+  await waitFor(()=>expect(screen.getByRole('button',{name:'Play timeline'})).toBeEnabled());
+  fireEvent.click(screen.getByRole('button',{name:'Play timeline'}));
+  await waitFor(()=>expect(screen.getByLabelText('Flow period')).toHaveValue('1'),{timeout:1500});
+  await waitFor(()=>expect(props.onFrame.mock.calls.at(-1)[0]).toMatchObject({period:periods[1],lines:[{value:13}]}));
+  expect(screen.getByLabelText('History inspected period')).toHaveValue(granularity==='week'?'2':'1');
+  await waitFor(()=>expect(screen.getByLabelText('Flow period')).toHaveValue('0'),{timeout:1500});
+  fireEvent.click(screen.getByRole('button',{name:'Pause'}));
+  expect(fetchLolaFlowScene).toHaveBeenCalledTimes(1);
+  if(granularity==='year') expect(fetchLolaFlowScene.mock.calls[0][1])
+    .toMatchObject({dateFrom:'2050-01-01',dateTo:'2051-12-31'});
+});
+
+test('Annual after a March-only monthly history inspection loads the whole year and its real January anchor',async()=>{
+  const flow={...catalog.runs[0].quantities[0],available_granularities:['month','year']};
+  fetchModelResultCatalog.mockResolvedValue({runs:[{...catalog.runs[0],quantities:[flow]}]});
+  fetchLolaFlowScene.mockImplementation(async(_context,selection)=>{
+    const period=selection.granularity==='year'?'2050-01-01':'2050-03-01';
+    return {...scene,selection,periods:[period],lines:[{...scene.lines[0],values:new Map([[period,12]])}]};
+  });
+  render(<LolaFlowWorkspace {...props}/>);
+  await waitFor(()=>expect(screen.getByText('Load flows')).toBeEnabled());
+  fireEvent.click(screen.getByRole('tab',{name:'Time & display'}));
+  fireEvent.change(screen.getByLabelText('Flow start date'),{target:{value:'2050-03-01'}});
+  fireEvent.change(screen.getByLabelText('Flow end date'),{target:{value:'2050-03-31'}});
+  fireEvent.click(screen.getByText('Load flows'));
+  await waitFor(()=>expect(screen.getByText('Load flows')).toBeEnabled());
+  fireEvent.change(screen.getByLabelText('Flow time resolution'),{target:{value:'year'}});
+  await waitFor(()=>expect(fetchLolaFlowScene).toHaveBeenCalledTimes(2));
+  expect(fetchLolaFlowScene.mock.calls[1][1]).toMatchObject({granularity:'year',dateFrom:'2050-01-01',dateTo:'2050-12-31'});
+  await waitFor(()=>expect(props.onFrame.mock.calls.at(-1)[0].period).toBe('2050-01-01'));
+  expect(screen.getByRole('button',{name:'Play timeline'})).toBeVisible();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+test('the agent starts weekly playback after its first load and receives the same availability as the button',async()=>{
+  const periods=['2050-01-03','2050-01-10'];
+  const flow={...catalog.runs[0].quantities[0],available_granularities:['week']};
+  fetchModelResultCatalog.mockResolvedValue({runs:[{...catalog.runs[0],quantities:[flow]}]});
+  fetchLolaFlowScene.mockImplementation(async(_context,selection)=>({...scene,selection,periods,
+    lines:[{...scene.lines[0],values:new Map(periods.map((p,i)=>[p,12+i]))}]}));
+  const registry=createWorkspaceRegistry(); registry.bind('Example:v1',{});
+  render(<WorkspaceAgentProvider value={registry}><LolaFlowWorkspace {...props}/></WorkspaceAgentProvider>);
+  await waitFor(()=>expect(registry.controllers.get('flow')?.ready).toBe(true));
+  let done=false,failure;
+  act(()=>{registry.controllers.get('flow').execute('show',{playing:true}).then(()=>{done=true},error=>{failure=error;done=true})});
+  for(let i=0;!done&&i<100;i++) await act(async()=>{await new Promise(resolve=>setTimeout(resolve,25))});
+  expect(failure).toBeUndefined();expect(done).toBe(true);
+  expect(registry.controllers.get('flow').state).toMatchObject({playing:true,canPlayTimeline:true,timelinePeriods:2});
+  expect(screen.getByRole('button',{name:'Pause'})).toBeVisible();
+  await waitFor(()=>expect(screen.getByLabelText('Flow period')).toHaveValue('1'),{timeout:1500});
+  await act(async()=>{await registry.controllers.get('flow').execute('configure',{playing:false})});
+  expect(registry.controllers.get('flow').state.playing).toBe(false);
 });

@@ -22,7 +22,7 @@ export default function Chatbot({
       timestamp: new Date()
     }
   ]);
-
+  
   const messages = externalMessages || internalMessages;
   const setMessages = setExternalMessages || setInternalMessages;
   const [input, setInput] = useState('');
@@ -48,7 +48,7 @@ export default function Chatbot({
       // Reset model selection for new build completion
       setChatSelectedModels([]);
       setChatModelSearchTerm('');
-
+      
       // Add message about build completion with model selection prompt
       const completionMessage = {
         id: messages.length + 1,
@@ -83,7 +83,7 @@ export default function Chatbot({
         setMessages(prev => {
           const updated = [...prev];
           const statusMsgIndex = updated.findIndex(msg => msg.taskId === taskId);
-
+          
           if (statusMsgIndex !== -1) {
             // Append new status messages
             const newStatusText = data.messages
@@ -95,7 +95,7 @@ export default function Chatbot({
                 return msg.message;
               })
               .join('\n');
-
+            
             updated[statusMsgIndex] = {
               ...updated[statusMsgIndex],
               text: updated[statusMsgIndex].text + '\n' + newStatusText,
@@ -103,7 +103,7 @@ export default function Chatbot({
               isRunning: !data.completed
             };
           }
-
+          
           return updated;
         });
       }
@@ -115,7 +115,7 @@ export default function Chatbot({
           statusPollIntervalRef.current = null;
         }
         activeTaskRef.current = null;
-
+        
         // Add navigation button to final message
         setMessages(prev => {
           const updated = [...prev];
@@ -157,11 +157,11 @@ export default function Chatbot({
       if (onWorkflowStart) {
         onWorkflowStart();
       }
-
+      
       const response = await fetch(`${API_BASE_URL}/trigger-n8n`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: JSON.stringify({ 
           query: messageText,
           n8n_webhook_url: "https://n8n.terajouleenergy.com/webhook/96f1eaeb-7f3c-49a6-bf69-954f56ff602e",
           webhook_base_url: `${API_BASE_URL}/webhook/stage`
@@ -173,7 +173,7 @@ export default function Chatbot({
       }
 
       const result = await response.json();
-
+      
       // Add success message
       const statusMessage = {
         id: messages.length + 2,
@@ -185,7 +185,7 @@ export default function Chatbot({
         agent: 'emil',
         agentName: 'Emil'
       };
-
+      
       setMessages(prev => [...prev, statusMessage]);
     } catch (error) {
       console.error('Error sending message:', error);
@@ -271,7 +271,7 @@ export default function Chatbot({
                         className="w-full pl-10 pr-3 py-2 border border-white/10 rounded-lg focus:ring-2 focus:ring-tj-gold focus:border-transparent text-sm"
                       />
                     </div>
-
+                    
                     {/* Filtered Model List with Checkboxes */}
                     <div className="border border-white/10 rounded-lg max-h-[200px] overflow-y-auto">
                       {availableModels.length === 0 ? (
@@ -282,7 +282,7 @@ export default function Chatbot({
                         const filteredModels = availableModels.filter(name =>
                           name.toLowerCase().includes(chatModelSearchTerm.toLowerCase())
                         );
-
+                        
                         if (filteredModels.length === 0) {
                           return (
                             <div className="p-4 text-center text-sm text-tj-slate">
@@ -290,7 +290,7 @@ export default function Chatbot({
                             </div>
                           );
                         }
-
+                        
                         return (
                           <div className="p-2">
                             {filteredModels.map((childName) => (
@@ -317,7 +317,7 @@ export default function Chatbot({
                         );
                       })()}
                     </div>
-
+                    
                     {/* Selected Models Summary */}
                     {chatSelectedModels.length > 0 && (
                       <div className="p-2 bg-blue-50 border border-blue-200 rounded-lg">
@@ -346,7 +346,7 @@ export default function Chatbot({
                         </div>
                       </div>
                     )}
-
+                    
                     {/* Run Button */}
                     <button
                       onClick={() => {
@@ -354,15 +354,15 @@ export default function Chatbot({
                           alert('Please select at least one model to run the simulation.');
                           return;
                         }
-
+                        
                         if (onRunSimulation) {
                           // Use the first selected model
                           const modelname = chatSelectedModels[0];
                           onRunSimulation(modelname);
-
+                          
                           // Update message to show user selected and running
-                          setMessages(prev => prev.map(msg =>
-                            msg.id === message.id
+                          setMessages(prev => prev.map(msg => 
+                            msg.id === message.id 
                               ? { ...msg, showModelSelection: false, isRunPrompt: false, isRunTriggered: true, text: msg.text + `\n\n✅ Running simulation with model: "${modelname}"...` }
                               : msg
                           ));

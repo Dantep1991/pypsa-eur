@@ -1,4 +1,15 @@
-import {flowPeriodIndex, flowRangeWindows, mergeFlowWindows} from './flowTimeline';
+import {flowDateRange, flowPeriodIndex, flowRangeWindows, mergeFlowWindows} from './flowTimeline';
+
+test('annual ranges include January-anchored records, retaining only reported calendar years',()=>{
+  expect(flowDateRange({period:'2037',granularity:'year',dateFrom:'2037-03-01',dateTo:'2037-03-31'}))
+    .toEqual({dateFrom:'2037-01-01',dateTo:'2037-12-31'});
+  expect(flowDateRange({period:'2050',granularity:'year',availablePeriods:['2050','2051'],dateTo:'2051-03-31'}))
+    .toEqual({dateFrom:'2050-01-01',dateTo:'2051-12-31'});
+  expect(()=>flowDateRange({period:'2050',granularity:'year',dateTo:'2051-12-31'})).toThrow('reported');
+  expect(()=>flowDateRange({period:'2050',granularity:'year',availablePeriods:['2050','2051'],dateFrom:'2051-01-01',dateTo:'2050-12-31'})).toThrow('valid');
+  expect(flowDateRange({period:'2050',granularity:'month',dateFrom:'2050-03-01',dateTo:'2050-03-31'}))
+    .toEqual({dateFrom:'2050-03-01',dateTo:'2050-03-31'});
+});
 
 test('bucket identity respects exact hours, native weekly anchors and missing periods',()=>{
   expect(flowPeriodIndex(['2050-01-01T01:00:00Z'],'2050-01-01T02:00:00Z','hour')).toBe(-1);

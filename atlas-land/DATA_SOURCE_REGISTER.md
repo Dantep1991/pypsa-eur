@@ -4,8 +4,8 @@
 > records declared source terms; it is not legal approval. Every source still needs
 > an accountable owner, required attribution and destination-release sign-off.
 
-Schema: `nohm.atlas.source-governance.v1`
-Generated: `2026-09-07T10:55:07+00:00`
+Schema: `nohm.atlas.source-governance.v1`  
+Generated: `2026-09-07T10:55:07+00:00`  
 Sources: **28**; open terms declared: **10**; review/permission/missing: **18**.
 
 | Dataset | Source | Publisher | Version | Declared terms | Engineering status |

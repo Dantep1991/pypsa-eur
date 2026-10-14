@@ -7,6 +7,21 @@ const topology = { schema: 'nohm.atlas.flow-topology.v1', project_id: 'Example',
 const row = { entity_name: 'Exact', time_bucket: '2050-01-01', value: -10, unit_name: 'GWh', from_node: 'A', to_node: 'B' };
 const payload = rows => ({ project_id: 'Example', runs: [{ run_id: 'run', schema_version_id: 'v1' }], rows });
 
+test('annual queries canonicalise an inherited monthly window for flows, limits and agent pointers',async()=>{
+  const fetchImpl=jest.fn(async(_url,init)=>{
+    const query=JSON.parse(init.body);
+    return {ok:true,json:async()=>payload([{...row,class_name:'Line',property_name:query.property_name,
+      unit_name:query.property_name==='Flow'?'GWh':'MW',value:10}])};
+  });
+  const result=await fetchLolaFlowScene(context,{...selection,dateFrom:'2050-03-01',dateTo:'2050-03-31',
+    limitProperties:['Export Limit','Import Limit']},{topology},fetchImpl);
+  expect(fetchImpl).toHaveBeenCalledTimes(3);
+  fetchImpl.mock.calls.forEach(([,init])=>expect(JSON.parse(init.body)).toMatchObject({date_from:'2050-01-01',date_to:'2050-12-31T23:59:59'}));
+  expect(result.selection).toMatchObject({dateFrom:'2050-01-01',dateTo:'2050-12-31'});
+  expect(result.analysis_query).toMatchObject({date_from:'2050-01-01',date_to:'2050-12-31T23:59:59'});
+  expect(result.lines[0].values.get(row.time_bucket)).toBe(10);
+});
+
 test('empty history windows retain warnings without weakening normal or foreign-run validation',async()=>{
   const empty={...payload([]),query:{run_ids:['run'],class_name:'Line',property_name:'Flow'},summary:{row_count:0},missing_runs:[{reason:'Not reported'}]};
   const fetchImpl=jest.fn(async()=>({ok:true,json:async()=>empty}));

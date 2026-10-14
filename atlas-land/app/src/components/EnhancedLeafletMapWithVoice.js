@@ -568,8 +568,9 @@ const EnhancedLeafletMapContent = ({
   const landCountryName = useMemo(() => Object.fromEntries(
     landCountryOptions.map((country) => [String(country.code).toUpperCase(), country.name])
   ), [landCountryOptions]);
-  const landCountryKey = landConfig.countries.join(',');
-  const landScope = useMemo(() => landCountryScope(landConfig.countries, landConfig.status), [landCountryKey, landConfig.status]);
+  const requestedLandCountryKey = landConfig.countries.join(',');
+  const landScope = useMemo(() => landCountryScope(landConfig.countries, landConfig.status), [requestedLandCountryKey, landConfig.status]);
+  const landCountryKey = landScope.countries.join(',');
   const landApiVersion = landConfig.status?.api_version || '1.1';
   // Fetch one fully opaque raster for each actual data selection. Visual
   // opacity belongs to the Leaflet layer, so dragging the slider can reuse the
@@ -630,7 +631,7 @@ const EnhancedLeafletMapContent = ({
           north: String(mapBounds.getNorth()),
           zoom: String(zoomLevel),
         });
-        if (landConfig.countries.length) query.set('countries', landCountryKey);
+        if (landCountryKey) query.set('countries', landCountryKey);
         const response = await fetch(`${API_BASE_URL}/api/atlas/land/viewport-stats?${query}`, { signal: controller.signal });
         const payload = await response.json();
         if (!controller.signal.aborted) setLandViewportStats(response.ok ? payload : { error: 'Visible-area sample unavailable. Please retry.' });
@@ -645,7 +646,7 @@ const EnhancedLeafletMapContent = ({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [landConfig.enabled, landScope.ready, landConfig.countries.length, landCountryKey, mapBounds, zoomLevel]);
+  }, [landConfig.enabled, landScope.ready, landCountryKey, mapBounds, zoomLevel]);
 
   const updateLandConfig = useCallback((patch) => {
     onLandConstraintsChange?.(patch);
@@ -830,13 +831,13 @@ const EnhancedLeafletMapContent = ({
     }
   }, [europeGeoJson, facilities, geoJsonOverlays, mapInstance, viewportCommand, onViewportCommandApplied, autoZoomScopeKey]);
   const selectedLandCountryFeatureCollection = useMemo(() => {
-    if (!europeGeoJson?.features?.length || !landConfig.countries.length) return null;
-    const countrySet = new Set(landConfig.countries);
+    if (!europeGeoJson?.features?.length || !landScope.countries.length) return null;
+    const countrySet = new Set(landScope.countries);
     const features = europeGeoJson.features.filter((feature) => (
       countrySet.has(String(feature?.properties?.ISO2 || '').trim().toUpperCase())
     ));
     return features.length ? { type: 'FeatureCollection', features } : null;
-  }, [europeGeoJson, landConfig.countries]);
+  }, [europeGeoJson, landScope.countries]);
   // Create a simple colored marker
   const createColoredIcon = useCallback((
     color = '#3b82f6',
@@ -1691,8 +1692,8 @@ const EnhancedLeafletMapContent = ({
               const color = feature?.properties?.color || '#dabd1d';
               return {
                 color: showGeographicBoundaries ? '#f8fafc' : color,
-                weight: showGeographicBoundaries ? (zoomLevel <= 5 ? 0.45 : 0.75) : 0,
-                opacity: showGeographicBoundaries ? 0.72 : 0,
+                weight: feature?.properties?.aggregate ? 1 : showGeographicBoundaries ? (zoomLevel <= 5 ? 0.45 : 0.75) : 0,
+                opacity: feature?.properties?.aggregate ? 0.85 : showGeographicBoundaries ? 0.72 : 0,
                 fillColor: color,
                 fillOpacity: 0.94,
               };
@@ -1855,7 +1856,7 @@ const EnhancedLeafletMapContent = ({
         <LandInspectBridge
           enabled={landConfig.enabled && landScope.ready && landInspectMode}
           onInspect={setLandInspection}
-          countries={landConfig.countries}
+          countries={landScope.countries}
         />
 
         {regionCenter && Number.isFinite(regionCenter.lat) && Number.isFinite(regionCenter.lon) && (
@@ -2166,8 +2167,8 @@ const EnhancedLeafletMapContent = ({
               </button>
             </div>
 
-            {!landScope.ready && (
-              <div role="status" className="mt-3 rounded-lg border border-rose-400/25 bg-rose-400/10 p-2 text-rose-200">
+            {landScope.message && (
+              <div role="status" className={`mt-3 rounded-lg border p-2 ${landScope.partial ? 'border-amber-400/25 bg-amber-400/10 text-amber-200' : 'border-rose-400/25 bg-rose-400/10 text-rose-200'}`}>
                 {landScope.message}
               </div>
             )}
@@ -2247,7 +2248,9 @@ const EnhancedLeafletMapContent = ({
                 </div>
               )}
               <p className="mt-1.5 text-[8px] leading-3 text-slate-500">
-                {!landScope.ready ? 'No land tiles or inspection results are shown for this scope.' : landConfig.followMapCountries
+                {!landScope.ready ? 'No land tiles or inspection results are shown for this scope.' : landScope.partial
+                  ? `Clipped to ${landScope.countries.length} supported countries; missing countries are excluded from tiles, inspection and summaries.`
+                  : landConfig.followMapCountries
                   ? (landConfig.countries.length
                     ? `Automatically clipped to the ${landConfig.countries.length} selected map ${landConfig.countries.length === 1 ? 'country' : 'countries'}.`
                     : 'Waiting for a Geography selection; currently showing all Europe.')
@@ -2351,7 +2354,7 @@ const EnhancedLeafletMapContent = ({
               </div>
             )}
 
-            {landScope.ready && <LandSampleSummary stats={landViewportStats} countryScoped={landConfig.countries.length > 0} />}
+            {landScope.ready && <LandSampleSummary stats={landViewportStats} countryScoped={landScope.countries.length > 0} />}
 
             <p className="mt-3 border-t border-white/8 pt-2 text-[8px] leading-3 text-slate-500">Screening only—not parcel availability, ownership, permitting or legal advice. Verify current national and local records before siting.</p>
           </div>

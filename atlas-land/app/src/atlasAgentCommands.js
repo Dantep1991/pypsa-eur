@@ -778,7 +778,7 @@ export const parseAtlasAgentCommand = (input) => {
     if (/\b(?:agricultur|arable|pasture|cropland)\w*\b/.test(text)) categories.push('agriculture');
     if (/\b(?:forest|natural\s+land|scrub|heath)\w*\b/.test(text)) categories.push('forest');
     if (/\b(?:industrial|brownfield|port\s+land|airport\s+land|construction\s+land)\w*\b/.test(text)) categories.push('industrial');
-    const opacityMatch = text.match(/\b(?:opacity|transparency)\s+(?:to\s+|at\s+)?(\d{1,3})\s*(?:percent|%)?/)
+    const opacityMatch = text.match(/\b(?:opacity|transparency)\s+(?:to\s+|at\s+)?(\d{1,3})\s*(?:percent|%)?/) 
       || text.match(/\b(\d{1,3})\s*(?:percent|%)\s+(?:opacity|transparency)\b/);
     const hideClasses = /\b(?:hide|remove|exclude|disable)\b/.test(text) && categories.length > 0;
     const addClasses = (/\b(?:add|include|also)\b/.test(text) || /^(?:please\s+)?overlay\b/.test(text))

@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import L from 'leaflet';
 import { CircleMarker, Pane, Polyline, Tooltip } from 'react-leaflet';
 import { COMPARISON_COLORS } from '../modelWorkspace/resultColors';
@@ -12,8 +12,17 @@ export function cbaMapColor(value, component) {
 }
 
 export default function AtlasCbaMapLayer({ scene, markerScale = 1 }) {
-  const renderer = useMemo(() => L.svg({ pane: 'atlas-cba-values' }), []);
   if (!scene) return null;
+  const identity = JSON.stringify([scene.sourceProjectId, scene.sourceModelVersion, scene.studyId,
+    scene.caseId, scene.band, scene.component, scene.selection?.map]);
+  return <ActiveCbaMapLayer key={identity} scene={scene} markerScale={markerScale} />;
+}
+
+function ActiveCbaMapLayer({ scene, markerScale }) {
+  const renderer = useMemo(() => L.svg({ pane: 'atlas-cba-values' }), []);
+  // A cleared Pane is removed from the map. Its renderer must not be reused:
+  // Leaflet otherwise keeps drawing into that detached SVG on the next view.
+  useEffect(() => () => renderer.remove?.(), [renderer]);
   const maximum = Math.max(0, ...[...scene.points, ...scene.lines].map(row => Math.abs(row.value)));
   const tooltip = row => <Tooltip pane="network-node-tooltips" atlasTooltipPriority={40} sticky>
     <strong>{row.country || row.assetName}</strong><br />{scene.label}: {formatCbaValue(row.value)} {scene.unit}<br />

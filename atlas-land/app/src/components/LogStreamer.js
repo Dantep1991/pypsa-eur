@@ -43,9 +43,9 @@ export default function LogStreamer({ uniqueId, onClose, apiBaseUrl = 'http://lo
       try {
         // Use 2025-10-29 as the default/only log file
         const logIdToFind = uniqueId || "2025-10-29";
-
+        
         console.log('Looking for log file with ID:', logIdToFind);
-
+        
         // Try to find log by unique ID
         const response = await fetch(`${apiBaseUrl}/api/logs/find/${encodeURIComponent(logIdToFind)}`);
         if (response.ok) {
@@ -91,7 +91,7 @@ export default function LogStreamer({ uniqueId, onClose, apiBaseUrl = 'http://lo
     // Use the log file's unique ID or the provided uniqueId
     const streamUniqueId = logFile.unique_id || uniqueId || logFile.name.replace('.log', '').replace('app.', '');
     const streamUrl = `${apiBaseUrl}/api/logs/${encodeURIComponent(streamUniqueId)}/stream-by-id?last_position=${lastPosition}`;
-
+    
     console.log('Connecting to stream URL:', streamUrl);
 
     // Create new EventSource connection
@@ -105,7 +105,7 @@ export default function LogStreamer({ uniqueId, onClose, apiBaseUrl = 'http://lo
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-
+        
         if (data.type === 'error' || data.error) {
           console.error('Stream error:', data.error || data.message);
           setError(data.error || data.message);
@@ -301,3 +301,4 @@ export default function LogStreamer({ uniqueId, onClose, apiBaseUrl = 'http://lo
     </div>
   );
 }
+

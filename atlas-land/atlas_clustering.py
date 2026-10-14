@@ -11,6 +11,7 @@ from pathlib import Path
 import statistics
 import threading
 import time
+import uuid
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -21,6 +22,7 @@ CLUSTER_BLUEPRINT = Blueprint("atlas_clustering", __name__)
 EUROSTAT_ROOT = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data"
 GISCO_URL = "https://gisco-services.ec.europa.eu/distribution/v2/nuts/geojson/NUTS_RG_20M_2024_4326.geojson"
 PALETTE = ("#dabd1d", "#14b8a6", "#f59e0b", "#8b5cf6", "#ec4899", "#22c55e", "#38bdf8", "#f97316")
+MAX_CLUSTERS = 2048
 COUNTRY_ALIASES = {"GR": "EL", "GB": "UK"}
 INDICATORS = {
     "density": {
@@ -184,7 +186,7 @@ def _fetch_json_cached(url: str, cache_name: str, ttl_seconds: int) -> tuple[dic
         payload = json.loads(body.decode("utf-8"))
         if not isinstance(payload, dict):
             raise RuntimeError("Upstream response was not a JSON object.")
-        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary = path.with_name(f'{path.name}.{uuid.uuid4().hex}.tmp')
         temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
         os.replace(temporary, path)
         return payload, False
@@ -223,8 +225,8 @@ def _parse_request():
         raise ClusterRequestError("NUTS level must be 2 or 3.")
     if year < 2000 or year > time.gmtime().tm_year + 1:
         raise ClusterRequestError("Reference year is outside the supported range.")
-    if cluster_count < 2 or cluster_count > len(PALETTE):
-        raise ClusterRequestError(f"Clusters must be between 2 and {len(PALETTE)}.")
+    if cluster_count < 2 or cluster_count > MAX_CLUSTERS:
+        raise ClusterRequestError(f"Clusters must be between 2 and {MAX_CLUSTERS} (and no more than available observations).")
     scaling = request.args.get("scaling", "zscore").strip().lower()
     if scaling not in {"zscore", "robust"}:
         raise ClusterRequestError("Scaling must be zscore or robust.")
@@ -336,8 +338,8 @@ def _build_result(
                 "region_name": row["name"],
                 "cluster": cluster + 1,
                 "values": row["values"],
-                "color": PALETTE[cluster],
-                "fill": PALETTE[cluster],
+                "color": PALETTE[cluster % len(PALETTE)],
+                "fill": PALETTE[cluster % len(PALETTE)],
             },
         })
     profiles = []
@@ -348,7 +350,7 @@ def _build_result(
         ]
         profiles.append({
             "cluster": cluster + 1,
-            "color": PALETTE[cluster],
+            "color": PALETTE[cluster % len(PALETTE)],
             "regions": len(members),
             "averages": {
                 indicator: statistics.fmean(
@@ -385,6 +387,7 @@ def cluster_status():
     return jsonify(
         available=True,
         levels=[2, 3],
+        max_clusters=MAX_CLUSTERS,
         years=[2021, 2022, 2023],
         indicators=[
             {"key": key, **definition}
@@ -429,3 +432,9 @@ def cluster_regions():
 def register_clustering_blueprint(app):
     if "atlas_clustering" not in app.blueprints:
         app.register_blueprint(CLUSTER_BLUEPRINT)
+    from atlas_network_clustering import NETWORK_CLUSTER_BLUEPRINT
+    if NETWORK_CLUSTER_BLUEPRINT.name not in app.blueprints:
+        app.register_blueprint(NETWORK_CLUSTER_BLUEPRINT)
+    from atlas_cluster_registry import REGISTRY_BLUEPRINT
+    if REGISTRY_BLUEPRINT.name not in app.blueprints:
+        app.register_blueprint(REGISTRY_BLUEPRINT)
